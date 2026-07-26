@@ -41,7 +41,7 @@ fn view_and_unview_reproduce_encode_and_decode() {
             .unview(expected, &source_view, &mut textual_names)
             .expect("shared unview");
         let viewed_form: TextualForm<SchemaLanguage> = textual
-            .view(expected, &unviewed, &mut textual_names)
+            .view(expected, &unviewed, &textual_names)
             .expect("shared view");
         let viewed: String = viewed_form.sole_text().expect("sole view text").to_string();
 

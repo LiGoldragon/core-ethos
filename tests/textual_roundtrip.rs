@@ -9,18 +9,6 @@ use core_schema::declaration::EncodedType;
 use core_schema::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
 use core_schema::reference::EncodedReference;
 use name_table::{IdentifierNamespace, NameTable};
-use raw_discovery::Recognizer;
-use structural_codec::CanonicalText;
-
-fn canonical(source: &str) -> String {
-    Recognizer::standard()
-        .recognize(source)
-        .expect("recognize")
-        .root_object_at(0)
-        .expect("one root")
-        .canonical_text()
-}
-
 fn name_table_rows(names: &NameTable) -> String {
     (0..names.len())
         .map(|index| {
@@ -63,7 +51,10 @@ fn newtype_declaration_round_trips() {
     let re_encoded = textual
         .encode(COMMIT_SEQUENCE, &value, &mut names)
         .expect("encode CommitSequence");
-    assert_eq!(re_encoded, canonical(source), "canonical text round-trips");
+    assert_eq!(
+        re_encoded, "CommitSequence.{Integer}",
+        "canonical text round-trips"
+    );
     println!("re-encoded => {re_encoded}");
 }
 
@@ -116,7 +107,10 @@ fn struct_declaration_round_trips_positionally() {
     let re_encoded = textual
         .encode(DATABASE_MARKER, &value, &mut names)
         .expect("encode DatabaseMarker");
-    assert_eq!(re_encoded, canonical(source), "canonical text round-trips");
+    assert_eq!(
+        re_encoded, "DatabaseMarker.{CommitSequence StateDigest StateDigest}",
+        "canonical text round-trips"
+    );
     println!("re-encoded => {re_encoded}");
 }
 

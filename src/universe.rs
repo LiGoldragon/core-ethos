@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
+use name_table::{Identifier, IdentifierNamespace, Name, NameResolver, NameTable};
 use structural_codec::ids::{
     EncodedUniverseId, FIXTURE_UNIVERSE, PositionalSignature, ScopedEncodedTypeId,
 };
@@ -263,10 +263,10 @@ impl EncodedUniverse {
     /// standard definition becomes its encoded reference; an otherwise unresolved
     /// name remains a `Plain` pre-resolution reference until declaration admission
     /// or a later universe seal resolves it.
-    pub fn reference_from_name(
+    pub fn reference_from_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
-        names: &NameTable,
+        names: &Resolver,
     ) -> Result<EncodedReference, UniverseError> {
         Self::validate_schema_identifier(identifier)?;
         let name = names.resolve(identifier)?;
@@ -278,10 +278,10 @@ impl EncodedUniverse {
     }
 
     /// Resolve an application head through prior standard-universe definitions.
-    pub fn builtin_from_name(
+    pub fn builtin_from_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
-        names: &NameTable,
+        names: &Resolver,
     ) -> Result<Option<BuiltinReference>, UniverseError> {
         Self::validate_schema_identifier(identifier)?;
         Ok(self
@@ -292,10 +292,10 @@ impl EncodedUniverse {
 
     /// Reject a declaration that attempts to replace a prior standard-universe
     /// definition. The typed error retains both identities for archival.
-    pub fn validate_declaration_name(
+    pub fn validate_declaration_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
-        names: &NameTable,
+        names: &Resolver,
     ) -> Result<(), UniverseError> {
         if let Some(builtin) = self.builtin_from_name(identifier, names)? {
             return Err(crate::error::StructuralRedefinition::new(identifier, builtin).into());

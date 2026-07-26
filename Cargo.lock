@@ -88,9 +88,10 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "content-identity"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
+source = "git+https://github.com/LiGoldragon/content-identity.git?rev=ac0075842799b3ece8909ad0eb4b8a92b596b188#ac0075842799b3ece8909ad0eb4b8a92b596b188"
 dependencies = [
  "blake3",
+ "getrandom",
  "rkyv",
  "thiserror",
 ]
@@ -104,7 +105,6 @@ dependencies = [
  "raw-discovery",
  "rkyv",
  "structural-codec",
- "structural-codec-derive-fixtures",
  "thiserror",
 ]
 
@@ -151,6 +151,18 @@ dependencies = [
  "futures-task",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "getrandom"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi",
+ "wasip2",
 ]
 
 [[package]]
@@ -209,7 +221,7 @@ dependencies = [
 [[package]]
 name = "name-table"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
+source = "git+https://github.com/LiGoldragon/name-table.git?rev=a1705ef512efec28925ae3ffc9faa5a2aa4dc4a8#a1705ef512efec28925ae3ffc9faa5a2aa4dc4a8"
 dependencies = [
  "content-identity",
  "rkyv",
@@ -267,6 +279,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "r-efi"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
 name = "rancor"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -277,8 +295,8 @@ dependencies = [
 
 [[package]]
 name = "raw-discovery"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/raw-discovery.git?rev=c27a9efabb1981c8b3d887c870fff82fc7daf49c#c27a9efabb1981c8b3d887c870fff82fc7daf49c"
 dependencies = [
  "content-identity",
  "rkyv",
@@ -350,35 +368,14 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "structural-codec"
-version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
+version = "0.5.0"
+source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=e5fa1b3bbdde13f3dac205920b16a2e73f3d4487#e5fa1b3bbdde13f3dac205920b16a2e73f3d4487"
 dependencies = [
  "content-identity",
  "name-table",
  "raw-discovery",
  "rkyv",
  "thiserror",
-]
-
-[[package]]
-name = "structural-codec-derive"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "structural-codec-derive-fixtures"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=d2912838b9ea18eae9ba3f7172e07e92823fa323#d2912838b9ea18eae9ba3f7172e07e92823fa323"
-dependencies = [
- "name-table",
- "raw-discovery",
- "structural-codec",
- "structural-codec-derive",
 ]
 
 [[package]]
@@ -455,6 +452,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasip2"
+version = "1.0.1+wasi-0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0562428422c63773dad2c345a1882263bbf4d65cf3f42e90921f787ef5ad58e7"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -498,3 +504,9 @@ checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.46.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"

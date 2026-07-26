@@ -16,12 +16,12 @@
 //! name, tells them apart. An explicit `name.Type` in the text no longer parses as a
 //! field and is rejected at decode.
 
-use name_table::{Name, NameTable};
+use name_table::{Name, NameInterner, NameResolver, NameTable, NameTransaction};
 use raw_discovery::{Block, Delimiter, Recognizer};
 use structural_codec::ids::ScopedEncodedTypeId;
 use structural_codec::table::AddressedStructuralTable;
 use structural_codec::value::StructuralValue;
-use structural_codec::{CanonicalText, EncodedForm, StructuralEvaluator, Textual};
+use structural_codec::{EncodedForm, StructuralEvaluator, Textual};
 
 use crate::declaration::{
     DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedField, EncodedNewtype, EncodedSchema,
@@ -32,7 +32,7 @@ use crate::document::{
     TYPES_BLOCK,
 };
 use crate::error::TextualError;
-use crate::fixture::FixtureFamily;
+use crate::fixture::{FixtureFamily, standard_token_profile};
 use crate::reference::{BuiltinReference, EncodedReference};
 use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder};
 
@@ -43,6 +43,7 @@ use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder}
 pub struct TextualSchema {
     universe: EncodedUniverse,
     table: AddressedStructuralTable,
+    profile: raw_discovery::SealedTokenProfile,
 }
 
 impl TextualSchema {
@@ -53,6 +54,7 @@ impl TextualSchema {
         Ok(Self {
             universe: family.universe().clone(),
             table,
+            profile: standard_token_profile(),
         })
     }
 
@@ -65,12 +67,17 @@ impl TextualSchema {
         Ok(Self {
             universe: EncodedUniverseBuilder::new().build(ENCODED_UNIVERSE)?,
             table: grammar.table().clone(),
+            profile: standard_token_profile(),
         })
     }
 
     /// Build a Textual view from an explicit universe and authored table.
     pub fn new(universe: EncodedUniverse, table: AddressedStructuralTable) -> Self {
-        Self { universe, table }
+        Self {
+            universe,
+            table,
+            profile: standard_token_profile(),
+        }
     }
 
     pub fn universe(&self) -> &EncodedUniverse {
@@ -90,12 +97,7 @@ impl TextualSchema {
         text: &str,
         names: &mut NameTable,
     ) -> Result<EncodedType, TextualError> {
-        let document = Recognizer::standard().recognize(text)?;
-        let block = document
-            .root_object_at(0)
-            .ok_or(TextualError::EmptySource)?;
-        let evaluator = StructuralEvaluator::new(&self.table);
-        let value = evaluator.decode(expected, block, names)?;
+        let value = self.schema_evaluator().decode_text(expected, text, names)?;
         self.reify_type(expected, &value, names)
     }
 
@@ -112,18 +114,18 @@ impl TextualSchema {
         names: &mut NameTable,
     ) -> Result<String, TextualError> {
         let mirror = self.reflect_type(value, names)?;
-        let evaluator = StructuralEvaluator::new(&self.table);
-        let block = evaluator.encode(expected, &mirror, names)?;
-        Ok(block.canonical_text())
+        Ok(self
+            .schema_evaluator()
+            .encode_text(expected, &mirror, names)?)
     }
 
     // ===== reification: StructuralValue -> EncodedType =====
 
-    fn reify_type(
+    fn reify_type<Names: NameInterner + NameResolver + ?Sized>(
         &self,
         expected: ScopedEncodedTypeId,
         value: &StructuralValue,
-        names: &mut NameTable,
+        names: &mut Names,
     ) -> Result<EncodedType, TextualError> {
         match self.universe.encoded_type(expected) {
             Some(EncodedType::Newtype(_)) => self.reify_newtype(value, names),
@@ -133,10 +135,10 @@ impl TextualSchema {
         }
     }
 
-    fn reify_newtype(
+    fn reify_newtype<Resolver: NameResolver + ?Sized>(
         &self,
         value: &StructuralValue,
-        names: &NameTable,
+        names: &Resolver,
     ) -> Result<EncodedType, TextualError> {
         let (name, body) = Self::declaration_head(value, "newtype")?;
         let inner = match body {
@@ -147,10 +149,10 @@ impl TextualSchema {
         Ok(EncodedType::Newtype(EncodedNewtype::new(name, reference)))
     }
 
-    fn reify_struct(
+    fn reify_struct<Names: NameInterner + NameResolver + ?Sized>(
         &self,
         value: &StructuralValue,
-        names: &mut NameTable,
+        names: &mut Names,
     ) -> Result<EncodedType, TextualError> {
         let (name, body) = Self::declaration_head(value, "struct")?;
         // The body slice borrows `value`, not `names`, so interning per field is free
@@ -183,10 +185,10 @@ impl TextualSchema {
         Ok((*name, body))
     }
 
-    fn reify_field(
+    fn reify_field<Names: NameInterner + NameResolver + ?Sized>(
         &self,
         field_value: &StructuralValue,
-        names: &mut NameTable,
+        names: &mut Names,
     ) -> Result<EncodedField, TextualError> {
         let StructuralValue::Delegated(inner) = field_value else {
             return Err(TextualError::ReifyShape("struct field delegate"));
@@ -207,10 +209,10 @@ impl TextualSchema {
         Ok(EncodedField::new(identifier, reference))
     }
 
-    fn reference_from_atom(
+    fn reference_from_atom<Resolver: NameResolver + ?Sized>(
         &self,
         type_id: name_table::Identifier,
-        names: &NameTable,
+        names: &Resolver,
     ) -> Result<EncodedReference, TextualError> {
         Ok(self.universe.reference_from_name(type_id, names)?)
     }
@@ -227,6 +229,80 @@ impl TextualSchema {
             EncodedType::Struct(structure) => self.reflect_struct(structure, names),
             EncodedType::Enumeration(enumeration) => Self::reflect_enumeration(enumeration),
         }
+    }
+
+    fn reflect_type_from_table(
+        &self,
+        value: &EncodedType,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        match value {
+            EncodedType::Newtype(newtype) => self.reflect_newtype_from_table(newtype, names),
+            EncodedType::Struct(structure) => self.reflect_struct_from_table(structure, names),
+            EncodedType::Enumeration(enumeration) => Self::reflect_enumeration(enumeration),
+        }
+    }
+
+    fn reflect_newtype_from_table(
+        &self,
+        newtype: &EncodedNewtype,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        let inner = Self::type_atom_from_table(newtype.reference(), names)?
+            .ok_or(TextualError::ReifyShape("newtype inner reference"))?;
+        let body = StructuralValue::Delimited(vec![StructuralValue::Atom(inner)]);
+        Ok(StructuralValue::chosen(
+            0,
+            StructuralValue::Application(
+                Box::new(StructuralValue::Atom(newtype.identifier())),
+                Box::new(body),
+            ),
+        ))
+    }
+
+    fn reflect_struct_from_table(
+        &self,
+        structure: &EncodedStruct,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        let mut field_values = Vec::with_capacity(structure.fields().len());
+        for field in structure.fields() {
+            field_values.push(Self::reflect_field_from_table(field, names)?);
+        }
+        Ok(StructuralValue::chosen(
+            0,
+            StructuralValue::Application(
+                Box::new(StructuralValue::Atom(structure.identifier())),
+                Box::new(StructuralValue::Delimited(field_values)),
+            ),
+        ))
+    }
+
+    fn reflect_field_from_table(
+        field: &EncodedField,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        let type_id = Self::type_atom_from_table(field.reference(), names)?
+            .ok_or(TextualError::ReifyShape("field type reference"))?;
+        let chosen = StructuralValue::chosen(0, StructuralValue::Atom(type_id));
+        Ok(StructuralValue::Delegated(Box::new(chosen)))
+    }
+
+    fn type_atom_from_table(
+        reference: &EncodedReference,
+        names: &NameTable,
+    ) -> Result<Option<name_table::Identifier>, TextualError> {
+        let builtin = match reference {
+            EncodedReference::Integer => Some(BuiltinReference::Integer),
+            EncodedReference::String => Some(BuiltinReference::String),
+            EncodedReference::Boolean => Some(BuiltinReference::Boolean),
+            EncodedReference::Bytes => Some(BuiltinReference::Bytes),
+            EncodedReference::Plain(identifier) => return Ok(Some(*identifier)),
+            EncodedReference::SingleTypeApplication { .. }
+            | EncodedReference::MultiTypeApplication { .. }
+            | EncodedReference::ValueApplication { .. } => return Ok(None),
+        };
+        Ok(builtin.and_then(|builtin| names.lookup(&Name::new(builtin.spelling()))))
     }
 
     fn reflect_newtype(
@@ -457,7 +533,7 @@ impl TextualSchema {
         text: &str,
         names: &mut NameTable,
     ) -> Result<EncodedSchema, TextualError> {
-        let document = Recognizer::standard().recognize(text)?;
+        let document = Recognizer::with_profile(self.profile.clone()).recognize(text)?;
         let roots = document.root_objects();
         if roots.len() != DOCUMENT_SLOTS {
             return Err(TextualError::DocumentArity(roots.len()));
@@ -510,7 +586,11 @@ impl TextualSchema {
     /// The evaluator for the document grammar. Builtins are universe definitions,
     /// so the grammar needs no keyword lexicon.
     fn document_evaluator(&self) -> StructuralEvaluator<'_> {
-        StructuralEvaluator::new(&self.table)
+        StructuralEvaluator::with_profile(&self.table, &self.profile)
+    }
+
+    fn schema_evaluator(&self) -> StructuralEvaluator<'_> {
+        StructuralEvaluator::with_profile(&self.table, &self.profile)
     }
 
     /// The canonical empty brace an unmodelled document slot renders to.
@@ -558,10 +638,9 @@ impl TextualSchema {
             return Err(TextualError::ReifyShape("interface root enumeration"));
         };
         let mirror = self.reflect_interface(enumeration, names)?;
-        let block = self
+        Ok(self
             .document_evaluator()
-            .encode(INTERFACE, &mirror, names)?;
-        Ok(block.canonical_text())
+            .encode_text(INTERFACE, &mirror, names)?)
     }
 
     fn decode_types_slot(
@@ -584,10 +663,9 @@ impl TextualSchema {
         names: &mut NameTable,
     ) -> Result<String, TextualError> {
         let mirror = self.reflect_types(schema.data_declarations(), names)?;
-        let block = self
+        Ok(self
             .document_evaluator()
-            .encode(TYPES_BLOCK, &mirror, names)?;
-        Ok(block.canonical_text())
+            .encode_text(TYPES_BLOCK, &mirror, names)?)
     }
 
     /// Reify the `types` block mirror into the declaration set. Each child is a
@@ -819,6 +897,10 @@ impl Textual for TextualSchema {
         &self.table
     }
 
+    fn token_profile(&self) -> &raw_discovery::SealedTokenProfile {
+        &self.profile
+    }
+
     fn missing_root_object(&self) -> TextualError {
         TextualError::EmptySource
     }
@@ -827,7 +909,7 @@ impl Textual for TextualSchema {
         &self,
         expected: ScopedEncodedTypeId,
         mirror: &StructuralValue,
-        names: &mut NameTable,
+        names: &mut NameTransaction<'_>,
     ) -> Result<EncodedType, TextualError> {
         self.reify_type(expected, mirror, names)
     }
@@ -836,9 +918,9 @@ impl Textual for TextualSchema {
         &self,
         _expected: ScopedEncodedTypeId,
         encoded: &EncodedType,
-        names: &mut NameTable,
+        names: &NameTable,
     ) -> Result<StructuralValue, TextualError> {
-        self.reflect_type(encoded, names)
+        self.reflect_type_from_table(encoded, names)
     }
 }
 

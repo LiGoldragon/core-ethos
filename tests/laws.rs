@@ -3,9 +3,9 @@
 use core_schema::fixture::{COMMIT_SEQUENCE, DOCUMENTATION, FIELD, FLOAT, FixtureFamily};
 use name_table::{IdentifierNamespace, Name, NameTable};
 use raw_discovery::{Block, Delimiter, Recognizer};
+use structural_codec::StructuralEvaluator;
 use structural_codec::ids::ScopedEncodedTypeId;
 use structural_codec::table::AddressedStructuralTable;
-use structural_codec::{CanonicalText, StructuralEvaluator};
 
 fn recognize_single(source: &str) -> Block {
     Recognizer::standard()
@@ -75,11 +75,7 @@ fn law_two_round_trip_canonical() {
         let encoded = evaluator
             .encode(*expected, &value, &names)
             .unwrap_or_else(|error| panic!("encode {source}: {error}"));
-        assert_eq!(
-            encoded.canonical_text(),
-            block.canonical_text(),
-            "law 2 for {source}"
-        );
+        assert_eq!(encoded, block, "law 2 for {source}");
     }
 }
 
@@ -135,5 +131,5 @@ fn law_four_identity_preserving_across_revisions() {
     let re_encoded = evaluator_new
         .encode(COMMIT_SEQUENCE, &value_old, &names_old)
         .expect("encode old value with new table");
-    assert_eq!(re_encoded.canonical_text(), block_new.canonical_text());
+    assert_eq!(re_encoded, block_new);
 }

@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use raw_discovery::Delimiter;
+use raw_discovery::{Delimiter, TriggerSet};
 use structural_codec::ids::{EncodedConstructorId, PositionalSignature, ScopedEncodedTypeId};
 use structural_codec::table::{
     AddressedStructuralTable, EncodedLayoutIdentity, RawProfileIdentity, TableIdentityPayload,
@@ -27,6 +27,10 @@ use structural_codec::table::{
 use structural_codec::{ConstructorCodec, SequenceForm, StructuralEntry, StructuralForm};
 
 use crate::error::UniverseError;
+use crate::fixture::{
+    APPLICATION_OPERATOR, BRACE_BOUNDARY, COMMENT_TRIVIA, SQUARE_BOUNDARY, WHITESPACE_TRIVIA,
+    standard_token_profile,
+};
 use crate::universe::ENCODED_UNIVERSE;
 
 /// The `TypeReference` grammar type: a reference met at a use site.
@@ -117,6 +121,7 @@ impl SchemaDocumentGrammar {
     /// Author and seal the grammar table.
     pub fn build() -> Result<Self, UniverseError> {
         let author = DocumentTableAuthor;
+        let profile = standard_token_profile();
         let entries: BTreeMap<ScopedEncodedTypeId, StructuralEntry> = author
             .entries()?
             .into_iter()
@@ -128,11 +133,12 @@ impl SchemaDocumentGrammar {
             // its layout identity is a fixed grammar marker, not a schema hash. Table
             // identity is excluded from Encoded value identity by construction.
             core_layout_identity: EncodedLayoutIdentity([0x6d; 32]),
-            raw_profile_identity: RawProfileIdentity([1u8; 32]),
+            raw_profile_identity: RawProfileIdentity::from_profile(&profile),
+            trivia_triggers: TriggerSet::new(vec![WHITESPACE_TRIVIA, COMMENT_TRIVIA]),
             leaf_codec_contracts: Vec::new(),
             entries,
         };
-        let table = AddressedStructuralTable::seal(payload)?;
+        let table = AddressedStructuralTable::seal(payload, &profile)?;
         Ok(Self { table })
     }
 
@@ -156,6 +162,7 @@ impl DocumentTableAuthor {
             (
                 ReferenceConstructor::Application,
                 StructuralForm::application(
+                    APPLICATION_OPERATOR,
                     StructuralForm::pascal_atom(),
                     StructuralForm::delegate(TYPE_REFERENCE),
                 ),
@@ -231,19 +238,24 @@ impl DocumentTableAuthor {
     /// that delegate against the complete grammar to prove the alternatives disjoint.
     fn declaration_entry(&self) -> StructuralEntry {
         let newtype = StructuralForm::application(
+            APPLICATION_OPERATOR,
             StructuralForm::pascal_atom(),
             StructuralForm::delegate(TYPE_REFERENCE),
         );
         let structure = StructuralForm::application(
+            APPLICATION_OPERATOR,
             StructuralForm::pascal_atom(),
             StructuralForm::Delimited {
+                boundary: BRACE_BOUNDARY,
                 delimiter: Delimiter::Brace,
                 sequence: SequenceForm::zero_or_more(StructuralForm::delegate(FIELD)),
             },
         );
         let enumeration = StructuralForm::application(
+            APPLICATION_OPERATOR,
             StructuralForm::pascal_atom(),
             StructuralForm::Delimited {
+                boundary: SQUARE_BOUNDARY,
                 delimiter: Delimiter::SquareBracket,
                 sequence: SequenceForm::zero_or_more(StructuralForm::pascal_atom()),
             },
@@ -269,6 +281,7 @@ impl DocumentTableAuthor {
         Self::single(
             TYPES_BLOCK,
             StructuralForm::Delimited {
+                boundary: BRACE_BOUNDARY,
                 delimiter: Delimiter::Brace,
                 sequence: SequenceForm::zero_or_more(StructuralForm::delegate(DECLARATION)),
             },
@@ -280,6 +293,7 @@ impl DocumentTableAuthor {
         Self::single(
             INTERFACE_VARIANT,
             StructuralForm::application(
+                APPLICATION_OPERATOR,
                 StructuralForm::pascal_atom(),
                 StructuralForm::delegate(TYPE_REFERENCE),
             ),
@@ -291,6 +305,7 @@ impl DocumentTableAuthor {
         Self::single(
             INTERFACE,
             StructuralForm::Delimited {
+                boundary: SQUARE_BOUNDARY,
                 delimiter: Delimiter::SquareBracket,
                 sequence: SequenceForm::zero_or_more(StructuralForm::delegate(INTERFACE_VARIANT)),
             },

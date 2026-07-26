@@ -13,7 +13,6 @@ use core_schema::{
 };
 use name_table::{Identifier, IdentifierNamespace, NameTable};
 use raw_discovery::Recognizer;
-use structural_codec::CanonicalText;
 
 /// The spirit-min schema in core-schema's native dialect: its shape verbatim — the
 /// six root slots, the type declarations, both enumerations, the `Vector`
@@ -305,8 +304,8 @@ fn spirit_min_document_round_trips_to_stable_text() {
     assert_eq!(round_tripped.holds_root_objects(), 6);
     for slot in 0..6 {
         assert_eq!(
-            round_tripped.root_object_at(slot).unwrap().canonical_text(),
-            source.root_object_at(slot).unwrap().canonical_text(),
+            round_tripped.root_object_at(slot).unwrap(),
+            source.root_object_at(slot).unwrap(),
             "slot {slot} canonical text is stable across the round trip",
         );
     }

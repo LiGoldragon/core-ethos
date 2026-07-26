@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use raw_discovery::Delimiter;
+use raw_discovery::{Delimiter, RawProfile, SealedTokenProfile, TriggerIdentifier, TriggerSet};
 use structural_codec::authoring::{AuthoringForm, ObjectSymbolPrefixedBlock};
 use structural_codec::ids::{EncodedConstructorId, PositionalSignature, ScopedEncodedTypeId};
 use structural_codec::table::{
@@ -43,6 +43,19 @@ pub const COMMIT_SEQUENCE: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(1)
 pub const STATE_DIGEST: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(2);
 pub const DATABASE_MARKER: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(3);
 pub const FIELD: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(23);
+
+pub(crate) const PARENTHESIS_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(0);
+pub(crate) const SQUARE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(1);
+pub(crate) const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
+pub(crate) const APPLICATION_OPERATOR: TriggerIdentifier = TriggerIdentifier::new(3);
+pub(crate) const WHITESPACE_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(5);
+pub(crate) const COMMENT_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(6);
+
+pub(crate) fn standard_token_profile() -> SealedTokenProfile {
+    RawProfile::standard()
+        .seal()
+        .expect("the standard schema token profile seals")
+}
 
 /// The fixture family: its stringless universe (id registry, names, and Encoded-layout
 /// signature derivation) and the whole schema as a `EncodedSchema` value.
@@ -201,14 +214,16 @@ impl FixtureFamily {
         &self,
         entries: BTreeMap<ScopedEncodedTypeId, StructuralEntry>,
     ) -> Result<AddressedStructuralTable, UniverseError> {
+        let profile = standard_token_profile();
         let payload = TableIdentityPayload {
             core_universe: ENCODED_UNIVERSE,
             core_layout_identity: self.encoded_layout()?,
-            raw_profile_identity: RawProfileIdentity([1u8; 32]),
+            raw_profile_identity: RawProfileIdentity::from_profile(&profile),
+            trivia_triggers: TriggerSet::new(vec![WHITESPACE_TRIVIA, COMMENT_TRIVIA]),
             leaf_codec_contracts: Vec::new(),
             entries,
         };
-        Ok(AddressedStructuralTable::seal(payload)?)
+        Ok(AddressedStructuralTable::seal(payload, &profile)?)
     }
 
     /// The authored structural entries. Signatures are written explicitly here — as
@@ -270,6 +285,8 @@ impl FixtureFamily {
     ) -> StructuralEntry {
         let form = AuthoringForm::ObjectPrefixed(ObjectSymbolPrefixedBlock {
             object: AtomForm::with_case(AtomCase::PascalCase),
+            operator: APPLICATION_OPERATOR,
+            boundary: Self::boundary_trigger(delimiter),
             delimiter,
             sequence: SequenceForm::Product(vec![StructuralForm::pascal_atom()]),
         })
@@ -292,8 +309,10 @@ impl FixtureFamily {
     fn struct_entry() -> StructuralEntry {
         let field_count = 3;
         let form = StructuralForm::application(
+            APPLICATION_OPERATOR,
             StructuralForm::pascal_atom(),
             StructuralForm::Delimited {
+                boundary: BRACE_BOUNDARY,
                 delimiter: Delimiter::Brace,
                 sequence: SequenceForm::Product(
                     std::iter::repeat_with(|| StructuralForm::delegate(FIELD))
@@ -330,5 +349,13 @@ impl FixtureFamily {
                 PositionalSignature::default(),
             )],
         )
+    }
+
+    fn boundary_trigger(delimiter: Delimiter) -> TriggerIdentifier {
+        match delimiter {
+            Delimiter::Parenthesis => PARENTHESIS_BOUNDARY,
+            Delimiter::SquareBracket => SQUARE_BOUNDARY,
+            Delimiter::Brace => BRACE_BOUNDARY,
+        }
     }
 }
