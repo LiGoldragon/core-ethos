@@ -1,69 +1,42 @@
-//! The universe bridge: how a set of stringless `EncodedSchema` declarations forms a
-//! `structural-codec` Encoded universe.
-//!
-//! A [`EncodedUniverse`] allocates one [`ScopedEncodedTypeId`] per Encoded type (the scalar
-//! leaf primitives, the `Field` meta-type, and each user declaration) and, from the
-//! Encoded layout alone, derives every constructor's [`PositionalSignature`] — the
-//! ordered list of its fields' referenced types. That derivation is the single
-//! source of truth against which an authored structural table is checked.
-//!
-//! This closes `structural-codec`'s deferred deviation ("signature-vs-Encoded
-//! validation deferred — no Encoded layout in the PoC"): [`validate_table`] proves
-//! every `ConstructorCodec` signature in a table equals the Encoded constructor's
-//! field signature, and a mismatched table fails loudly with
-//! [`UniverseError::SignatureMismatch`].
-//!
-//! [`validate_table`]: EncodedUniverse::validate_table
+//! The schema universe and its validation against archived typed table records.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use name_table::{Identifier, IdentifierNamespace, Name, NameResolver, NameTable};
-use structural_codec::ids::{
-    EncodedUniverseId, FIXTURE_UNIVERSE, PositionalSignature, ScopedEncodedTypeId,
+use structural_codec::{
+    AddressedStructuralTable, BorrowedFieldView, EncodedLanguage, FieldRole, FieldVisitor,
+    Position, SharedDescriptor, StructureRecord,
 };
-use structural_codec::table::AddressedStructuralTable;
 
 use crate::declaration::{EncodedDeclaration, EncodedSchema, EncodedType};
 use crate::error::UniverseError;
 use crate::reference::{BuiltinReference, EncodedReference};
 
-/// What a universe type is, for the purpose of deriving its Encoded constructor
-/// signatures. A closed typed record: the constructor arity and each signature
-/// follow from the kind, never from a flag.
 #[derive(Clone, Debug)]
 pub enum MemberKind {
-    /// A scalar leaf primitive (`Integer`, `Text`, `Boolean`, `Bytes`). One
-    /// terminal constructor whose field signature is empty.
     Primitive,
-    /// The `Field` meta-type: ONE positional constructor, the bare type reference.
-    /// Field names are illegal in every Protos surface (psyche ruling 2026-07-19:
-    /// "field names are now COMPLETLY ILLEGAL EVERYWHERE"), so a field is nothing
-    /// but the type standing at its position; its signature is empty.
     FieldMeta,
-    /// A user declaration; its constructor signatures are derived from its layout.
     Declaration(EncodedDeclaration),
 }
 
 impl MemberKind {
     fn constructor_count(&self) -> usize {
         match self {
-            Self::Primitive => 1,
-            Self::FieldMeta => 1,
+            Self::Primitive | Self::FieldMeta => 1,
             Self::Declaration(declaration) => declaration.value().constructor_count(),
         }
     }
 }
 
-/// One universe type: its allocated id, its name identifier, and its kind.
 #[derive(Clone, Debug)]
 pub struct UniverseType {
-    id: ScopedEncodedTypeId,
+    id: structural_codec::ScopedEncodedTypeId,
     name: Identifier,
     kind: MemberKind,
 }
 
 impl UniverseType {
-    pub fn id(&self) -> ScopedEncodedTypeId {
+    pub fn id(&self) -> structural_codec::ScopedEncodedTypeId {
         self.id
     }
 
@@ -76,81 +49,74 @@ impl UniverseType {
     }
 }
 
-/// A set of stringless Encoded declarations resolved into a structural-codec Encoded
-/// universe: id registry, name table, and the Encoded-layout signature derivation.
+/// The layout-derived constructor field signature.  Structural-codec no longer
+/// stores a positional signature vector in each codec, so this remains a
+/// core-schema value used to compare the Encoded layout to typed record metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedFieldSignature(Vec<structural_codec::ScopedEncodedTypeId>);
+
+impl EncodedFieldSignature {
+    pub fn fields(&self) -> &[structural_codec::ScopedEncodedTypeId] {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EncodedUniverse {
-    universe: EncodedUniverseId,
+    language: EncodedLanguage,
     names: NameTable,
     members: Vec<UniverseType>,
-    by_id: BTreeMap<ScopedEncodedTypeId, usize>,
-    by_name: HashMap<Identifier, ScopedEncodedTypeId>,
-    /// Prior standard-universe definitions, indexed by their resolved name. They
-    /// are semantic universe members, never grammar keywords.
+    by_id: BTreeMap<structural_codec::ScopedEncodedTypeId, usize>,
+    by_name: HashMap<Identifier, structural_codec::ScopedEncodedTypeId>,
+    /// Slice 0 retains this existing prior-definition index.  Slice 1 owns its
+    /// replacement; no new builtin resolution is added here.
     builtins: HashMap<String, BuiltinReference>,
-    integer: Option<ScopedEncodedTypeId>,
-    text: Option<ScopedEncodedTypeId>,
-    boolean: Option<ScopedEncodedTypeId>,
-    bytes: Option<ScopedEncodedTypeId>,
+    integer: Option<structural_codec::ScopedEncodedTypeId>,
+    text: Option<structural_codec::ScopedEncodedTypeId>,
+    boolean: Option<structural_codec::ScopedEncodedTypeId>,
+    bytes: Option<structural_codec::ScopedEncodedTypeId>,
 }
 
 impl EncodedUniverse {
-    /// The universe these types belong to.
-    pub fn universe(&self) -> EncodedUniverseId {
-        self.universe
+    pub fn language(&self) -> EncodedLanguage {
+        self.language
     }
 
-    /// The schema's names. The projected (Textual) view resolves every identifier
-    /// through this table; a rename is an edit here that never touches the Encoded.
     pub fn names(&self) -> &NameTable {
         &self.names
     }
 
-    /// A mutable borrow of the names, for a decode that interns new names.
     pub fn names_mut(&mut self) -> &mut NameTable {
         &mut self.names
     }
 
-    /// Every registered universe type, in allocation order.
     pub fn members(&self) -> &[UniverseType] {
         &self.members
     }
 
-    /// The schema-whole this universe declares: its declaration members, in ascending
-    /// id order, as a [`EncodedSchema`]. The primitives and the `Field` meta-type are the
-    /// universe's fixed substrate, not schema declarations, so they are not included.
-    /// Under the authority-provided construction path ([`Self::from_assignment`]) the
-    /// registration order already ascends by assigned local, so this schema's
-    /// declaration order — and thus its content identity — is a deterministic function
-    /// of the authority's assignment, never of parse order.
     pub fn declared_schema(&self) -> EncodedSchema {
         let mut ordered: Vec<&UniverseType> = self.members.iter().collect();
         ordered.sort_by_key(|member| member.id);
-        let declarations = ordered
-            .into_iter()
-            .filter_map(|member| match member.kind() {
-                MemberKind::Declaration(declaration) => Some(declaration.clone()),
-                MemberKind::Primitive | MemberKind::FieldMeta => None,
-            })
-            .collect();
-        EncodedSchema::new(declarations)
+        EncodedSchema::new(
+            ordered
+                .into_iter()
+                .filter_map(|member| match member.kind() {
+                    MemberKind::Declaration(declaration) => Some(declaration.clone()),
+                    MemberKind::Primitive | MemberKind::FieldMeta => None,
+                })
+                .collect(),
+        )
     }
 
-    /// Build a universe from authority-assigned members and their complete composed
-    /// name table. This transfers the table unchanged: its Schema home and every
-    /// borrowed slice are retained, and no name is resolved and re-interned. EncodedSchema
-    /// members must use Schema identifiers; foreign identifiers are rejected at this
-    /// typed boundary rather than silently converted by their spelling.
     pub fn from_assignment(
-        universe: EncodedUniverseId,
+        language: EncodedLanguage,
         mut members: Vec<AssignedMember>,
         names: NameTable,
     ) -> Result<Self, UniverseError> {
         members.sort_by_key(AssignedMember::local);
-
         let mut builder = EncodedUniverseBuilder::from_name_table(names);
         for member in members {
-            let id = ScopedEncodedTypeId::new(universe, member.local);
+            let id = scoped(language, member.local);
             match member.kind {
                 AssignedKind::ScalarPrimitive(slot) => {
                     builder.primitive_at(id, member.identifier, slot)
@@ -158,11 +124,11 @@ impl EncodedUniverse {
                 AssignedKind::LeafPrimitive => builder.leaf_at(id, member.identifier),
                 AssignedKind::FieldMeta => builder.field_meta_at(id, member.identifier),
                 AssignedKind::Declaration(declaration) => {
-                    builder.assigned_declaration(id, member.identifier, declaration);
+                    builder.assigned_declaration(id, member.identifier, declaration)
                 }
             }
         }
-        builder.build(universe)
+        builder.build(language)
     }
 
     fn validate_schema_identifier(identifier: Identifier) -> Result<(), UniverseError> {
@@ -174,15 +140,15 @@ impl EncodedUniverse {
     }
 
     fn validate_scoped_type_id(
-        expected: EncodedUniverseId,
-        member: ScopedEncodedTypeId,
+        expected: EncodedLanguage,
+        member: structural_codec::ScopedEncodedTypeId,
     ) -> Result<(), UniverseError> {
-        if member.universe == expected {
+        if member.language() == expected {
             Ok(())
         } else {
             Err(UniverseError::UniverseScopeMismatch {
                 expected,
-                actual: member.universe,
+                actual: member.language(),
                 member,
             })
         }
@@ -192,8 +158,8 @@ impl EncodedUniverse {
         reference: &EncodedReference,
         names: &NameTable,
         members: &[UniverseType],
-        scalar_registrations: &[(ScalarSlot, ScopedEncodedTypeId)],
-        expected_universe: EncodedUniverseId,
+        scalar_registrations: &[(ScalarSlot, structural_codec::ScopedEncodedTypeId)],
+        expected_language: EncodedLanguage,
     ) -> Result<(), UniverseError> {
         let validate_scalar = |slot| {
             let id = scalar_registrations
@@ -203,7 +169,7 @@ impl EncodedUniverse {
                     slot,
                     reference: reference.clone(),
                 })?;
-            Self::validate_scoped_type_id(expected_universe, id)?;
+            Self::validate_scoped_type_id(expected_language, id)?;
             if members.iter().any(|member| member.id == id) {
                 Ok(())
             } else {
@@ -233,7 +199,7 @@ impl EncodedUniverse {
                         identifier: *identifier,
                         reference: reference.clone(),
                     })?;
-                Self::validate_scoped_type_id(expected_universe, member.id)
+                Self::validate_scoped_type_id(expected_language, member.id)
             }
             EncodedReference::SingleTypeApplication { argument, .. } => {
                 Self::validate_reference_identifiers(
@@ -241,7 +207,7 @@ impl EncodedUniverse {
                     names,
                     members,
                     scalar_registrations,
-                    expected_universe,
+                    expected_language,
                 )
             }
             EncodedReference::MultiTypeApplication { arguments, .. } => {
@@ -251,7 +217,7 @@ impl EncodedUniverse {
                         names,
                         members,
                         scalar_registrations,
-                        expected_universe,
+                        expected_language,
                     )
                 })
             }
@@ -259,10 +225,6 @@ impl EncodedUniverse {
         }
     }
 
-    /// Resolve a name at a reference position through this universe. A prior
-    /// standard definition becomes its encoded reference; an otherwise unresolved
-    /// name remains a `Plain` pre-resolution reference until declaration admission
-    /// or a later universe seal resolves it.
     pub fn reference_from_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
@@ -277,7 +239,6 @@ impl EncodedUniverse {
             .unwrap_or(EncodedReference::Plain(identifier)))
     }
 
-    /// Resolve an application head through prior standard-universe definitions.
     pub fn builtin_from_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
@@ -290,8 +251,6 @@ impl EncodedUniverse {
             .copied())
     }
 
-    /// Reject a declaration that attempts to replace a prior standard-universe
-    /// definition. The typed error retains both identities for archival.
     pub fn validate_declaration_name<Resolver: NameResolver + ?Sized>(
         &self,
         identifier: Identifier,
@@ -307,8 +266,8 @@ impl EncodedUniverse {
         declaration: &EncodedDeclaration,
         names: &NameTable,
         members: &[UniverseType],
-        scalar_registrations: &[(ScalarSlot, ScopedEncodedTypeId)],
-        expected_universe: EncodedUniverseId,
+        scalar_registrations: &[(ScalarSlot, structural_codec::ScopedEncodedTypeId)],
+        expected_language: EncodedLanguage,
     ) -> Result<(), UniverseError> {
         let validate_identifier = |identifier| {
             Self::validate_schema_identifier(identifier)?;
@@ -321,7 +280,7 @@ impl EncodedUniverse {
                 names,
                 members,
                 scalar_registrations,
-                expected_universe,
+                expected_language,
             ),
             EncodedType::Struct(structure) => {
                 for field in structure.fields() {
@@ -331,7 +290,7 @@ impl EncodedUniverse {
                         names,
                         members,
                         scalar_registrations,
-                        expected_universe,
+                        expected_language,
                     )?;
                 }
                 Ok(())
@@ -345,7 +304,7 @@ impl EncodedUniverse {
                             names,
                             members,
                             scalar_registrations,
-                            expected_universe,
+                            expected_language,
                         )?;
                     }
                 }
@@ -354,37 +313,32 @@ impl EncodedUniverse {
         }
     }
 
-    fn member(&self, id: ScopedEncodedTypeId) -> Result<&UniverseType, UniverseError> {
+    fn member(
+        &self,
+        id: structural_codec::ScopedEncodedTypeId,
+    ) -> Result<&UniverseType, UniverseError> {
         self.by_id
             .get(&id)
             .and_then(|index| self.members.get(*index))
             .ok_or(UniverseError::UnknownType(id))
     }
 
-    /// The declared Encoded type at `id`, if the type is a user declaration (not a
-    /// primitive or the `Field` meta-type). Reification dispatches on its shape.
-    pub fn encoded_type(&self, id: ScopedEncodedTypeId) -> Option<&EncodedType> {
+    pub fn encoded_type(&self, id: structural_codec::ScopedEncodedTypeId) -> Option<&EncodedType> {
         match self.member(id).ok()?.kind() {
             MemberKind::Declaration(declaration) => Some(declaration.value()),
             MemberKind::Primitive | MemberKind::FieldMeta => None,
         }
     }
 
-    /// The universe type a name identifier names, if any.
-    pub fn type_of_name(&self, name: Identifier) -> Option<ScopedEncodedTypeId> {
+    pub fn type_of_name(&self, name: Identifier) -> Option<structural_codec::ScopedEncodedTypeId> {
         self.by_name.get(&name).copied()
     }
 
-    /// Resolve a by-kind reference to the universe type it names. A scalar leaf
-    /// resolves only through its explicitly registered scalar slot; a `Plain`
-    /// reference must still resolve in the NameTable and the member registry. A
-    /// generic application has no allocated type in this PoC universe and is a loud,
-    /// typed error rather than a silent guess.
     pub fn resolve_reference(
         &self,
         reference: &EncodedReference,
-    ) -> Result<ScopedEncodedTypeId, UniverseError> {
-        let scalar = |slot, id: Option<ScopedEncodedTypeId>| {
+    ) -> Result<structural_codec::ScopedEncodedTypeId, UniverseError> {
+        let scalar = |slot, id: Option<structural_codec::ScopedEncodedTypeId>| {
             id.ok_or_else(|| UniverseError::MissingScalarSlot {
                 slot,
                 reference: reference.clone(),
@@ -421,21 +375,20 @@ impl EncodedUniverse {
         }
     }
 
-    /// The number of Encoded constructors the type at `id` has.
-    pub fn constructor_count(&self, id: ScopedEncodedTypeId) -> Result<usize, UniverseError> {
+    pub fn constructor_count(
+        &self,
+        id: structural_codec::ScopedEncodedTypeId,
+    ) -> Result<usize, UniverseError> {
         Ok(self.member(id)?.kind.constructor_count())
     }
 
-    /// Derive, from the Encoded layout alone, the positional field signature of one
-    /// constructor: the ordered universe-type ids of its fields' referenced types.
-    /// This is the ground truth the authored structural table is checked against.
     pub fn encoded_signature(
         &self,
-        id: ScopedEncodedTypeId,
-        constructor: u32,
-    ) -> Result<PositionalSignature, UniverseError> {
+        id: structural_codec::ScopedEncodedTypeId,
+        constructor: u16,
+    ) -> Result<EncodedFieldSignature, UniverseError> {
         let member = self.member(id)?;
-        let fields: Vec<ScopedEncodedTypeId> = match &member.kind {
+        let fields = match &member.kind {
             MemberKind::Primitive | MemberKind::FieldMeta => Vec::new(),
             MemberKind::Declaration(declaration) => match declaration.value() {
                 EncodedType::Newtype(newtype) => vec![self.resolve_reference(newtype.reference())?],
@@ -452,42 +405,71 @@ impl EncodedUniverse {
                             codecs: constructor as usize + 1,
                         },
                     )?;
-                    match variant.payload() {
-                        Some(payload) => vec![self.resolve_reference(payload)?],
-                        None => Vec::new(),
-                    }
+                    variant
+                        .payload()
+                        .map(|payload| self.resolve_reference(payload).map(|id| vec![id]))
+                        .transpose()?
+                        .unwrap_or_default()
                 }
             },
         };
-        Ok(PositionalSignature::new(fields))
+        Ok(EncodedFieldSignature(fields))
     }
 
-    /// Validate an authored structural table against the Encoded layout: every type
-    /// must have a table entry with one codec per Encoded constructor, and every
-    /// codec's authored signature must equal the Encoded-derived one. A mismatch is
-    /// the loud [`UniverseError::SignatureMismatch`] — the deferred deviation,
-    /// closed.
-    pub fn validate_table(&self, table: &AddressedStructuralTable) -> Result<(), UniverseError> {
+    /// Validate the current table representation without restoring the removed
+    /// positional-signature vector.  A constructor's unreachable typed metadata
+    /// positions (stable roles 1003–1005) carry the exact authored layout when a
+    /// repeated executable form cannot itself carry a fixed product.  Other
+    /// constructors use their actual typed `Delegate` descriptor metadata.
+    pub fn validate_table<Record: StructureRecord>(
+        &self,
+        table: &AddressedStructuralTable<Record>,
+    ) -> Result<(), UniverseError> {
+        struct DelegateMetadata {
+            all: Vec<structural_codec::ScopedEncodedTypeId>,
+            signature: Vec<structural_codec::ScopedEncodedTypeId>,
+        }
+        impl FieldVisitor for DelegateMetadata {
+            fn field<Role: FieldRole>(&mut self, position: &Position<Role>) {
+                if let SharedDescriptor::Delegate { target, .. } = position.descriptor() {
+                    self.all.push(*target);
+                    if (1003..=1005).contains(&position.role().value()) {
+                        self.signature.push(*target);
+                    }
+                }
+            }
+        }
+
         for member in &self.members {
             let entry = table
                 .entry(member.id)
                 .ok_or(UniverseError::TableEntryAbsent(member.id))?;
-            let expected = member.kind.constructor_count();
-            if entry.constructors.len() != expected {
+            let expected_count = member.kind.constructor_count();
+            if entry.constructors().len() != expected_count {
                 return Err(UniverseError::ConstructorCountMismatch {
                     encoded_type: member.id,
-                    members: expected,
-                    codecs: entry.constructors.len(),
+                    members: expected_count,
+                    codecs: entry.constructors().len(),
                 });
             }
-            for (index, codec) in entry.constructors.iter().enumerate() {
-                let encoded = self.encoded_signature(member.id, index as u32)?;
-                if codec.signature.fields() != encoded.fields() {
+            for codec in entry.constructors() {
+                let expected = self.encoded_signature(member.id, codec.constructor().local())?;
+                let mut metadata = DelegateMetadata {
+                    all: Vec::new(),
+                    signature: Vec::new(),
+                };
+                codec.encode_form().fields().expose(&mut metadata);
+                let authored = if metadata.signature.is_empty() {
+                    metadata.all
+                } else {
+                    metadata.signature
+                };
+                if authored != expected.fields() {
                     return Err(UniverseError::SignatureMismatch {
                         encoded_type: member.id,
-                        constructor: index as u32,
-                        authored: codec.signature.fields().to_vec(),
-                        encoded: encoded.fields().to_vec(),
+                        constructor: codec.constructor().local(),
+                        authored,
+                        encoded: expected.fields().to_vec(),
                     });
                 }
             }
@@ -496,35 +478,23 @@ impl EncodedUniverse {
     }
 }
 
-/// The kind of one central-authority-assigned universe member, mirroring the
-/// builder's registration verbs so a single assignment covers the scalar leaf
-/// primitives, the `Field` meta-type, and user declarations. A closed typed record:
-/// the registration follows from the kind, never from a flag.
 #[derive(Clone, Debug)]
 pub enum AssignedKind {
-    /// A scalar leaf primitive that is a reference target, filling a scalar slot.
     ScalarPrimitive(ScalarSlot),
-    /// A scalar leaf primitive that is never a reference target — e.g. `Float`.
     LeafPrimitive,
-    /// The `Field` meta-type.
     FieldMeta,
-    /// A user declaration, carried whole so its visibility, role, identifiers, and
-    /// references are preserved exactly through the build.
     Declaration(EncodedDeclaration),
 }
 
-/// One central-authority-assigned universe member: its authority-minted local type
-/// identity, the exact schema identifier it owns, and its kind. The identifier is
-/// data, never reconstructed from a resolved name.
 #[derive(Clone, Debug)]
 pub struct AssignedMember {
-    local: u32,
+    local: u16,
     identifier: Identifier,
     kind: AssignedKind,
 }
 
 impl AssignedMember {
-    pub fn new(local: u32, identifier: Identifier, kind: AssignedKind) -> Self {
+    pub fn new(local: u16, identifier: Identifier, kind: AssignedKind) -> Self {
         Self {
             local,
             identifier,
@@ -532,9 +502,7 @@ impl AssignedMember {
         }
     }
 
-    /// The local identity the authority assigned — the `local` half of the member's
-    /// [`ScopedEncodedTypeId`] and the key its registration order sorts by.
-    pub fn local(&self) -> u32 {
+    pub fn local(&self) -> u16 {
         self.local
     }
 
@@ -547,17 +515,13 @@ impl AssignedMember {
     }
 }
 
-/// Builds a [`EncodedUniverse`], owning the shared [`NameTable`] so declarations are
-/// constructed against the same identifier space the universe resolves through.
 #[derive(Debug)]
 pub struct EncodedUniverseBuilder {
     names: NameTable,
     members: Vec<UniverseType>,
-    scalar_registrations: Vec<(ScalarSlot, ScopedEncodedTypeId)>,
+    scalar_registrations: Vec<(ScalarSlot, structural_codec::ScopedEncodedTypeId)>,
 }
 
-/// Which scalar leaf a primitive registration fills. Naming the slot as data keeps
-/// `resolve_reference` free of stringly primitive lookups.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ScalarSlot {
     Integer,
@@ -577,16 +541,10 @@ impl Default for EncodedUniverseBuilder {
 }
 
 impl EncodedUniverseBuilder {
-    /// Start a Schema universe whose standard definitions are mandatory prior
-    /// members. Their identities are resolved through the NameTable at sealing; they
-    /// are never lexical exclusions or optional parser configuration.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build against an already completed Schema-home table, preserving its complete
-    /// composed slice set rather than copying or flattening it. Standard definitions
-    /// remain mandatory for this lower-level construction route too.
     pub fn from_name_table(names: NameTable) -> Self {
         Self {
             names,
@@ -599,36 +557,37 @@ impl EncodedUniverseBuilder {
         &self.names
     }
 
-    /// Intern a name into the shared table.
     pub fn intern(&mut self, name: &str) -> Result<Identifier, name_table::NameTableError> {
         self.names.intern(Name::new(name))
     }
 
-    /// Register a scalar leaf primitive that is a reference target at an already
-    /// interned identifier, filling its scalar slot.
-    pub fn primitive_at(&mut self, id: ScopedEncodedTypeId, name: Identifier, slot: ScalarSlot) {
+    pub fn primitive_at(
+        &mut self,
+        id: structural_codec::ScopedEncodedTypeId,
+        name: Identifier,
+        slot: ScalarSlot,
+    ) {
         self.scalar_registrations.push((slot, id));
         self.register(id, name, MemberKind::Primitive);
     }
 
-    /// Register a scalar leaf primitive that is never a reference target at an already
-    /// interned identifier (fills no scalar slot).
-    pub fn leaf_at(&mut self, id: ScopedEncodedTypeId, name: Identifier) {
+    pub fn leaf_at(&mut self, id: structural_codec::ScopedEncodedTypeId, name: Identifier) {
         self.register(id, name, MemberKind::Primitive);
     }
 
-    /// Register the `Field` meta-type at an already interned identifier.
-    pub fn field_meta_at(&mut self, id: ScopedEncodedTypeId, name: Identifier) {
+    pub fn field_meta_at(&mut self, id: structural_codec::ScopedEncodedTypeId, name: Identifier) {
         self.register(id, name, MemberKind::FieldMeta);
     }
 
-    fn register(&mut self, id: ScopedEncodedTypeId, name: Identifier, kind: MemberKind) {
+    fn register(
+        &mut self,
+        id: structural_codec::ScopedEncodedTypeId,
+        name: Identifier,
+        kind: MemberKind,
+    ) {
         self.members.push(UniverseType { id, name, kind });
     }
 
-    /// Whether this member is the one scalar-slot realization permitted for a
-    /// scalar builtin prior. Every other member under a builtin spelling is a
-    /// structural redefinition.
     fn is_sanctioned_builtin_scalar(
         &self,
         member: &UniverseType,
@@ -643,97 +602,78 @@ impl EncodedUniverseBuilder {
                 None
             }
         };
-
-        match &member.kind {
-            MemberKind::Primitive => required_slot.is_some_and(|slot| {
+        matches!(member.kind, MemberKind::Primitive)
+            && required_slot.is_some_and(|slot| {
                 self.scalar_registrations
                     .iter()
                     .any(|(registered, id)| *registered == slot && *id == member.id)
-            }),
-            MemberKind::FieldMeta => false,
-            MemberKind::Declaration(_) => false,
-        }
+            })
     }
 
-    /// Register a scalar leaf primitive under a well-known name and scalar slot.
     pub fn primitive(
         &mut self,
-        id: ScopedEncodedTypeId,
+        id: structural_codec::ScopedEncodedTypeId,
         name: &str,
         slot: ScalarSlot,
     ) -> Result<Identifier, name_table::NameTableError> {
         let identifier = self.intern(name)?;
-        self.scalar_registrations.push((slot, id));
-        self.register(id, identifier, MemberKind::Primitive);
+        self.primitive_at(id, identifier, slot);
         Ok(identifier)
     }
 
-    /// Register a scalar leaf primitive that is never a reference target (so it
-    /// fills no scalar slot) — `Float`, which the fixture uses only as a standalone
-    /// leaf value type.
     pub fn primitive_leaf(
         &mut self,
-        id: ScopedEncodedTypeId,
+        id: structural_codec::ScopedEncodedTypeId,
         name: &str,
     ) -> Result<Identifier, name_table::NameTableError> {
         let identifier = self.intern(name)?;
-        self.register(id, identifier, MemberKind::Primitive);
+        self.leaf_at(id, identifier);
         Ok(identifier)
     }
 
-    /// Register the `Field` meta-type under a name.
     pub fn field_meta(
         &mut self,
-        id: ScopedEncodedTypeId,
+        id: structural_codec::ScopedEncodedTypeId,
         name: &str,
     ) -> Result<Identifier, name_table::NameTableError> {
         let identifier = self.intern(name)?;
-        self.register(id, identifier, MemberKind::FieldMeta);
+        self.field_meta_at(id, identifier);
         Ok(identifier)
     }
 
-    /// Register a user declaration at an allocated id. The declaration's identifier
-    /// must already be interned in the shared table (via [`intern`]).
-    ///
-    /// [`intern`]: EncodedUniverseBuilder::intern
-    pub fn declaration(&mut self, id: ScopedEncodedTypeId, declaration: EncodedDeclaration) {
+    pub fn declaration(
+        &mut self,
+        id: structural_codec::ScopedEncodedTypeId,
+        declaration: EncodedDeclaration,
+    ) {
         self.assigned_declaration(id, declaration.identifier(), declaration);
     }
 
-    /// Register an authority-assigned declaration without validating it early. The
-    /// final seal compares the assigned member identifier to the declaration's own
-    /// identifier alongside every other universe invariant.
     fn assigned_declaration(
         &mut self,
-        id: ScopedEncodedTypeId,
+        id: structural_codec::ScopedEncodedTypeId,
         assigned: Identifier,
         declaration: EncodedDeclaration,
     ) {
         self.register(id, assigned, MemberKind::Declaration(declaration));
     }
 
-    /// Seal the universe. This is the sole validation point for NameTable ownership,
-    /// every identifier and reachable scoped reference, assignment/declaration agreement,
-    /// universe scope, and registry uniqueness; maps are created only after those checks
-    /// have passed.
-    pub fn build(self, universe: EncodedUniverseId) -> Result<EncodedUniverse, UniverseError> {
+    pub fn build(self, language: EncodedLanguage) -> Result<EncodedUniverse, UniverseError> {
         if self.names.namespace() != IdentifierNamespace::Schema {
             return Err(UniverseError::WrongNameTableHome {
                 actual: self.names.namespace(),
             });
         }
-
         let builtins: HashMap<String, BuiltinReference> = BuiltinReference::ALL
             .into_iter()
             .map(|builtin| (builtin.spelling().to_owned(), builtin))
             .collect();
-
         let mut member_ids = BTreeSet::new();
         let mut member_names = HashSet::new();
         for member in &self.members {
             EncodedUniverse::validate_schema_identifier(member.name)?;
             let resolved_name = self.names.resolve(member.name)?;
-            EncodedUniverse::validate_scoped_type_id(universe, member.id)?;
+            EncodedUniverse::validate_scoped_type_id(language, member.id)?;
             if let Some(builtin) = builtins.get(resolved_name.as_str()) {
                 if !self.is_sanctioned_builtin_scalar(member, *builtin) {
                     return Err(
@@ -753,7 +693,7 @@ impl EncodedUniverseBuilder {
                     &self.names,
                     &self.members,
                     &self.scalar_registrations,
-                    universe,
+                    language,
                 )?;
             }
             if !member_ids.insert(member.id) {
@@ -763,14 +703,12 @@ impl EncodedUniverseBuilder {
                 return Err(UniverseError::DuplicateMemberName(member.name));
             }
         }
-
         let mut scalar_slots = HashSet::new();
         for (slot, _) in &self.scalar_registrations {
             if !scalar_slots.insert(*slot) {
                 return Err(UniverseError::DuplicateScalarSlot(*slot));
             }
         }
-
         let by_id = self
             .members
             .iter()
@@ -783,9 +721,9 @@ impl EncodedUniverseBuilder {
             .map(|member| (member.name, member.id))
             .collect();
         let scalars: HashMap<_, _> = self.scalar_registrations.into_iter().collect();
-        let scalar = |slot: ScalarSlot| scalars.get(&slot).copied();
+        let scalar = |slot| scalars.get(&slot).copied();
         Ok(EncodedUniverse {
-            universe,
+            language,
             integer: scalar(ScalarSlot::Integer),
             text: scalar(ScalarSlot::Text),
             boolean: scalar(ScalarSlot::Boolean),
@@ -799,6 +737,12 @@ impl EncodedUniverseBuilder {
     }
 }
 
-/// The explicit fixture universe id this proof-of-concept works in, re-exported so
-/// callers name the same universe `structural-codec`'s fixture ids scope to.
-pub const ENCODED_UNIVERSE: EncodedUniverseId = FIXTURE_UNIVERSE;
+fn scoped(language: EncodedLanguage, local: u16) -> structural_codec::ScopedEncodedTypeId {
+    match language {
+        EncodedLanguage::Schema => structural_codec::ScopedEncodedTypeId::schema(local),
+        EncodedLanguage::Logos => structural_codec::ScopedEncodedTypeId::logos(local),
+        EncodedLanguage::Nomos => structural_codec::ScopedEncodedTypeId::nomos(local),
+    }
+}
+
+pub const ENCODED_UNIVERSE: EncodedLanguage = EncodedLanguage::Schema;

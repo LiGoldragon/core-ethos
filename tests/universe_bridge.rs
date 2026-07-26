@@ -66,7 +66,7 @@ fn authored_table_agrees_with_the_encoded_layout() {
 }
 
 /// A mismatched table fails validation LOUDLY: the negative control corrupts
-/// CommitSequence's signature and the guard rejects it with a typed mismatch that
+/// DatabaseMarker's signature and the guard rejects it with a typed mismatch that
 /// names the type, the constructor, and both signatures.
 #[test]
 fn a_mismatched_table_fails_validation_loudly() {
@@ -80,13 +80,17 @@ fn a_mismatched_table_fails_validation_loudly() {
             authored,
             encoded,
         }) => {
-            assert_eq!(encoded_type, COMMIT_SEQUENCE);
+            assert_eq!(encoded_type, DATABASE_MARKER);
             assert_eq!(constructor, 0);
-            assert!(authored.is_empty(), "the corrupted signature is empty");
+            assert_eq!(
+                authored,
+                vec![STATE_DIGEST, STATE_DIGEST, STATE_DIGEST],
+                "the corrupted archive witness changes the first field type"
+            );
             assert_eq!(
                 encoded,
-                vec![INTEGER],
-                "the Encoded layout demands [Integer]"
+                vec![COMMIT_SEQUENCE, STATE_DIGEST, STATE_DIGEST],
+                "the Encoded layout demands the declared three-field signature"
             );
         }
         other => panic!("expected a loud SignatureMismatch, got {other:?}"),

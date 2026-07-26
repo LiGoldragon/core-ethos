@@ -1,29 +1,18 @@
-//! The proof-of-concept schema family, as REAL stringless `EncodedSchema`
-//! declarations and a companion authored structural table. This is slice one's
-//! synthetic fixture universe made real: the ids now key genuine Encoded declarations
-//! with genuine field signatures, so the table's authored signatures can be
-//! validated against the Encoded layout ([`EncodedUniverse::validate_table`]).
-//!
-//! The family: `CommitSequence`/`StateDigest` newtypes over `Integer`, a
-//! `DatabaseMarker` struct `{ CommitSequence StateDigest StateDigest }` — its two
-//! same-typed `StateDigest` fields told apart by position alone — the
-//! `Documentation → Summary → Text` string-rejoin chain, the `Field` meta-type with
-//! its single positional constructor, and the `Integer`/`Float`/`Text` leaf
-//! primitives.
-//!
-//! [`EncodedUniverse::validate_table`]: crate::universe::EncodedUniverse::validate_table
+//! The proof-of-concept schema family and its typed structural vocabulary.
 
 use std::collections::BTreeMap;
 
-use raw_discovery::{Delimiter, RawProfile, SealedTokenProfile, TriggerIdentifier, TriggerSet};
-use structural_codec::authoring::{AuthoringForm, ObjectSymbolPrefixedBlock};
-use structural_codec::ids::{EncodedConstructorId, PositionalSignature, ScopedEncodedTypeId};
-use structural_codec::table::{
-    AddressedStructuralTable, EncodedLayoutIdentity, RawProfileIdentity, TableIdentityPayload,
+use raw_discovery::{
+    BlockPrefixAttachment, BlockPrefixRule, BlockTreeDiscoveryConfiguration,
+    BoundaryDiscoveryConfiguration, BoundaryDiscoveryContext, BoundaryDiscoveryContextIdentifier,
+    BoundaryDiscoveryTransition, CharacterClass, Delimiter, RawProfile, SealedTokenProfile,
+    TriggerIdentifier, TriggerSet,
 };
 use structural_codec::{
-    AtomCase, AtomForm, ConstructorCodec, LeafForm, ScalarLeaf, SequenceForm, StructuralEntry,
-    StructuralForm,
+    AcceptedDecodeForm, AddressedStructuralTable, AtomCase, AtomDescriptor, ConstructorCodec,
+    ContextualTextualPolicy, DecodeFormId, EncodedConstructorId, EncodedLanguage, LeafCodec,
+    SharedDescriptor, StructuralEntry, StructuralRule, StructuralVocabularyIdentity,
+    TableIdentityPayload, TargetLayoutIdentity, TextualRenderingPolicy, UnaryRule,
 };
 
 use crate::declaration::{
@@ -31,25 +20,39 @@ use crate::declaration::{
 };
 use crate::error::UniverseError;
 use crate::reference::EncodedReference;
+use crate::rules::{SchemaRule, SignatureApplicationDelimitedRule, core_rule, signature_rule};
 use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder, ScalarSlot};
 
-// The universe type ids, local numbers echoing the slice-one worked examples.
-pub const INTEGER: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(10);
-pub const FLOAT: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(9);
-pub const TEXT: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(33);
-pub const SUMMARY: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(32);
-pub const DOCUMENTATION: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(31);
-pub const COMMIT_SEQUENCE: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(1);
-pub const STATE_DIGEST: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(2);
-pub const DATABASE_MARKER: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(3);
-pub const FIELD: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(23);
+// Schema-owned local identities retain the established values, now in the closed
+// Schema namespace rather than the retired fixture universe.
+pub const INTEGER: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(10);
+pub const FLOAT: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(9);
+pub const TEXT: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(33);
+pub const SUMMARY: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(32);
+pub const DOCUMENTATION: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(31);
+pub const COMMIT_SEQUENCE: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(1);
+pub const STATE_DIGEST: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(2);
+pub const DATABASE_MARKER: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(3);
+pub const FIELD: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(23);
 
 pub(crate) const PARENTHESIS_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(0);
 pub(crate) const SQUARE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(1);
 pub(crate) const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
 pub(crate) const APPLICATION_OPERATOR: TriggerIdentifier = TriggerIdentifier::new(3);
+pub(crate) const PIPE_CARRIER: TriggerIdentifier = TriggerIdentifier::new(4);
 pub(crate) const WHITESPACE_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(5);
 pub(crate) const COMMENT_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(6);
+pub(crate) const ROOT_CONTEXT: BoundaryDiscoveryContextIdentifier =
+    BoundaryDiscoveryContextIdentifier::new(1);
 
 pub(crate) fn standard_token_profile() -> SealedTokenProfile {
     RawProfile::standard()
@@ -57,8 +60,52 @@ pub(crate) fn standard_token_profile() -> SealedTokenProfile {
         .expect("the standard schema token profile seals")
 }
 
-/// The fixture family: its stringless universe (id registry, names, and Encoded-layout
-/// signature derivation) and the whole schema as a `EncodedSchema` value.
+pub(crate) fn standard_block_discovery() -> BlockTreeDiscoveryConfiguration {
+    BlockTreeDiscoveryConfiguration::new(
+        BoundaryDiscoveryConfiguration::new(
+            ROOT_CONTEXT,
+            vec![BoundaryDiscoveryContext::new(
+                ROOT_CONTEXT,
+                TriggerSet::new(vec![
+                    PARENTHESIS_BOUNDARY,
+                    SQUARE_BOUNDARY,
+                    BRACE_BOUNDARY,
+                    PIPE_CARRIER,
+                    WHITESPACE_TRIVIA,
+                    COMMENT_TRIVIA,
+                ]),
+            )],
+            vec![
+                BoundaryDiscoveryTransition::new(ROOT_CONTEXT, PARENTHESIS_BOUNDARY, ROOT_CONTEXT),
+                BoundaryDiscoveryTransition::new(ROOT_CONTEXT, SQUARE_BOUNDARY, ROOT_CONTEXT),
+                BoundaryDiscoveryTransition::new(ROOT_CONTEXT, BRACE_BOUNDARY, ROOT_CONTEXT),
+            ],
+        ),
+        vec![
+            BlockPrefixAttachment::new(
+                PARENTHESIS_BOUNDARY,
+                BlockPrefixRule::new(".", CharacterClass::AsciiAlphabetic),
+            ),
+            BlockPrefixAttachment::new(
+                SQUARE_BOUNDARY,
+                BlockPrefixRule::new(".", CharacterClass::AsciiAlphabetic),
+            ),
+            BlockPrefixAttachment::new(
+                BRACE_BOUNDARY,
+                BlockPrefixRule::new(".", CharacterClass::AsciiAlphabetic),
+            ),
+        ],
+    )
+}
+
+pub(crate) fn standard_textual_rendering() -> TextualRenderingPolicy {
+    TextualRenderingPolicy::new(vec![ContextualTextualPolicy::new(
+        ROOT_CONTEXT,
+        Some(WHITESPACE_TRIVIA),
+        Some(PIPE_CARRIER),
+    )])
+}
+
 #[derive(Clone, Debug)]
 pub struct FixtureFamily {
     universe: EncodedUniverse,
@@ -66,12 +113,8 @@ pub struct FixtureFamily {
 }
 
 impl FixtureFamily {
-    /// Build the family: intern the names, construct the real declarations, and
-    /// register every type in the universe.
     pub fn build() -> Self {
         let mut builder = EncodedUniverseBuilder::new();
-
-        // Scalar leaf primitives. `Text` is the string leaf the rejoin chain ends in.
         builder
             .primitive(INTEGER, "Integer", ScalarSlot::Integer)
             .expect("fixture namespace capacity");
@@ -81,40 +124,18 @@ impl FixtureFamily {
         builder
             .primitive_leaf(FLOAT, "Float")
             .expect("fixture namespace capacity");
-
-        // The Field meta-type has one bare positional constructor.
         builder
             .field_meta(FIELD, "Field")
             .expect("fixture namespace capacity");
 
-        // Newtypes over Integer.
-        let commit_sequence = builder
-            .intern("CommitSequence")
-            .expect("fixture namespace capacity");
-        let state_digest = builder
-            .intern("StateDigest")
-            .expect("fixture namespace capacity");
-        let text_name = builder.intern("Text").expect("fixture namespace capacity");
-        let summary_name = builder
-            .intern("Summary")
-            .expect("fixture namespace capacity");
-        let documentation_name = builder
-            .intern("Documentation")
-            .expect("fixture namespace capacity");
-        let database_marker = builder
-            .intern("DatabaseMarker")
-            .expect("fixture namespace capacity");
-
-        // Struct field names are ALWAYS the type-derived snake_case name — field names
-        // are illegal in text (psyche ruling 2026-07-19), so a field's name is a pure
-        // function of its type. The two `StateDigest` fields therefore derive the SAME
-        // name `state_digest`; position, not the name, tells them apart.
-        let commit_field = builder
-            .intern("commit_sequence")
-            .expect("fixture namespace capacity");
-        let state_field = builder
-            .intern("state_digest")
-            .expect("fixture namespace capacity");
+        let commit_sequence = builder.intern("CommitSequence").expect("fixture name");
+        let state_digest = builder.intern("StateDigest").expect("fixture name");
+        let text_name = builder.intern("Text").expect("fixture name");
+        let summary_name = builder.intern("Summary").expect("fixture name");
+        let documentation_name = builder.intern("Documentation").expect("fixture name");
+        let database_marker = builder.intern("DatabaseMarker").expect("fixture name");
+        let commit_field = builder.intern("commit_sequence").expect("fixture name");
+        let state_field = builder.intern("state_digest").expect("fixture name");
 
         let commit_declaration = EncodedDeclaration::public(EncodedType::Newtype(
             EncodedNewtype::new(commit_sequence, EncodedReference::Integer),
@@ -165,188 +186,169 @@ impl FixtureFamily {
         &self.schema
     }
 
-    /// The standard authored structural table (brace newtype bodies).
-    pub fn standard_table(&self) -> Result<AddressedStructuralTable, UniverseError> {
+    pub fn standard_table(&self) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
         self.table(Delimiter::Brace)
     }
 
-    /// An authored structural table whose newtype-declaration bodies use `delimiter`.
-    /// Varying the delimiter yields a table that differs from another only in textual
-    /// form — the law-4 material.
-    pub fn table(&self, delimiter: Delimiter) -> Result<AddressedStructuralTable, UniverseError> {
-        let entries = self
-            .entries(delimiter)
+    pub fn table(
+        &self,
+        delimiter: Delimiter,
+    ) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+        self.seal_entries(
+            self.entries(
+                delimiter,
+                [
+                    Some(COMMIT_SEQUENCE),
+                    Some(STATE_DIGEST),
+                    Some(STATE_DIGEST),
+                ],
+            )
             .into_iter()
-            .map(|entry| (entry.core_type, entry))
-            .collect();
-        self.seal_entries(entries)
+            .map(|entry| (entry.encoded_type(), entry))
+            .collect(),
+        )
     }
 
-    /// A table whose `CommitSequence` codec signature is deliberately wrong (empty,
-    /// where the Encoded layout has `[Integer]`). It is the negative control for the
-    /// signature-vs-Encoded guard: `EncodedUniverse::validate_table` must reject it loudly.
-    pub fn corrupted_table(&self) -> Result<AddressedStructuralTable, UniverseError> {
-        let mut entries: BTreeMap<ScopedEncodedTypeId, StructuralEntry> = self
-            .entries(Delimiter::Brace)
+    /// Negative control: this record keeps the executable form but replaces one
+    /// archived layout witness.  Validation must reject the mismatch.
+    pub fn corrupted_table(&self) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+        self.seal_entries(
+            self.entries(
+                Delimiter::Brace,
+                [Some(STATE_DIGEST), Some(STATE_DIGEST), Some(STATE_DIGEST)],
+            )
             .into_iter()
-            .map(|entry| (entry.core_type, entry))
-            .collect();
-        if let Some(entry) = entries.get_mut(&COMMIT_SEQUENCE) {
-            entry.constructors[0].signature = PositionalSignature::default();
-        }
-        self.seal_entries(entries)
+            .map(|entry| (entry.encoded_type(), entry))
+            .collect(),
+        )
     }
 
-    /// The Encoded layout identity these forms target — the schema's own content hash,
-    /// tying the table to the exact stringless Encoded it decodes and encodes.
-    fn encoded_layout(&self) -> Result<EncodedLayoutIdentity, UniverseError> {
-        self.schema
-            .content_identity()
-            .map(|hash| EncodedLayoutIdentity(*hash.bytes()))
+    fn encoded_layout(&self) -> Result<TargetLayoutIdentity, UniverseError> {
+        let bytes = self
+            .schema
+            .to_archive_bytes()
             .map_err(|error| match error {
-                crate::error::EncodedIdentityError::Archive(archive) => {
+                crate::error::EncodedSchemaLoadError::Archive(archive) => {
                     UniverseError::Table(structural_codec::TableError::Archive(archive))
                 }
-            })
+                crate::error::EncodedSchemaLoadError::Schema(_) => unreachable!("fresh schema"),
+            })?;
+        Ok(TargetLayoutIdentity::derive(bytes.as_ref()))
     }
 
     fn seal_entries(
         &self,
-        entries: BTreeMap<ScopedEncodedTypeId, StructuralEntry>,
-    ) -> Result<AddressedStructuralTable, UniverseError> {
+        entries: BTreeMap<structural_codec::ScopedEncodedTypeId, StructuralEntry<SchemaRule>>,
+    ) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
         let profile = standard_token_profile();
-        let payload = TableIdentityPayload {
-            core_universe: ENCODED_UNIVERSE,
-            core_layout_identity: self.encoded_layout()?,
-            raw_profile_identity: RawProfileIdentity::from_profile(&profile),
-            trivia_triggers: TriggerSet::new(vec![WHITESPACE_TRIVIA, COMMENT_TRIVIA]),
-            leaf_codec_contracts: Vec::new(),
-            entries,
-        };
-        Ok(AddressedStructuralTable::seal(payload, &profile)?)
+        Ok(AddressedStructuralTable::seal(
+            TableIdentityPayload::new(
+                EncodedLanguage::Schema,
+                self.encoded_layout()?,
+                profile.identity(),
+                StructuralVocabularyIdentity::language(
+                    b"core-schema fixture typed structural vocabulary",
+                ),
+                standard_block_discovery(),
+                standard_textual_rendering(),
+                entries,
+            ),
+            &profile,
+        )?)
     }
 
-    /// The authored structural entries. Signatures are written explicitly here — as
-    /// a table author would — so that validating them against the Encoded layout is a
-    /// real check, not a tautology.
-    fn entries(&self, newtype_delimiter: Delimiter) -> Vec<StructuralEntry> {
+    fn entries(
+        &self,
+        delimiter: Delimiter,
+        database_signature: [Option<structural_codec::ScopedEncodedTypeId>; 3],
+    ) -> Vec<StructuralEntry<SchemaRule>> {
         vec![
-            Self::leaf_entry(INTEGER, ScalarLeaf::Integer),
-            Self::leaf_entry(FLOAT, ScalarLeaf::Float),
-            Self::leaf_entry(TEXT, ScalarLeaf::Text),
-            Self::delegate_entry(SUMMARY, TEXT),
-            Self::delegate_entry(DOCUMENTATION, SUMMARY),
-            self.newtype_entry(COMMIT_SEQUENCE, INTEGER, newtype_delimiter),
-            self.newtype_entry(STATE_DIGEST, INTEGER, newtype_delimiter),
-            Self::struct_entry(),
-            Self::field_entry(),
+            Self::unary(INTEGER, SharedDescriptor::Leaf(LeafCodec::Integer)),
+            Self::unary(FLOAT, SharedDescriptor::Leaf(LeafCodec::Float)),
+            Self::unary(TEXT, SharedDescriptor::Leaf(LeafCodec::Text)),
+            Self::unary(
+                SUMMARY,
+                SharedDescriptor::Delegate {
+                    target: TEXT,
+                    payload: None,
+                },
+            ),
+            Self::unary(
+                DOCUMENTATION,
+                SharedDescriptor::Delegate {
+                    target: SUMMARY,
+                    payload: None,
+                },
+            ),
+            Self::newtype(COMMIT_SEQUENCE, delimiter, INTEGER),
+            Self::newtype(STATE_DIGEST, delimiter, INTEGER),
+            Self::database_marker(database_signature),
+            Self::unary(
+                FIELD,
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            ),
         ]
     }
 
-    /// A leaf primitive: one constructor, a scalar leaf form, empty signature.
-    fn leaf_entry(core_type: ScopedEncodedTypeId, scalar: ScalarLeaf) -> StructuralEntry {
-        let form = StructuralForm::Leaf(LeafForm::scalar(scalar));
-        StructuralEntry::new(
-            core_type,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(core_type, 0),
-                vec![form.clone()],
-                form,
-                PositionalSignature::default(),
-            )],
+    fn unary(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        descriptor: SharedDescriptor,
+    ) -> StructuralEntry<SchemaRule> {
+        Self::entry(
+            type_id,
+            core_rule(StructuralRule::Unary(
+                UnaryRule::new(descriptor).expect("kernel role"),
+            )),
         )
     }
 
-    /// A transparent newtype value wrapper: one constructor delegating to the inner
-    /// type. Its signature is `[inner]` — the wrapped reference's type.
-    fn delegate_entry(
-        core_type: ScopedEncodedTypeId,
-        inner: ScopedEncodedTypeId,
-    ) -> StructuralEntry {
-        let form = StructuralForm::delegate(inner);
-        StructuralEntry::new(
-            core_type,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(core_type, 0),
-                vec![form.clone()],
-                form,
-                PositionalSignature::new(vec![inner]),
-            )],
-        )
-    }
-
-    /// A newtype declaration `Object.{ Inner }`, authored from the object-prefixed
-    /// vocabulary and normalized to the kernel. Signature `[inner]`.
-    fn newtype_entry(
-        &self,
-        core_type: ScopedEncodedTypeId,
-        inner: ScopedEncodedTypeId,
+    fn newtype(
+        type_id: structural_codec::ScopedEncodedTypeId,
         delimiter: Delimiter,
-    ) -> StructuralEntry {
-        let form = AuthoringForm::ObjectPrefixed(ObjectSymbolPrefixedBlock {
-            object: AtomForm::with_case(AtomCase::PascalCase),
-            operator: APPLICATION_OPERATOR,
-            boundary: Self::boundary_trigger(delimiter),
-            delimiter,
-            sequence: SequenceForm::Product(vec![StructuralForm::pascal_atom()]),
-        })
-        .normalize();
-        StructuralEntry::new(
-            core_type,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(core_type, 0),
-                vec![form.clone()],
-                form,
-                PositionalSignature::new(vec![inner]),
-            )],
-        )
-    }
-
-    /// The `DatabaseMarker` struct declaration `Object.{ Field Field Field }` — a
-    /// fixed product of exactly three delegated fields, matching its three Encoded
-    /// fields. Signature `[CommitSequence StateDigest StateDigest]` — the fields'
-    /// referenced types, in order.
-    fn struct_entry() -> StructuralEntry {
-        let field_count = 3;
-        let form = StructuralForm::application(
+        reference: structural_codec::ScopedEncodedTypeId,
+    ) -> StructuralEntry<SchemaRule> {
+        let rule = SignatureApplicationDelimitedRule::new(
             APPLICATION_OPERATOR,
-            StructuralForm::pascal_atom(),
-            StructuralForm::Delimited {
-                boundary: BRACE_BOUNDARY,
-                delimiter: Delimiter::Brace,
-                sequence: SequenceForm::Product(
-                    std::iter::repeat_with(|| StructuralForm::delegate(FIELD))
-                        .take(field_count)
-                        .collect(),
-                ),
-            },
-        );
-        StructuralEntry::new(
-            DATABASE_MARKER,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(DATABASE_MARKER, 0),
-                vec![form.clone()],
-                form,
-                PositionalSignature::new(vec![COMMIT_SEQUENCE, STATE_DIGEST, STATE_DIGEST]),
-            )],
+            Self::boundary_trigger(delimiter),
+            SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            1,
+            Some(1),
+            [Some(reference), None, None],
         )
+        .expect("schema roles");
+        Self::entry(type_id, signature_rule(rule))
     }
 
-    /// The `Field` meta-type: ONE positional constructor, the bare type reference.
-    /// Field names are illegal in every Protos surface (psyche ruling 2026-07-19:
-    /// "field names are now COMPLETLY ILLEGAL EVERYWHERE"), so a field carries nothing
-    /// but the type standing at its position — an explicit `name.Type` no longer
-    /// parses. The signature is empty: a field's payload is a name atom, not a typed
-    /// sub-structure.
-    fn field_entry() -> StructuralEntry {
-        let type_only = StructuralForm::pascal_atom();
+    fn database_marker(
+        signature: [Option<structural_codec::ScopedEncodedTypeId>; 3],
+    ) -> StructuralEntry<SchemaRule> {
+        let rule = SignatureApplicationDelimitedRule::new(
+            APPLICATION_OPERATOR,
+            BRACE_BOUNDARY,
+            SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            SharedDescriptor::Delegate {
+                target: FIELD,
+                payload: None,
+            },
+            3,
+            Some(3),
+            signature,
+        )
+        .expect("schema roles");
+        Self::entry(DATABASE_MARKER, signature_rule(rule))
+    }
+
+    fn entry(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        rule: SchemaRule,
+    ) -> StructuralEntry<SchemaRule> {
         StructuralEntry::new(
-            FIELD,
+            type_id,
             vec![ConstructorCodec::new(
-                EncodedConstructorId::new(FIELD, 0),
-                vec![type_only.clone()],
-                type_only,
-                PositionalSignature::default(),
+                EncodedConstructorId::under(type_id, 0),
+                vec![AcceptedDecodeForm::new(DecodeFormId::new(0), rule.clone())],
+                rule,
             )],
         )
     }

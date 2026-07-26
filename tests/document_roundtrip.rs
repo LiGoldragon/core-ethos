@@ -77,6 +77,7 @@ fn builtin_type_declarations_are_typed_redefinitions() {
         );
         let textual = TextualSchema::schema_document().expect("seal document grammar");
         let mut names = NameTable::new(IdentifierNamespace::Schema);
+        let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();
         let error = textual
             .decode_document(&document, &mut names)
             .expect_err("a builtin spelling cannot declare a user type");
@@ -88,7 +89,15 @@ fn builtin_type_declarations_are_typed_redefinitions() {
             );
         };
         assert_eq!(redefinition.builtin(), builtin);
-        assert_eq!(text(&names, redefinition.identifier()), builtin.spelling());
+        assert!(
+            names.resolve(redefinition.identifier()).is_err(),
+            "a rejected declaration does not commit its speculative identifier"
+        );
+        assert_eq!(
+            names.to_archive_bytes().expect("after").as_ref(),
+            bytes_before.as_slice(),
+            "the failed document decode leaves the name table unchanged"
+        );
         let bytes = redefinition
             .to_archive_bytes()
             .expect("archive typed redefinition");

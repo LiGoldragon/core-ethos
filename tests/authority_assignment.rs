@@ -10,7 +10,11 @@ use core_schema::{
     SingleTypeReferenceProjection, StructuralRedefinition, UniverseError,
 };
 use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
-use structural_codec::ids::{EncodedUniverseId, ScopedEncodedTypeId};
+use structural_codec::{EncodedLanguage, ScopedEncodedTypeId};
+
+fn schema_id(local: u16) -> ScopedEncodedTypeId {
+    ScopedEncodedTypeId::schema(local)
+}
 
 fn schema_table(names: &[&str]) -> (NameTable, Vec<Identifier>) {
     let mut table = NameTable::new(IdentifierNamespace::Schema);
@@ -40,7 +44,7 @@ fn authority_assignment_preserves_schema_identifiers_and_complete_table() {
     )));
 
     let universe = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(42),
+        EncodedLanguage::Schema,
         vec![
             AssignedMember::new(9, *target, AssignedKind::Declaration(target_declaration)),
             AssignedMember::new(3, *record, AssignedKind::Declaration(declaration.clone())),
@@ -55,10 +59,7 @@ fn authority_assignment_preserves_schema_identifiers_and_complete_table() {
     .expect("Schema-home assignment is accepted");
 
     let stored = universe
-        .encoded_type(structural_codec::ids::ScopedEncodedTypeId::new(
-            EncodedUniverseId::new(42),
-            3,
-        ))
+        .encoded_type(schema_id(3))
         .expect("record declaration");
     assert_eq!(
         stored,
@@ -85,7 +86,7 @@ fn assignment_transfers_complete_composed_name_table() {
     let composed = schema.compose(&logos).expect("borrow Logos slice");
 
     let universe = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(43),
+        EncodedLanguage::Schema,
         vec![
             AssignedMember::new(
                 0,
@@ -127,7 +128,7 @@ fn logos_identifier_is_never_silently_converted_to_schema() {
         EncodedReference::Integer,
     )));
     let error = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(101),
+        EncodedLanguage::Schema,
         vec![AssignedMember::new(
             0,
             logos_record,
@@ -148,7 +149,7 @@ fn non_schema_name_table_home_is_rejected() {
     let mut logos = NameTable::new(IdentifierNamespace::Logos);
     let identifier = logos.intern(Name::new("Record")).expect("fixture fits");
     let error = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(7),
+        EncodedLanguage::Schema,
         vec![AssignedMember::new(
             0,
             identifier,
@@ -169,7 +170,7 @@ fn non_schema_name_table_home_is_rejected() {
 fn declaration_identifier_must_match_assigned_identifier() {
     let (names, identifiers) = schema_table(&["Assigned", "Stored"]);
     let error = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(7),
+        EncodedLanguage::Schema,
         vec![AssignedMember::new(
             0,
             identifiers[0],
@@ -190,7 +191,7 @@ fn declaration_identifier_must_match_assigned_identifier() {
 fn duplicate_assigned_identity_is_rejected() {
     let (names, identifiers) = schema_table(&["Alpha", "Beta"]);
     let clash = EncodedUniverse::from_assignment(
-        EncodedUniverseId::new(7),
+        EncodedLanguage::Schema,
         vec![
             AssignedMember::new(3, identifiers[0], AssignedKind::LeafPrimitive),
             AssignedMember::new(3, identifiers[1], AssignedKind::LeafPrimitive),
@@ -199,7 +200,7 @@ fn duplicate_assigned_identity_is_rejected() {
     );
     assert!(matches!(
         clash,
-        Err(UniverseError::DuplicateMemberIdentity(id)) if id == ScopedEncodedTypeId::new(EncodedUniverseId::new(7), 3)
+        Err(UniverseError::DuplicateMemberIdentity(id)) if id == schema_id(3)
     ));
 }
 
@@ -210,7 +211,7 @@ fn duplicate_assigned_identity_is_rejected() {
 fn direct_builder_seal_rejects_wrong_home_foreign_unresolved_and_duplicate_members() {
     let wrong_home =
         EncodedUniverseBuilder::from_name_table(NameTable::new(IdentifierNamespace::Logos))
-            .build(EncodedUniverseId::new(8));
+            .build(EncodedLanguage::Schema);
     assert!(matches!(
         wrong_home,
         Err(UniverseError::WrongNameTableHome {
@@ -219,60 +220,47 @@ fn direct_builder_seal_rejects_wrong_home_foreign_unresolved_and_duplicate_membe
     ));
 
     let mut foreign_builder = EncodedUniverseBuilder::new();
-    foreign_builder.primitive_at(
-        ScopedEncodedTypeId::new(EncodedUniverseId::new(8), 0),
-        Identifier::Logos(0),
-        ScalarSlot::Integer,
-    );
+    foreign_builder.primitive_at(schema_id(0), Identifier::Logos(0), ScalarSlot::Integer);
     assert!(matches!(
-        foreign_builder.build(EncodedUniverseId::new(8)),
+        foreign_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::WrongSchemaIdentifier(Identifier::Logos(0)))
     ));
 
     let mut unresolved_builder = EncodedUniverseBuilder::new();
-    unresolved_builder.leaf_at(
-        ScopedEncodedTypeId::new(EncodedUniverseId::new(8), 0),
-        Identifier::Schema(99),
-    );
+    unresolved_builder.leaf_at(schema_id(0), Identifier::Schema(99));
     assert!(matches!(
-        unresolved_builder.build(EncodedUniverseId::new(8)),
+        unresolved_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::Names(_))
     ));
 
     let mut duplicate_id_builder = EncodedUniverseBuilder::new();
     let alpha = duplicate_id_builder.intern("Alpha").unwrap();
     let beta = duplicate_id_builder.intern("Beta").unwrap();
-    let duplicate_id = ScopedEncodedTypeId::new(EncodedUniverseId::new(8), 0);
+    let duplicate_id = schema_id(0);
     duplicate_id_builder.leaf_at(duplicate_id, alpha);
     duplicate_id_builder.leaf_at(duplicate_id, beta);
     assert!(matches!(
-        duplicate_id_builder.build(EncodedUniverseId::new(8)),
+        duplicate_id_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::DuplicateMemberIdentity(id)) if id == duplicate_id
     ));
 
     let mut duplicate_name_builder = EncodedUniverseBuilder::new();
     let alpha = duplicate_name_builder.intern("Alpha").unwrap();
-    duplicate_name_builder.leaf_at(
-        ScopedEncodedTypeId::new(EncodedUniverseId::new(8), 0),
-        alpha,
-    );
-    duplicate_name_builder.leaf_at(
-        ScopedEncodedTypeId::new(EncodedUniverseId::new(8), 1),
-        alpha,
-    );
+    duplicate_name_builder.leaf_at(schema_id(0), alpha);
+    duplicate_name_builder.leaf_at(schema_id(1), alpha);
     assert!(matches!(
-        duplicate_name_builder.build(EncodedUniverseId::new(8)),
+        duplicate_name_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::DuplicateMemberName(name)) if name == alpha
     ));
 }
 
 #[test]
-fn direct_builder_seal_rejects_member_from_another_universe() {
-    let expected = EncodedUniverseId::new(12);
-    let actual = EncodedUniverseId::new(13);
+fn direct_builder_seal_rejects_member_from_another_language() {
+    let expected = EncodedLanguage::Schema;
+    let actual = EncodedLanguage::Logos;
     let mut builder = EncodedUniverseBuilder::new();
     let alpha = builder.intern("Alpha").unwrap();
-    let foreign_member = ScopedEncodedTypeId::new(actual, 0);
+    let foreign_member = ScopedEncodedTypeId::logos(0);
     builder.leaf_at(foreign_member, alpha);
 
     assert!(matches!(
@@ -286,15 +274,15 @@ fn direct_builder_seal_rejects_member_from_another_universe() {
 }
 
 #[test]
-fn direct_builder_seal_rejects_nested_plain_reference_from_another_universe() {
-    let expected = EncodedUniverseId::new(14);
-    let actual = EncodedUniverseId::new(15);
+fn direct_builder_seal_rejects_nested_plain_reference_from_another_language() {
+    let expected = EncodedLanguage::Schema;
+    let actual = EncodedLanguage::Logos;
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     let target = builder.intern("Target").unwrap();
-    let foreign_target = ScopedEncodedTypeId::new(actual, 1);
+    let foreign_target = ScopedEncodedTypeId::logos(1);
     builder.declaration(
-        ScopedEncodedTypeId::new(expected, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -316,15 +304,15 @@ fn direct_builder_seal_rejects_nested_plain_reference_from_another_universe() {
 }
 
 #[test]
-fn direct_builder_seal_rejects_nested_scalar_reference_from_another_universe() {
-    let expected = EncodedUniverseId::new(16);
-    let actual = EncodedUniverseId::new(17);
+fn direct_builder_seal_rejects_nested_scalar_reference_from_another_language() {
+    let expected = EncodedLanguage::Schema;
+    let actual = EncodedLanguage::Logos;
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     let integer = builder.intern("Integer").unwrap();
-    let foreign_integer = ScopedEncodedTypeId::new(actual, 1);
+    let foreign_integer = ScopedEncodedTypeId::logos(1);
     builder.declaration(
-        ScopedEncodedTypeId::new(expected, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -347,11 +335,11 @@ fn direct_builder_seal_rejects_nested_scalar_reference_from_another_universe() {
 
 #[test]
 fn direct_builder_seal_rejects_an_absent_scalar_slot() {
-    let universe = EncodedUniverseId::new(18);
+    let language = EncodedLanguage::Schema;
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     builder.declaration(
-        ScopedEncodedTypeId::new(universe, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Integer,
@@ -359,7 +347,7 @@ fn direct_builder_seal_rejects_an_absent_scalar_slot() {
     );
 
     assert!(matches!(
-        builder.build(universe),
+        builder.build(language),
         Err(UniverseError::MissingScalarSlot {
             slot: ScalarSlot::Integer,
             reference: EncodedReference::Integer,
@@ -369,12 +357,12 @@ fn direct_builder_seal_rejects_an_absent_scalar_slot() {
 
 #[test]
 fn direct_builder_seal_rejects_a_name_table_only_plain_target() {
-    let universe = EncodedUniverseId::new(19);
+    let language = EncodedLanguage::Schema;
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     let target = builder.intern("TableOnlyTarget").unwrap();
     builder.declaration(
-        ScopedEncodedTypeId::new(universe, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Plain(target),
@@ -382,7 +370,7 @@ fn direct_builder_seal_rejects_a_name_table_only_plain_target() {
     );
 
     assert!(matches!(
-        builder.build(universe),
+        builder.build(language),
         Err(UniverseError::ReferenceTargetUnregistered {
             identifier,
             reference: EncodedReference::Plain(reference),
@@ -392,11 +380,11 @@ fn direct_builder_seal_rejects_a_name_table_only_plain_target() {
 
 #[test]
 fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
-    let universe = EncodedUniverseId::new(20);
+    let language = EncodedLanguage::Schema;
     let mut scalar_builder = EncodedUniverseBuilder::new();
     let record = scalar_builder.intern("Record").unwrap();
     scalar_builder.declaration(
-        ScopedEncodedTypeId::new(universe, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -406,7 +394,7 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
         ))),
     );
     assert!(matches!(
-        scalar_builder.build(universe),
+        scalar_builder.build(language),
         Err(UniverseError::MissingScalarSlot {
             slot: ScalarSlot::Integer,
             reference: EncodedReference::Integer,
@@ -417,7 +405,7 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
     let record = member_builder.intern("Record").unwrap();
     let target = member_builder.intern("TableOnlyTarget").unwrap();
     member_builder.declaration(
-        ScopedEncodedTypeId::new(universe, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -427,7 +415,7 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
         ))),
     );
     assert!(matches!(
-        member_builder.build(universe),
+        member_builder.build(language),
         Err(UniverseError::ReferenceTargetUnregistered {
             identifier,
             reference: EncodedReference::Plain(reference),
@@ -437,15 +425,15 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
 
 #[test]
 fn direct_builder_seal_resolves_registered_scalar_and_plain_targets() {
-    let universe_id = EncodedUniverseId::new(21);
+    let language = EncodedLanguage::Schema;
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     let target = builder.intern("Target").unwrap();
     let integer = builder.intern("Integer").unwrap();
-    let target_id = ScopedEncodedTypeId::new(universe_id, 1);
-    let integer_id = ScopedEncodedTypeId::new(universe_id, 2);
+    let target_id = schema_id(1);
+    let integer_id = schema_id(2);
     builder.declaration(
-        ScopedEncodedTypeId::new(universe_id, 0),
+        schema_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Plain(target),
@@ -461,7 +449,7 @@ fn direct_builder_seal_resolves_registered_scalar_and_plain_targets() {
     builder.primitive_at(integer_id, integer, ScalarSlot::Integer);
 
     let universe = builder
-        .build(universe_id)
+        .build(language)
         .expect("registered scalar and member references satisfy the seal");
     assert_eq!(
         universe
@@ -543,13 +531,13 @@ fn assert_archiveable_redefinition(
 }
 
 fn direct_builder_builtin_member(
-    universe: EncodedUniverseId,
+    language: EncodedLanguage,
     builtin: BuiltinReference,
     member: BuiltinWitnessMember,
 ) -> (Identifier, Result<EncodedUniverse, UniverseError>) {
     let mut builder = EncodedUniverseBuilder::new();
     let identifier = builder.intern(builtin.spelling()).expect("intern builtin");
-    let id = ScopedEncodedTypeId::new(universe, 0);
+    let id = schema_id(0);
     match member {
         BuiltinWitnessMember::Scalar(slot) => builder.primitive_at(id, identifier, slot),
         BuiltinWitnessMember::LeafPrimitive => builder.leaf_at(id, identifier),
@@ -558,7 +546,7 @@ fn direct_builder_builtin_member(
             builder.declaration(id, builtin_declaration(identifier))
         }
     }
-    (identifier, builder.build(universe))
+    (identifier, builder.build(language))
 }
 
 fn assigned_builtin_member(identifier: Identifier, member: BuiltinWitnessMember) -> AssignedMember {
@@ -583,11 +571,11 @@ fn direct_builder_rejects_every_builtin_as_an_archiveable_redefinition() {
         7,
         "the builtin lexicon is exhaustive"
     );
-    let universe = EncodedUniverseId::new(22);
+    let language = EncodedLanguage::Schema;
 
     for builtin in BuiltinReference::ALL {
         for member in BuiltinWitnessMember::ALL {
-            let (identifier, result) = direct_builder_builtin_member(universe, builtin, member);
+            let (identifier, result) = direct_builder_builtin_member(language, builtin, member);
             if is_sanctioned_builtin_member(builtin, member) {
                 result.expect("the matching scalar-slot builtin realization seals");
             } else {
@@ -602,14 +590,14 @@ fn direct_builder_rejects_every_builtin_as_an_archiveable_redefinition() {
 /// the standard-universe definitions.
 #[test]
 fn from_assignment_rejects_every_builtin_as_an_archiveable_redefinition() {
-    let universe = EncodedUniverseId::new(23);
+    let language = EncodedLanguage::Schema;
 
     for builtin in BuiltinReference::ALL {
         for member in BuiltinWitnessMember::ALL {
             let (names, identifiers) = schema_table(&[builtin.spelling()]);
             let identifier = identifiers[0];
             let result = EncodedUniverse::from_assignment(
-                universe,
+                language,
                 vec![assigned_builtin_member(identifier, member)],
                 names,
             );

@@ -1,89 +1,57 @@
-//! The six-slot document grammar: the universe types and authored `structural-codec`
-//! forms that let [`TextualSchema`] decode a whole spirit-min-shaped document —
-//! `imports {} input [] output [] types {} generics {} impls {}` — into a full
-//! [`EncodedSchema`], and encode it back.
-//!
-//! Unlike the per-declaration fixture universe ([`crate::fixture`]), these are the
-//! GRAMMAR types self-hosted in `schema-language`'s `root.schema`: a `TypeReference`
-//! disjoint (scalar leaves, single-type projections, and the `Declared` name form),
-//! a `Declaration` disjoint (newtype, struct, enumeration), the `types` and interface
-//! brackets, and the `Field` meta-type. Decoding dispatches by KIND and PROJECTION
-//! through the disjoint constructors — a scalar or projection keyword is matched as a
-//! `Literal`, and the winning constructor index (never a head string a reifier reads
-//! ad hoc) names the Encoded reference kind. [`ReferenceConstructor`] and
-//! [`DeclarationConstructor`] name those constructor-index contact points so the
-//! authored table and the reifier can never drift.
-//!
-//! [`TextualSchema`]: crate::textual::TextualSchema
-//! [`EncodedSchema`]: crate::declaration::EncodedSchema
+//! The six-slot document grammar as archived typed structural records.
 
 use std::collections::BTreeMap;
 
-use raw_discovery::{Delimiter, TriggerSet};
-use structural_codec::ids::{EncodedConstructorId, PositionalSignature, ScopedEncodedTypeId};
-use structural_codec::table::{
-    AddressedStructuralTable, EncodedLayoutIdentity, RawProfileIdentity, TableIdentityPayload,
+use structural_codec::{
+    AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedRule, ApplicationRule,
+    AtomCase, AtomDescriptor, ConstructorCodec, DecodeFormId, EncodedConstructorId,
+    EncodedLanguage, SharedDescriptor, StructuralEntry, StructuralRule,
+    StructuralVocabularyIdentity, TableIdentityPayload, TargetLayoutIdentity, UnaryRule,
 };
-use structural_codec::{ConstructorCodec, SequenceForm, StructuralEntry, StructuralForm};
 
 use crate::error::UniverseError;
 use crate::fixture::{
-    APPLICATION_OPERATOR, BRACE_BOUNDARY, COMMENT_TRIVIA, SQUARE_BOUNDARY, WHITESPACE_TRIVIA,
-    standard_token_profile,
+    APPLICATION_OPERATOR, BRACE_BOUNDARY, SQUARE_BOUNDARY, standard_block_discovery,
+    standard_textual_rendering, standard_token_profile,
 };
-use crate::universe::ENCODED_UNIVERSE;
+use crate::rules::{DelimitedRule, SchemaRule, core_rule, delimited_rule};
 
-/// The `TypeReference` grammar type: a reference met at a use site.
-pub const TYPE_REFERENCE: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(100);
-/// The `Field` meta-type: a bare positional `Type` struct field — field names are
-/// illegal, so there is no `name.Type` form.
-pub const FIELD: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(101);
-/// The `Declaration` grammar type: a newtype, struct, or enumeration declaration.
-pub const DECLARATION: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(102);
-/// The `types` block: a brace of declarations.
-pub const TYPES_BLOCK: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(103);
-/// One interface entry: a `Name.Payload` mail-type binding.
-pub const INTERFACE_VARIANT: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(104);
-/// An interface line: a bracket of interface entries (the `input` / `output` slot).
-pub const INTERFACE: ScopedEncodedTypeId = ScopedEncodedTypeId::fixture(105);
+pub const TYPE_REFERENCE: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(100);
+pub const FIELD: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(101);
+pub const DECLARATION: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(102);
+pub const TYPES_BLOCK: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(103);
+pub const INTERFACE_VARIANT: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(104);
+pub const INTERFACE: structural_codec::ScopedEncodedTypeId =
+    structural_codec::ScopedEncodedTypeId::schema(105);
 
-/// The number of root slots in the document layout: `imports input output types
-/// generics impls`, in that order.
 pub const DOCUMENT_SLOTS: usize = 6;
 
-/// The disjoint constructors of the [`TYPE_REFERENCE`] grammar type, in the fixed
-/// order the authored table lists them and the reifier reads them. The index of the
-/// winning constructor — not a head string — names the Encoded reference kind, so the
-/// dispatch is by kind and projection. `Declared` is last and excludes every builtin
-/// spelling, so its disjointness is structural rather than a constructor-order rule.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReferenceConstructor {
-    /// A bare reference name atom.
     Name,
-    /// A name applied to a reference payload.
     Application,
 }
 
 impl ReferenceConstructor {
-    /// Every reference constructor, in authored-table order.
     pub const ALL: [Self; 2] = [Self::Name, Self::Application];
 
-    /// This constructor's index in [`ALL`](Self::ALL) — its `constructor` id.
-    pub fn index(self) -> u32 {
-        Self::ALL
-            .iter()
-            .position(|constructor| *constructor == self)
-            .expect("every constructor is in ALL") as u32
+    pub fn index(self) -> u16 {
+        match self {
+            Self::Name => 0,
+            Self::Application => 1,
+        }
     }
 
-    /// The constructor a decode chose, by its index.
-    pub fn from_index(index: u32) -> Option<Self> {
+    pub fn from_index(index: u16) -> Option<Self> {
         Self::ALL.get(index as usize).copied()
     }
 }
 
-/// The disjoint constructors of the [`DECLARATION`] grammar type, in authored-table
-/// order. The winning index names the declared Encoded type's shape.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeclarationConstructor {
     Newtype,
@@ -92,102 +60,60 @@ pub enum DeclarationConstructor {
 }
 
 impl DeclarationConstructor {
-    /// Every declaration constructor, in authored-table order.
     pub const ALL: [Self; 3] = [Self::Newtype, Self::Struct, Self::Enumeration];
 
-    /// This constructor's index in [`ALL`](Self::ALL).
-    pub fn index(self) -> u32 {
-        Self::ALL
-            .iter()
-            .position(|constructor| *constructor == self)
-            .expect("every constructor is in ALL") as u32
+    pub fn index(self) -> u16 {
+        match self {
+            Self::Newtype => 0,
+            Self::Struct => 1,
+            Self::Enumeration => 2,
+        }
     }
 
-    /// The constructor a decode chose, by its index.
-    pub fn from_index(index: u32) -> Option<Self> {
+    pub fn from_index(index: u16) -> Option<Self> {
         Self::ALL.get(index as usize).copied()
     }
 }
 
-/// The document grammar as a sealed `structural-codec` table. Its two reference
-/// forms are structural only; builtin meaning is supplied by the universe during
-/// reification and reflection.
 #[derive(Clone, Debug)]
 pub struct SchemaDocumentGrammar {
-    table: AddressedStructuralTable,
+    table: AddressedStructuralTable<SchemaRule>,
 }
 
 impl SchemaDocumentGrammar {
-    /// Author and seal the grammar table.
     pub fn build() -> Result<Self, UniverseError> {
-        let author = DocumentTableAuthor;
         let profile = standard_token_profile();
-        let entries: BTreeMap<ScopedEncodedTypeId, StructuralEntry> = author
+        let entries = DocumentTableAuthor
             .entries()?
             .into_iter()
-            .map(|entry| (entry.core_type, entry))
-            .collect();
-        let payload = TableIdentityPayload {
-            core_universe: ENCODED_UNIVERSE,
-            // The grammar table targets no single Encoded layout — it decodes many — so
-            // its layout identity is a fixed grammar marker, not a schema hash. Table
-            // identity is excluded from Encoded value identity by construction.
-            core_layout_identity: EncodedLayoutIdentity([0x6d; 32]),
-            raw_profile_identity: RawProfileIdentity::from_profile(&profile),
-            trivia_triggers: TriggerSet::new(vec![WHITESPACE_TRIVIA, COMMENT_TRIVIA]),
-            leaf_codec_contracts: Vec::new(),
-            entries,
-        };
-        let table = AddressedStructuralTable::seal(payload, &profile)?;
+            .map(|entry| (entry.encoded_type(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let table = AddressedStructuralTable::seal(
+            TableIdentityPayload::new(
+                EncodedLanguage::Schema,
+                TargetLayoutIdentity::derive(b"core-schema six-slot document grammar"),
+                profile.identity(),
+                StructuralVocabularyIdentity::language(b"core-schema document typed vocabulary"),
+                standard_block_discovery(),
+                standard_textual_rendering(),
+                entries,
+            ),
+            &profile,
+        )?;
         Ok(Self { table })
     }
 
-    /// The sealed grammar table, keyed by the grammar type ids.
-    pub fn table(&self) -> &AddressedStructuralTable {
+    pub fn table(&self) -> &AddressedStructuralTable<SchemaRule> {
         &self.table
     }
 }
 
-/// Builds the grammar entries. Type references have exactly two textual forms:
-/// a bare name atom or a name applied to a reference payload. Builtin meaning is
-/// resolved only against the universe, never by grammar keywords.
 struct DocumentTableAuthor;
 
 impl DocumentTableAuthor {
-    fn reference_forms(
-        &self,
-    ) -> Result<Vec<(ReferenceConstructor, StructuralForm)>, UniverseError> {
+    fn entries(&self) -> Result<Vec<StructuralEntry<SchemaRule>>, UniverseError> {
         Ok(vec![
-            (ReferenceConstructor::Name, StructuralForm::pascal_atom()),
-            (
-                ReferenceConstructor::Application,
-                StructuralForm::application(
-                    APPLICATION_OPERATOR,
-                    StructuralForm::pascal_atom(),
-                    StructuralForm::delegate(TYPE_REFERENCE),
-                ),
-            ),
-        ])
-    }
-
-    /// A single-constructor entry: one disjoint decode form, the same canonical encode
-    /// form, and an empty signature (the grammar is not signature-validated against a
-    /// Encoded layout — see [`SchemaDocumentGrammar`]).
-    fn single(core_type: ScopedEncodedTypeId, form: StructuralForm) -> StructuralEntry {
-        StructuralEntry::new(
-            core_type,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(core_type, 0),
-                vec![form.clone()],
-                form,
-                PositionalSignature::default(),
-            )],
-        )
-    }
-
-    fn entries(&self) -> Result<Vec<StructuralEntry>, UniverseError> {
-        Ok(vec![
-            self.type_reference_entry()?,
+            self.type_reference_entry(),
             Self::field_entry(),
             self.declaration_entry(),
             Self::types_block_entry(),
@@ -196,120 +122,173 @@ impl DocumentTableAuthor {
         ])
     }
 
-    /// The `TypeReference` disjoint: bare name atom or name-applied payload.
-    fn type_reference_entry(&self) -> Result<StructuralEntry, UniverseError> {
-        let constructors = self
-            .reference_forms()?
-            .into_iter()
-            .map(|(constructor, form)| {
-                ConstructorCodec::new(
-                    EncodedConstructorId::new(TYPE_REFERENCE, constructor.index()),
-                    vec![form.clone()],
-                    form,
-                    PositionalSignature::default(),
-                )
-            })
-            .collect();
-        Ok(StructuralEntry::new(TYPE_REFERENCE, constructors))
-    }
-
-    /// The `Field` meta-type: a bare positional `Type`, and nothing else. Field names
-    /// are illegal in every Protos surface (psyche ruling 2026-07-19: "field names are
-    /// now COMPLETLY ILLEGAL EVERYWHERE"), so an explicit `name.Type` no longer parses
-    /// — a struct field is only the type standing at its position. Field types are
-    /// plain name atoms here, sufficient for the spirit-min structs whose fields are
-    /// all plain declared types.
-    fn field_entry() -> StructuralEntry {
-        let type_only = StructuralForm::pascal_atom();
-        StructuralEntry::new(
-            FIELD,
-            vec![ConstructorCodec::new(
-                EncodedConstructorId::new(FIELD, 0),
-                vec![type_only.clone()],
-                type_only,
-                PositionalSignature::default(),
-            )],
-        )
-    }
-
-    /// The `Declaration` disjoint: newtype `Name.Reference`, struct `Name.{ Field* }`,
-    /// or enumeration `Name.[ Variant* ]`. Newtype delegates to `TypeReference`,
-    /// retaining the reference constructor in its decoded value. Table sealing expands
-    /// that delegate against the complete grammar to prove the alternatives disjoint.
-    fn declaration_entry(&self) -> StructuralEntry {
-        let newtype = StructuralForm::application(
-            APPLICATION_OPERATOR,
-            StructuralForm::pascal_atom(),
-            StructuralForm::delegate(TYPE_REFERENCE),
-        );
-        let structure = StructuralForm::application(
-            APPLICATION_OPERATOR,
-            StructuralForm::pascal_atom(),
-            StructuralForm::Delimited {
-                boundary: BRACE_BOUNDARY,
-                delimiter: Delimiter::Brace,
-                sequence: SequenceForm::zero_or_more(StructuralForm::delegate(FIELD)),
-            },
-        );
-        let enumeration = StructuralForm::application(
-            APPLICATION_OPERATOR,
-            StructuralForm::pascal_atom(),
-            StructuralForm::Delimited {
-                boundary: SQUARE_BOUNDARY,
-                delimiter: Delimiter::SquareBracket,
-                sequence: SequenceForm::zero_or_more(StructuralForm::pascal_atom()),
-            },
-        );
-        let forms = [newtype, structure, enumeration];
-        let constructors = DeclarationConstructor::ALL
-            .iter()
-            .zip(forms)
-            .map(|(constructor, form)| {
-                ConstructorCodec::new(
-                    EncodedConstructorId::new(DECLARATION, constructor.index()),
-                    vec![form.clone()],
-                    form,
-                    PositionalSignature::default(),
-                )
-            })
-            .collect();
-        StructuralEntry::new(DECLARATION, constructors)
-    }
-
-    /// The `types` block: a brace of declaration delegates.
-    fn types_block_entry() -> StructuralEntry {
-        Self::single(
-            TYPES_BLOCK,
-            StructuralForm::Delimited {
-                boundary: BRACE_BOUNDARY,
-                delimiter: Delimiter::Brace,
-                sequence: SequenceForm::zero_or_more(StructuralForm::delegate(DECLARATION)),
-            },
-        )
-    }
-
-    /// One interface entry: `Name.Payload`, the payload a `TypeReference`.
-    fn interface_variant_entry() -> StructuralEntry {
-        Self::single(
-            INTERFACE_VARIANT,
-            StructuralForm::application(
+    fn type_reference_entry(&self) -> StructuralEntry<SchemaRule> {
+        let name = core_rule(StructuralRule::Unary(
+            UnaryRule::new(SharedDescriptor::Atom(AtomDescriptor::with_case(
+                AtomCase::PascalCase,
+            )))
+            .expect("kernel role"),
+        ));
+        let application = core_rule(StructuralRule::Application(
+            ApplicationRule::new(
                 APPLICATION_OPERATOR,
-                StructuralForm::pascal_atom(),
-                StructuralForm::delegate(TYPE_REFERENCE),
-            ),
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: TYPE_REFERENCE,
+                    payload: None,
+                },
+            )
+            .expect("kernel roles"),
+        ));
+        Self::entry(
+            TYPE_REFERENCE,
+            vec![
+                Self::codec(TYPE_REFERENCE, ReferenceConstructor::Name.index(), name),
+                Self::codec(
+                    TYPE_REFERENCE,
+                    ReferenceConstructor::Application.index(),
+                    application,
+                ),
+            ],
         )
     }
 
-    /// An interface line: a bracket of interface-entry delegates.
-    fn interface_entry() -> StructuralEntry {
-        Self::single(
-            INTERFACE,
-            StructuralForm::Delimited {
-                boundary: SQUARE_BOUNDARY,
-                delimiter: Delimiter::SquareBracket,
-                sequence: SequenceForm::zero_or_more(StructuralForm::delegate(INTERFACE_VARIANT)),
-            },
+    fn field_entry() -> StructuralEntry<SchemaRule> {
+        let rule = core_rule(StructuralRule::Unary(
+            UnaryRule::new(SharedDescriptor::Atom(AtomDescriptor::with_case(
+                AtomCase::PascalCase,
+            )))
+            .expect("kernel role"),
+        ));
+        Self::entry(FIELD, vec![Self::codec(FIELD, 0, rule)])
+    }
+
+    fn declaration_entry(&self) -> StructuralEntry<SchemaRule> {
+        let newtype = core_rule(StructuralRule::Application(
+            ApplicationRule::new(
+                APPLICATION_OPERATOR,
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: TYPE_REFERENCE,
+                    payload: None,
+                },
+            )
+            .expect("kernel roles"),
+        ));
+        let structure = core_rule(StructuralRule::ApplicationDelimited(
+            ApplicationDelimitedRule::new(
+                APPLICATION_OPERATOR,
+                BRACE_BOUNDARY,
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: FIELD,
+                    payload: None,
+                },
+                0,
+                None,
+            )
+            .expect("kernel roles"),
+        ));
+        let enumeration = core_rule(StructuralRule::ApplicationDelimited(
+            ApplicationDelimitedRule::new(
+                APPLICATION_OPERATOR,
+                SQUARE_BOUNDARY,
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                0,
+                None,
+            )
+            .expect("kernel roles"),
+        ));
+        Self::entry(
+            DECLARATION,
+            vec![
+                Self::codec(
+                    DECLARATION,
+                    DeclarationConstructor::Newtype.index(),
+                    newtype,
+                ),
+                Self::codec(
+                    DECLARATION,
+                    DeclarationConstructor::Struct.index(),
+                    structure,
+                ),
+                Self::codec(
+                    DECLARATION,
+                    DeclarationConstructor::Enumeration.index(),
+                    enumeration,
+                ),
+            ],
         )
+    }
+
+    fn types_block_entry() -> StructuralEntry<SchemaRule> {
+        let rule = delimited_rule(
+            DelimitedRule::new(
+                BRACE_BOUNDARY,
+                SharedDescriptor::Delegate {
+                    target: DECLARATION,
+                    payload: None,
+                },
+                0,
+                None,
+            )
+            .expect("schema roles"),
+        );
+        Self::entry(TYPES_BLOCK, vec![Self::codec(TYPES_BLOCK, 0, rule)])
+    }
+
+    fn interface_variant_entry() -> StructuralEntry<SchemaRule> {
+        let rule = core_rule(StructuralRule::Application(
+            ApplicationRule::new(
+                APPLICATION_OPERATOR,
+                SharedDescriptor::Atom(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: TYPE_REFERENCE,
+                    payload: None,
+                },
+            )
+            .expect("kernel roles"),
+        ));
+        Self::entry(
+            INTERFACE_VARIANT,
+            vec![Self::codec(INTERFACE_VARIANT, 0, rule)],
+        )
+    }
+
+    fn interface_entry() -> StructuralEntry<SchemaRule> {
+        let rule = delimited_rule(
+            DelimitedRule::new(
+                SQUARE_BOUNDARY,
+                SharedDescriptor::Delegate {
+                    target: INTERFACE_VARIANT,
+                    payload: None,
+                },
+                0,
+                None,
+            )
+            .expect("schema roles"),
+        );
+        Self::entry(INTERFACE, vec![Self::codec(INTERFACE, 0, rule)])
+    }
+
+    fn codec(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        constructor: u16,
+        rule: SchemaRule,
+    ) -> ConstructorCodec<SchemaRule> {
+        ConstructorCodec::new(
+            EncodedConstructorId::under(type_id, constructor),
+            vec![AcceptedDecodeForm::new(DecodeFormId::new(0), rule.clone())],
+            rule,
+        )
+    }
+
+    fn entry(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        constructors: Vec<ConstructorCodec<SchemaRule>>,
+    ) -> StructuralEntry<SchemaRule> {
+        StructuralEntry::new(type_id, constructors)
     }
 }
 

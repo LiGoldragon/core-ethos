@@ -15,11 +15,11 @@
 //!   so a rename is hash-stable by construction.
 //! - **The universe bridge** ([`universe`]): a set of `EncodedSchema` declarations
 //!   forms a `structural-codec` Encoded universe — one [`ScopedEncodedTypeId`] per type,
-//!   one constructor id per constructor, and each constructor's
-//!   [`PositionalSignature`] DERIVED from the Encoded layout. This closes
-//!   `structural-codec`'s deferred signature-vs-Encoded deviation:
-//!   [`EncodedUniverse::validate_table`] proves every authored codec signature equals
-//!   the Encoded field signature, and a mismatch fails loudly.
+//!   one constructor id per constructor, and typed record metadata derived from
+//!   the Encoded layout. This closes `structural-codec`'s deferred
+//!   signature-vs-Encoded deviation: [`EncodedUniverse::validate_table`] proves
+//!   every authored codec signature equals the Encoded field signature, and a
+//!   mismatch fails loudly.
 //! - **`TextualSchema`** ([`textual`]): real schema TEXT decodes — through
 //!   raw-discovery and the trusted evaluator — into real `EncodedSchema` values with a
 //!   real `NameTable`, and encodes back canonically. The derived-name rule (a field
@@ -32,13 +32,13 @@
 //! release train and readapts to it. See `ARCHITECTURE.md`.
 //!
 //! [`ScopedEncodedTypeId`]: structural_codec::ids::ScopedEncodedTypeId
-//! [`PositionalSignature`]: structural_codec::ids::PositionalSignature
 
 pub mod declaration;
 pub mod document;
 pub mod error;
 pub mod fixture;
 pub mod reference;
+pub mod rules;
 pub mod textual;
 pub mod universe;
 
@@ -63,8 +63,3 @@ pub use universe::{
     AssignedKind, AssignedMember, ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder,
     MemberKind, ScalarSlot, UniverseType,
 };
-
-/// The universe identity a built [`EncodedUniverse`] scopes its type ids to, re-exported so
-/// an authority-bound ingestion can map a minted universe (`signal-sema-storage`'s
-/// `MintedUniverse`) onto the id [`EncodedUniverse::from_assignment`] builds in.
-pub use structural_codec::ids::EncodedUniverseId;
