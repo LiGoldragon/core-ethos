@@ -9,9 +9,10 @@ use content_identity::PortableArchive;
 use core_schema::declaration::EncodedType;
 use core_schema::reference::{EncodedReference, SingleTypeReferenceProjection};
 use core_schema::{
-    BuiltinReference, EncodedDeclaration, TextualError, TextualSchema, UniverseError,
+    BuiltinReference, DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedSchema,
+    EncodedVariant, TextualError, TextualSchema, UniverseError,
 };
-use name_table::{Identifier, IdentifierNamespace, NameTable};
+use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
 use raw_discovery::Recognizer;
 
 /// The spirit-min schema in core-schema's native dialect: its shape verbatim — the
@@ -389,4 +390,51 @@ fn string_scalar_and_single_field_brace_follow_the_rulings() {
     assert!(
         matches!(entry_fields[1].1, EncodedReference::Plain(id) if text(&names, *id) == "Note")
     );
+}
+
+#[test]
+fn document_reflection_is_lookup_only_with_preloaded_names() {
+    let textual = TextualSchema::schema_document().expect("seal document grammar");
+    let mut names = NameTable::new(IdentifierNamespace::Schema);
+    let input = names.intern(Name::new("Input")).expect("fixture name");
+    let output = names.intern(Name::new("Output")).expect("fixture name");
+    let request = names.intern(Name::new("Request")).expect("fixture name");
+    let reply = names.intern(Name::new("Reply")).expect("fixture name");
+    names.intern(Name::new("Integer")).expect("preload scalar");
+    let schema = EncodedSchema::new(vec![
+        EncodedDeclaration::interface(
+            DeclarationRole::InterfaceInput,
+            EncodedType::Enumeration(EncodedEnum::new(
+                input,
+                vec![EncodedVariant::new(
+                    request,
+                    Some(EncodedReference::Integer),
+                )],
+            )),
+        ),
+        EncodedDeclaration::interface(
+            DeclarationRole::InterfaceOutput,
+            EncodedType::Enumeration(EncodedEnum::new(
+                output,
+                vec![EncodedVariant::new(reply, Some(EncodedReference::Integer))],
+            )),
+        ),
+    ]);
+    let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();
+    let identity_before = names.identity().expect("identity before");
+
+    let encoded = textual
+        .encode_document(&schema, &mut names)
+        .expect("preloaded document reflection");
+
+    assert_eq!(
+        encoded,
+        "{}\n[Request.Integer]\n[Reply.Integer]\n{}\n{}\n{}"
+    );
+    assert_eq!(
+        names.to_archive_bytes().expect("after").as_ref(),
+        bytes_before.as_slice(),
+        "document reflection does not mutate the archive"
+    );
+    assert_eq!(names.identity().expect("identity after"), identity_before);
 }

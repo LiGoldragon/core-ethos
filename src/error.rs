@@ -5,8 +5,9 @@
 use content_identity::ArchiveError;
 use name_table::{Identifier, IdentifierNamespace, NameTableError};
 use raw_discovery::RecognizeError;
-use structural_codec::ids::{EncodedUniverseId, ScopedEncodedTypeId};
-use structural_codec::{DecodeError, EncodeError, TableError};
+use structural_codec::{
+    DecodeError, EncodeError, EncodedLanguage, ScopedEncodedTypeId, TableError,
+};
 
 use crate::reference::BuiltinReference;
 
@@ -160,8 +161,8 @@ pub enum UniverseError {
     DuplicateMemberIdentity(ScopedEncodedTypeId),
     #[error("universe member {member:?} belongs to {actual:?}, but this build seals {expected:?}")]
     UniverseScopeMismatch {
-        expected: EncodedUniverseId,
-        actual: EncodedUniverseId,
+        expected: EncodedLanguage,
+        actual: EncodedLanguage,
         member: ScopedEncodedTypeId,
     },
     #[error("two universe members use Schema identifier {0}")]
@@ -183,7 +184,7 @@ pub enum UniverseError {
     )]
     SignatureMismatch {
         encoded_type: ScopedEncodedTypeId,
-        constructor: u32,
+        constructor: u16,
         authored: Vec<ScopedEncodedTypeId>,
         encoded: Vec<ScopedEncodedTypeId>,
     },
@@ -223,11 +224,15 @@ pub enum TextualError {
     #[error(transparent)]
     Encode(#[from] EncodeError),
     #[error(transparent)]
+    Authoring(#[from] structural_codec::AuthoringError),
+    #[error(transparent)]
     SingleChunk(#[from] structural_codec::error::SingleChunkRequired),
     #[error(transparent)]
     Names(#[from] NameTableError),
     #[error(transparent)]
     Universe(#[from] UniverseError),
+    #[error("reflection requires the preloaded spelling {spelling}")]
+    ReflectionNameAbsent { spelling: &'static str },
     #[error("the decoded structural value did not fit the expected {0} shape at reification")]
     ReifyShape(&'static str),
     #[error("reification met an unknown type name {0:?} that is not a universe type")]

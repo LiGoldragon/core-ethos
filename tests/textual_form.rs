@@ -6,9 +6,10 @@
 
 use core_schema::SchemaLanguage;
 use core_schema::TextualSchema;
-use core_schema::declaration::EncodedType;
+use core_schema::declaration::{EncodedNewtype, EncodedType};
 use core_schema::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
-use name_table::{IdentifierNamespace, NameTable};
+use core_schema::{EncodedReference, TextualError};
+use name_table::{IdentifierNamespace, Name, NameTable};
 use structural_codec::{Textual, TextualForm};
 
 #[test]
@@ -49,4 +50,81 @@ fn view_and_unview_reproduce_encode_and_decode() {
         assert_eq!(encoded, viewed, "view reproduces encode for `{source}`");
         println!("witness `{source}` => shared textual view: {viewed}");
     }
+}
+
+fn newtype_value(names: &mut NameTable) -> EncodedType {
+    let name = names
+        .intern(Name::new("CommitSequence"))
+        .expect("fixture name");
+    EncodedType::Newtype(EncodedNewtype::new(name, EncodedReference::Integer))
+}
+
+#[test]
+fn reflection_is_lookup_only_for_inherent_and_shared_textual_routes() {
+    let textual = TextualSchema::fixture().expect("build textual schema");
+    let mut names = NameTable::new(IdentifierNamespace::Schema);
+    let value = newtype_value(&mut names);
+    names
+        .intern(Name::new("Integer"))
+        .expect("preload scalar spelling");
+    let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();
+    let identity_before = names.identity().expect("identity before");
+
+    let inherent = textual
+        .encode(COMMIT_SEQUENCE, &value, &mut names)
+        .expect("inherent encode");
+    let shared = textual
+        .view(COMMIT_SEQUENCE, &value, &names)
+        .expect("shared view")
+        .sole_text()
+        .expect("one textual chunk")
+        .to_owned();
+
+    assert_eq!(inherent, shared, "direct and shared reflection agree");
+    assert_eq!(inherent, "CommitSequence.{Integer}");
+    assert_eq!(
+        names.to_archive_bytes().expect("after").as_ref(),
+        bytes_before.as_slice(),
+        "inherent reflection does not mutate the archive"
+    );
+    assert_eq!(
+        names.identity().expect("identity after"),
+        identity_before,
+        "inherent and shared reflection preserve identity"
+    );
+}
+
+#[test]
+fn reflection_reports_missing_spellings_without_mutating_names() {
+    let textual = TextualSchema::fixture().expect("build textual schema");
+    let mut names = NameTable::new(IdentifierNamespace::Schema);
+    let value = newtype_value(&mut names);
+    let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();
+    let identity_before = names.identity().expect("identity before");
+
+    let inherent = textual
+        .encode(COMMIT_SEQUENCE, &value, &mut names)
+        .expect_err("Integer is not preloaded");
+    let shared = textual
+        .view(COMMIT_SEQUENCE, &value, &names)
+        .expect_err("Integer is not preloaded for shared view");
+
+    assert!(matches!(
+        inherent,
+        TextualError::ReflectionNameAbsent {
+            spelling: "Integer"
+        }
+    ));
+    assert!(matches!(
+        shared,
+        TextualError::ReflectionNameAbsent {
+            spelling: "Integer"
+        }
+    ));
+    assert_eq!(
+        names.to_archive_bytes().expect("after").as_ref(),
+        bytes_before.as_slice(),
+        "missing-name failure leaves the archive unchanged"
+    );
+    assert_eq!(names.identity().expect("identity after"), identity_before);
 }

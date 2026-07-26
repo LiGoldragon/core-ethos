@@ -1,136 +1,110 @@
-//! `TextualSchema` — the first real Textual form: schema text ⇄ `EncodedSchema`.
-//!
-//! Decoding recognizes source text into a raw `Block` (raw-discovery), runs
-//! `structural-codec`'s trusted evaluator over the authored table to a generic
-//! `StructuralValue`, then REIFIES that mirror into a real stringless `EncodedType`
-//! declaration with a real `NameTable`. Encoding REFLECTS a `EncodedType` back into a
-//! `StructuralValue`, lets the evaluator render it to a `Block`, and writes the
-//! canonical text. The parser never classifies: the expected Encoded type drives the
-//! evaluator, and reification reads only the mirror.
-//!
-//! A struct field is nothing but the type standing at its position. Field names are
-//! illegal in every Protos surface (psyche ruling 2026-07-19: "field names are now
-//! COMPLETLY ILLEGAL EVERYWHERE"), so on encode a field ALWAYS elides — its name is
-//! never written — and on decode the name is re-derived from the type, never read
-//! from the text. Two fields of the same type derive the same name; position, not the
-//! name, tells them apart. An explicit `name.Type` in the text no longer parses as a
-//! field and is rejected at decode.
+//! `TextualSchema` — source-bounded schema text and stringless encoded values.
 
 use name_table::{Name, NameInterner, NameResolver, NameTable, NameTransaction};
-use raw_discovery::{Block, Delimiter, Recognizer};
-use structural_codec::ids::ScopedEncodedTypeId;
-use structural_codec::table::AddressedStructuralTable;
-use structural_codec::value::StructuralValue;
-use structural_codec::{EncodedForm, StructuralEvaluator, Textual};
+use raw_discovery::{BlockTree, DiscoveredBlockTree};
+use structural_codec::{
+    ApplicationDelimitedBody, ApplicationDelimitedHead, ApplicationDelimitedItems,
+    ApplicationDelimitedRoot, ApplicationHead, ApplicationPayload, ApplicationRoot, EncodedForm,
+    FieldValue, StructuralEvaluator, StructuralValue, Textual, UnaryRoot,
+};
 
 use crate::declaration::{
     DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedField, EncodedNewtype, EncodedSchema,
     EncodedStruct, EncodedType, EncodedVariant,
 };
 use crate::document::{
-    DOCUMENT_SLOTS, DeclarationConstructor, INTERFACE, ReferenceConstructor, SchemaDocumentGrammar,
-    TYPES_BLOCK,
+    DECLARATION, DeclarationConstructor, FIELD as DOCUMENT_FIELD, INTERFACE, INTERFACE_VARIANT,
+    ReferenceConstructor, SchemaDocumentGrammar, TYPE_REFERENCE, TYPES_BLOCK,
 };
 use crate::error::TextualError;
-use crate::fixture::{FixtureFamily, standard_token_profile};
+use crate::fixture::{FIELD as FIXTURE_FIELD, FixtureFamily};
 use crate::reference::{BuiltinReference, EncodedReference};
+use crate::rules::{DelimitedItems, DelimitedRoot, SchemaRule};
 use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder};
 
-/// A Textual view over one Encoded universe: the authored structural table plus the
-/// universe it targets, and — for the document grammar — the keyword lexicon its
-/// `Literal` forms resolve through. One codec, both directions.
 #[derive(Clone, Debug)]
 pub struct TextualSchema {
     universe: EncodedUniverse,
-    table: AddressedStructuralTable,
-    profile: raw_discovery::SealedTokenProfile,
+    table: structural_codec::AddressedStructuralTable<SchemaRule>,
 }
 
 impl TextualSchema {
-    /// Build the Textual view for the fixture family with its standard table.
     pub fn fixture() -> Result<Self, TextualError> {
         let family = FixtureFamily::build();
-        let table = family.standard_table()?;
         Ok(Self {
             universe: family.universe().clone(),
-            table,
-            profile: standard_token_profile(),
+            table: family.standard_table()?,
         })
     }
 
-    /// Build the Textual view over the six-slot document grammar, so a whole
-    /// spirit-min-shaped document decodes to a full [`EncodedSchema`] and encodes back.
-    /// The grammar targets no single Encoded layout, so its universe carries no members;
-    /// document decode dispatches on grammar constructor indices, not universe types.
     pub fn schema_document() -> Result<Self, TextualError> {
         let grammar = SchemaDocumentGrammar::build()?;
         Ok(Self {
             universe: EncodedUniverseBuilder::new().build(ENCODED_UNIVERSE)?,
             table: grammar.table().clone(),
-            profile: standard_token_profile(),
         })
     }
 
-    /// Build a Textual view from an explicit universe and authored table.
-    pub fn new(universe: EncodedUniverse, table: AddressedStructuralTable) -> Self {
-        Self {
-            universe,
-            table,
-            profile: standard_token_profile(),
-        }
+    pub fn new(
+        universe: EncodedUniverse,
+        table: structural_codec::AddressedStructuralTable<SchemaRule>,
+    ) -> Self {
+        Self { universe, table }
     }
 
     pub fn universe(&self) -> &EncodedUniverse {
         &self.universe
     }
 
-    pub fn table(&self) -> &AddressedStructuralTable {
+    pub fn table(&self) -> &structural_codec::AddressedStructuralTable<SchemaRule> {
         &self.table
     }
 
-    /// Decode one declaration's schema text into a real `EncodedType`, interning names
-    /// into `names`. The expected type drives the evaluator; the raw layer only
-    /// discovered structure.
+    /// Decode through one table-owned, source-bounded evaluator and one name-table
+    /// transaction.  Reification failures therefore leave the caller's table intact.
     pub fn decode(
         &self,
-        expected: ScopedEncodedTypeId,
+        expected: structural_codec::ScopedEncodedTypeId,
         text: &str,
         names: &mut NameTable,
     ) -> Result<EncodedType, TextualError> {
-        let value = self.schema_evaluator().decode_text(expected, text, names)?;
-        self.reify_type(expected, &value, names)
+        let evaluator = self.schema_evaluator()?;
+        names.try_intern(|transaction| {
+            let mirror = evaluator.decode_text_with_interner(expected, text, transaction)?;
+            self.reify_type(expected, &mirror, transaction)
+        })
     }
 
-    // The reification helpers below take the names table mutably: an elided field
-    // name is derived and interned on demand (never stored in the Encoded), so decode
-    // can add it to the same table the type names were interned into.
-
-    /// Encode a real `EncodedType` back into canonical schema text, resolving names
-    /// through `names` (interning any scalar keyword the value needs).
+    /// Compatibility signature retained for callers. Reflection is lookup-only:
+    /// callers must preload any scalar or projection spelling the value needs.
     pub fn encode(
         &self,
-        expected: ScopedEncodedTypeId,
+        expected: structural_codec::ScopedEncodedTypeId,
         value: &EncodedType,
         names: &mut NameTable,
     ) -> Result<String, TextualError> {
-        let mirror = self.reflect_type(value, names)?;
+        let mirror = self.reflect_type(expected, value, names)?;
         Ok(self
-            .schema_evaluator()
+            .schema_evaluator()?
             .encode_text(expected, &mirror, names)?)
     }
 
-    // ===== reification: StructuralValue -> EncodedType =====
+    fn schema_evaluator(&self) -> Result<StructuralEvaluator<'_, SchemaRule>, TextualError> {
+        Ok(StructuralEvaluator::new(&self.table)?)
+    }
+
+    // ===== single declaration reification =====
 
     fn reify_type<Names: NameInterner + NameResolver + ?Sized>(
         &self,
-        expected: ScopedEncodedTypeId,
+        expected: structural_codec::ScopedEncodedTypeId,
         value: &StructuralValue,
         names: &mut Names,
     ) -> Result<EncodedType, TextualError> {
         match self.universe.encoded_type(expected) {
             Some(EncodedType::Newtype(_)) => self.reify_newtype(value, names),
             Some(EncodedType::Struct(_)) => self.reify_struct(value, names),
-            Some(EncodedType::Enumeration(_)) => Self::reify_enumeration(value),
+            Some(EncodedType::Enumeration(_)) => self.reify_enumeration(value),
             None => Err(TextualError::ReifyShape("non-declaration expected type")),
         }
     }
@@ -140,13 +114,14 @@ impl TextualSchema {
         value: &StructuralValue,
         names: &Resolver,
     ) -> Result<EncodedType, TextualError> {
-        let (name, body) = Self::declaration_head(value, "newtype")?;
-        let inner = match body {
-            [StructuralValue::Atom(inner)] => *inner,
-            _ => return Err(TextualError::ReifyShape("newtype body")),
+        let (name, body) = Self::application_delimited(value, "newtype")?;
+        let [FieldValue::Atom(inner)] = body else {
+            return Err(TextualError::ReifyShape("newtype body"));
         };
-        let reference = self.reference_from_atom(inner, names)?;
-        Ok(EncodedType::Newtype(EncodedNewtype::new(name, reference)))
+        Ok(EncodedType::Newtype(EncodedNewtype::new(
+            name,
+            self.reference_from_atom(*inner, names)?,
+        )))
     }
 
     fn reify_struct<Names: NameInterner + NameResolver + ?Sized>(
@@ -154,58 +129,52 @@ impl TextualSchema {
         value: &StructuralValue,
         names: &mut Names,
     ) -> Result<EncodedType, TextualError> {
-        let (name, body) = Self::declaration_head(value, "struct")?;
-        // The body slice borrows `value`, not `names`, so interning per field is free
-        // of a borrow conflict.
-        let body: Vec<StructuralValue> = body.to_vec();
-        let mut fields = Vec::with_capacity(body.len());
-        for field_value in &body {
-            fields.push(self.reify_field(field_value, names)?);
-        }
+        let (name, body) = Self::application_delimited(value, "struct")?;
+        let fields = body
+            .iter()
+            .map(|field| self.reify_field(field, names))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(EncodedType::Struct(EncodedStruct::new(name, fields)))
     }
 
-    /// A declaration value is `Chosen{0, Application(Atom(name), Delimited(body))}`.
-    fn declaration_head<'value>(
+    fn reify_enumeration(&self, value: &StructuralValue) -> Result<EncodedType, TextualError> {
+        let (name, body) = Self::application_delimited(value, "enumeration")?;
+        let variants = body
+            .iter()
+            .map(|field| match field {
+                FieldValue::Atom(identifier) => Ok(EncodedVariant::new(*identifier, None)),
+                _ => Err(TextualError::ReifyShape("enumeration variant")),
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(EncodedType::Enumeration(EncodedEnum::new(name, variants)))
+    }
+
+    fn application_delimited<'value>(
         value: &'value StructuralValue,
         what: &'static str,
-    ) -> Result<(name_table::Identifier, &'value [StructuralValue]), TextualError> {
-        let StructuralValue::Chosen { payload, .. } = value else {
+    ) -> Result<(name_table::Identifier, &'value [FieldValue]), TextualError> {
+        let Some(FieldValue::Atom(name)) = value.field::<ApplicationDelimitedHead>() else {
             return Err(TextualError::ReifyShape(what));
         };
-        let StructuralValue::Application(head, tail) = payload.as_ref() else {
+        let Some(FieldValue::Repeated(items)) = value.field::<ApplicationDelimitedItems>() else {
             return Err(TextualError::ReifyShape(what));
         };
-        let StructuralValue::Atom(name) = head.as_ref() else {
-            return Err(TextualError::ReifyShape(what));
-        };
-        let StructuralValue::Delimited(body) = tail.as_ref() else {
-            return Err(TextualError::ReifyShape(what));
-        };
-        Ok((*name, body))
+        Ok((*name, items))
     }
 
     fn reify_field<Names: NameInterner + NameResolver + ?Sized>(
         &self,
-        field_value: &StructuralValue,
+        field: &FieldValue,
         names: &mut Names,
     ) -> Result<EncodedField, TextualError> {
-        let StructuralValue::Delegated(inner) = field_value else {
+        let FieldValue::Delegated(inner) = field else {
             return Err(TextualError::ReifyShape("struct field delegate"));
         };
-        let StructuralValue::Chosen { payload, .. } = inner.as_ref() else {
-            return Err(TextualError::ReifyShape("struct field constructor"));
-        };
-        // A field is nothing but the type standing at its position. The payload is the
-        // type atom; the field's name is DERIVED from that type and interned on demand,
-        // never read from the text (field names are illegal). Two same-typed fields
-        // derive the same name — position, not the name, distinguishes them.
-        let StructuralValue::Atom(type_id) = payload.as_ref() else {
+        let Some(FieldValue::Atom(type_id)) = inner.field::<UnaryRoot>() else {
             return Err(TextualError::ReifyShape("struct field type"));
         };
         let reference = self.reference_from_atom(*type_id, names)?;
-        let derived = reference.derived_field_name(names)?;
-        let identifier = names.intern(name_table::Name::new(derived))?;
+        let identifier = names.intern(Name::new(reference.derived_field_name(names)?))?;
         Ok(EncodedField::new(identifier, reference))
     }
 
@@ -217,75 +186,67 @@ impl TextualSchema {
         Ok(self.universe.reference_from_name(type_id, names)?)
     }
 
-    // ===== reflection: EncodedType -> StructuralValue =====
+    // ===== single declaration reflection =====
 
+    /// The sole reflection path for inherent encoding, document encoding, and
+    /// `Textual::view`. It only resolves existing names and never interns.
     fn reflect_type(
         &self,
-        value: &EncodedType,
-        names: &mut NameTable,
-    ) -> Result<StructuralValue, TextualError> {
-        match value {
-            EncodedType::Newtype(newtype) => self.reflect_newtype(newtype, names),
-            EncodedType::Struct(structure) => self.reflect_struct(structure, names),
-            EncodedType::Enumeration(enumeration) => Self::reflect_enumeration(enumeration),
-        }
-    }
-
-    fn reflect_type_from_table(
-        &self,
+        expected: structural_codec::ScopedEncodedTypeId,
         value: &EncodedType,
         names: &NameTable,
     ) -> Result<StructuralValue, TextualError> {
         match value {
-            EncodedType::Newtype(newtype) => self.reflect_newtype_from_table(newtype, names),
-            EncodedType::Struct(structure) => self.reflect_struct_from_table(structure, names),
-            EncodedType::Enumeration(enumeration) => Self::reflect_enumeration(enumeration),
+            EncodedType::Newtype(newtype) => self.reflect_newtype(expected, newtype, names),
+            EncodedType::Struct(structure) => self.reflect_struct(expected, structure, names),
+            EncodedType::Enumeration(enumeration) => {
+                Self::reflect_enumeration(expected, enumeration)
+            }
         }
     }
 
-    fn reflect_newtype_from_table(
+    fn reflect_newtype(
         &self,
+        expected: structural_codec::ScopedEncodedTypeId,
         newtype: &EncodedNewtype,
         names: &NameTable,
     ) -> Result<StructuralValue, TextualError> {
         let inner = Self::type_atom_from_table(newtype.reference(), names)?
             .ok_or(TextualError::ReifyShape("newtype inner reference"))?;
-        let body = StructuralValue::Delimited(vec![StructuralValue::Atom(inner)]);
-        Ok(StructuralValue::chosen(
+        Self::application_delimited_mirror(
+            expected,
             0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(newtype.identifier())),
-                Box::new(body),
-            ),
-        ))
+            newtype.identifier(),
+            vec![FieldValue::Atom(inner)],
+        )
     }
 
-    fn reflect_struct_from_table(
+    fn reflect_struct(
         &self,
+        expected: structural_codec::ScopedEncodedTypeId,
         structure: &EncodedStruct,
         names: &NameTable,
     ) -> Result<StructuralValue, TextualError> {
-        let mut field_values = Vec::with_capacity(structure.fields().len());
-        for field in structure.fields() {
-            field_values.push(Self::reflect_field_from_table(field, names)?);
-        }
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(structure.identifier())),
-                Box::new(StructuralValue::Delimited(field_values)),
-            ),
-        ))
+        let fields = structure
+            .fields()
+            .iter()
+            .map(|field| Self::reflect_field(field, names, FIXTURE_FIELD))
+            .collect::<Result<_, _>>()?;
+        Self::application_delimited_mirror(expected, 0, structure.identifier(), fields)
     }
 
-    fn reflect_field_from_table(
+    fn reflect_field(
         field: &EncodedField,
         names: &NameTable,
-    ) -> Result<StructuralValue, TextualError> {
+        field_type: structural_codec::ScopedEncodedTypeId,
+    ) -> Result<FieldValue, TextualError> {
         let type_id = Self::type_atom_from_table(field.reference(), names)?
             .ok_or(TextualError::ReifyShape("field type reference"))?;
-        let chosen = StructuralValue::chosen(0, StructuralValue::Atom(type_id));
-        Ok(StructuralValue::Delegated(Box::new(chosen)))
+        Ok(FieldValue::Delegated(Box::new(Self::unary_mirror(
+            field_type,
+            0,
+            FieldValue::Atom(type_id),
+        )?)))
     }
 
     fn type_atom_from_table(
@@ -302,104 +263,28 @@ impl TextualSchema {
             | EncodedReference::MultiTypeApplication { .. }
             | EncodedReference::ValueApplication { .. } => return Ok(None),
         };
-        Ok(builtin.and_then(|builtin| names.lookup(&Name::new(builtin.spelling()))))
+        Ok(Some(Self::builtin_identifier(
+            builtin.expect("scalar builtin"),
+            names,
+        )?))
     }
 
-    fn reflect_newtype(
-        &self,
-        newtype: &EncodedNewtype,
-        names: &mut NameTable,
-    ) -> Result<StructuralValue, TextualError> {
-        let inner = newtype
-            .reference()
-            .type_atom_identifier(names)?
-            .ok_or(TextualError::ReifyShape("newtype inner reference"))?;
-        let body = StructuralValue::Delimited(vec![StructuralValue::Atom(inner)]);
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(newtype.identifier())),
-                Box::new(body),
-            ),
-        ))
-    }
-
-    fn reflect_struct(
-        &self,
-        structure: &EncodedStruct,
-        names: &mut NameTable,
-    ) -> Result<StructuralValue, TextualError> {
-        let mut field_values = Vec::with_capacity(structure.fields().len());
-        for field in structure.fields() {
-            field_values.push(self.reflect_field(field, names)?);
-        }
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(structure.identifier())),
-                Box::new(StructuralValue::Delimited(field_values)),
-            ),
-        ))
-    }
-
-    fn reflect_field(
-        &self,
-        field: &EncodedField,
-        names: &mut NameTable,
-    ) -> Result<StructuralValue, TextualError> {
-        let type_id = field
-            .reference()
-            .type_atom_identifier(names)?
-            .ok_or(TextualError::ReifyShape("field type reference"))?;
-        // A field is nothing but the type standing at its position. Its name is NEVER
-        // written (field names are illegal in every Protos surface, psyche ruling
-        // 2026-07-19), so every field elides to its bare type atom — even two fields of
-        // the same type, told apart by position alone.
-        let chosen = StructuralValue::chosen(0, StructuralValue::Atom(type_id));
-        Ok(StructuralValue::Delegated(Box::new(chosen)))
-    }
-
-    // ===== enumeration declarations (single-declaration path) =====
-
-    /// Reify an enumeration declaration `Name.[ Variant* ]` — a `Chosen` wrapping the
-    /// name-applied bracket of unit variants — into a real [`EncodedEnum`].
-    fn reify_enumeration(value: &StructuralValue) -> Result<EncodedType, TextualError> {
-        let (name, body) = Self::declaration_head(value, "enumeration")?;
-        Ok(EncodedType::Enumeration(EncodedEnum::new(
-            name,
-            Self::variants_from_atoms(body)?,
-        )))
-    }
-
-    /// Reflect a [`EncodedEnum`] back into the enumeration-declaration mirror.
-    fn reflect_enumeration(enumeration: &EncodedEnum) -> Result<StructuralValue, TextualError> {
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(enumeration.identifier())),
-                Box::new(StructuralValue::Delimited(Self::variant_atoms(
-                    enumeration,
-                )?)),
-            ),
-        ))
-    }
-
-    /// The unit variants a bracket of name atoms carries. A payload-bearing atom
-    /// cannot appear here — a declaration bracket lists variant names only.
-    fn variants_from_atoms(atoms: &[StructuralValue]) -> Result<Vec<EncodedVariant>, TextualError> {
-        atoms
-            .iter()
-            .map(|atom| match atom {
-                StructuralValue::Atom(identifier) => Ok(EncodedVariant::new(*identifier, None)),
-                _ => Err(TextualError::ReifyShape("enumeration variant")),
+    fn builtin_identifier(
+        builtin: BuiltinReference,
+        names: &NameTable,
+    ) -> Result<name_table::Identifier, TextualError> {
+        names
+            .lookup(&Name::new(builtin.spelling()))
+            .ok_or(TextualError::ReflectionNameAbsent {
+                spelling: builtin.spelling(),
             })
-            .collect()
     }
 
-    /// The name atoms an enumeration's unit variants encode to. A payload variant has
-    /// no square-bracket declaration form and is rejected loudly.
-    fn variant_atoms(enumeration: &EncodedEnum) -> Result<Vec<StructuralValue>, TextualError> {
-        enumeration
+    fn reflect_enumeration(
+        expected: structural_codec::ScopedEncodedTypeId,
+        enumeration: &EncodedEnum,
+    ) -> Result<StructuralValue, TextualError> {
+        let variants = enumeration
             .variants()
             .iter()
             .map(|variant| {
@@ -408,79 +293,407 @@ impl TextualSchema {
                         "enumeration declaration payload variant",
                     ))
                 } else {
-                    Ok(StructuralValue::Atom(variant.identifier()))
+                    Ok(FieldValue::Atom(variant.identifier()))
                 }
+            })
+            .collect::<Result<_, _>>()?;
+        Self::application_delimited_mirror(expected, 0, enumeration.identifier(), variants)
+    }
+
+    // ===== document reification and reflection =====
+
+    pub fn decode_document(
+        &self,
+        text: &str,
+        names: &mut NameTable,
+    ) -> Result<EncodedSchema, TextualError> {
+        let roots = self.document_roots(text)?;
+        if roots.len() != crate::document::DOCUMENT_SLOTS {
+            return Err(TextualError::DocumentArity(roots.len()));
+        }
+        if !Self::empty_brace(roots[0]) {
+            return Err(TextualError::DocumentSlot("imports"));
+        }
+        if !Self::empty_brace(roots[4]) {
+            return Err(TextualError::DocumentSlot("generics"));
+        }
+        if !Self::empty_brace(roots[5]) {
+            return Err(TextualError::DocumentSlot("impls"));
+        }
+        let evaluator = self.schema_evaluator()?;
+        names.try_intern(|transaction| {
+            let input = self.decode_interface_slot(
+                &evaluator,
+                roots[1],
+                DeclarationRole::InterfaceInput,
+                transaction,
+            )?;
+            let output = self.decode_interface_slot(
+                &evaluator,
+                roots[2],
+                DeclarationRole::InterfaceOutput,
+                transaction,
+            )?;
+            let types = self.decode_types_slot(&evaluator, roots[3], transaction)?;
+            let mut declarations = Vec::with_capacity(types.len() + 2);
+            declarations.push(input);
+            declarations.push(output);
+            declarations.extend(types);
+            for declaration in &declarations {
+                self.universe
+                    .validate_declaration_name(declaration.identifier(), transaction)?;
+            }
+            Ok(EncodedSchema::new(declarations))
+        })
+    }
+
+    pub fn encode_document(
+        &self,
+        schema: &EncodedSchema,
+        names: &mut NameTable,
+    ) -> Result<String, TextualError> {
+        let input = schema
+            .input()
+            .ok_or(TextualError::MissingInterfaceRoot("input"))?;
+        let output = schema
+            .output()
+            .ok_or(TextualError::MissingInterfaceRoot("output"))?;
+        let evaluator = self.schema_evaluator()?;
+        Ok([
+            "{}".to_owned(),
+            evaluator.encode_text(
+                INTERFACE,
+                &self.reflect_interface(input.value(), names)?,
+                names,
+            )?,
+            evaluator.encode_text(
+                INTERFACE,
+                &self.reflect_interface(output.value(), names)?,
+                names,
+            )?,
+            evaluator.encode_text(
+                TYPES_BLOCK,
+                &self.reflect_types(schema.data_declarations(), names)?,
+                names,
+            )?,
+            "{}".to_owned(),
+            "{}".to_owned(),
+        ]
+        .join("\n"))
+    }
+
+    fn document_roots<'source>(
+        &self,
+        source: &'source str,
+    ) -> Result<Vec<&'source str>, TextualError> {
+        let tree = DiscoveredBlockTree::discover(
+            source,
+            self.table.token_profile(),
+            self.table.block_discovery(),
+        )
+        .map_err(structural_codec::DecodeError::from)?;
+        tree.root_blocks()
+            .iter()
+            .map(|block| {
+                let bound = block.source_bound();
+                source
+                    .get(bound.start()..bound.end())
+                    .ok_or(TextualError::ReifyShape("document source bound"))
             })
             .collect()
     }
 
-    // ===== type references (by kind and projection) =====
+    fn empty_brace(source: &str) -> bool {
+        source.trim() == "{}"
+    }
 
-    /// Reify a reference by its two structural forms. A bare name resolves only
-    /// against the universe; names not yet admitted stay pre-resolution `Plain`
-    /// references. An application head must be a universe projection definition.
-    fn reify_reference(
+    fn decode_interface_slot<Names: NameInterner + NameResolver>(
+        &self,
+        evaluator: &StructuralEvaluator<'_, SchemaRule>,
+        source: &str,
+        role: DeclarationRole,
+        names: &mut Names,
+    ) -> Result<EncodedDeclaration, TextualError> {
+        let mirror = evaluator.decode_text_with_interner(INTERFACE, source, names)?;
+        let variants = self.reify_interface_variants(&mirror, names)?;
+        let name = names.intern(Name::new(
+            role.interface_root_name()
+                .ok_or(TextualError::ReifyShape("interface role"))?,
+        ))?;
+        Ok(EncodedDeclaration::interface(
+            role,
+            EncodedType::Enumeration(EncodedEnum::new(name, variants)),
+        ))
+    }
+
+    fn decode_types_slot<Names: NameInterner + NameResolver>(
+        &self,
+        evaluator: &StructuralEvaluator<'_, SchemaRule>,
+        source: &str,
+        names: &mut Names,
+    ) -> Result<Vec<EncodedDeclaration>, TextualError> {
+        let mirror = evaluator.decode_text_with_interner(TYPES_BLOCK, source, names)?;
+        self.reify_types(&mirror, names)
+    }
+
+    fn reify_types<Names: NameInterner + NameResolver + ?Sized>(
         &self,
         value: &StructuralValue,
-        names: &NameTable,
+        names: &mut Names,
+    ) -> Result<Vec<EncodedDeclaration>, TextualError> {
+        let Some(FieldValue::Repeated(items)) = value.field::<DelimitedItems>() else {
+            return Err(TextualError::ReifyShape("types block declarations"));
+        };
+        items
+            .iter()
+            .map(|item| {
+                let FieldValue::Delegated(declaration) = item else {
+                    return Err(TextualError::ReifyShape("declaration delegate"));
+                };
+                self.reify_declaration(declaration, names)
+            })
+            .collect()
+    }
+
+    fn reify_declaration<Names: NameInterner + NameResolver + ?Sized>(
+        &self,
+        value: &StructuralValue,
+        names: &mut Names,
+    ) -> Result<EncodedDeclaration, TextualError> {
+        let constructor = DeclarationConstructor::from_index(value.constructor().local())
+            .ok_or(TextualError::ReifyShape("declaration constructor"))?;
+        let Some(FieldValue::Atom(name)) = (match constructor {
+            DeclarationConstructor::Newtype => value.field::<ApplicationHead>(),
+            DeclarationConstructor::Struct | DeclarationConstructor::Enumeration => {
+                value.field::<ApplicationDelimitedHead>()
+            }
+        }) else {
+            return Err(TextualError::ReifyShape("declaration name"));
+        };
+        let encoded = match constructor {
+            DeclarationConstructor::Newtype => {
+                let Some(FieldValue::Delegated(reference)) = value.field::<ApplicationPayload>()
+                else {
+                    return Err(TextualError::ReifyShape("newtype reference"));
+                };
+                EncodedType::Newtype(EncodedNewtype::new(
+                    *name,
+                    self.reify_reference(reference, names)?,
+                ))
+            }
+            DeclarationConstructor::Struct => {
+                let Some(FieldValue::Repeated(fields)) = value.field::<ApplicationDelimitedItems>()
+                else {
+                    return Err(TextualError::ReifyShape("struct fields"));
+                };
+                EncodedType::from_braced_body(
+                    *name,
+                    fields
+                        .iter()
+                        .map(|field| self.reify_field(field, names))
+                        .collect::<Result<_, _>>()?,
+                )
+            }
+            DeclarationConstructor::Enumeration => {
+                let Some(FieldValue::Repeated(variants)) =
+                    value.field::<ApplicationDelimitedItems>()
+                else {
+                    return Err(TextualError::ReifyShape("enumeration variants"));
+                };
+                EncodedType::Enumeration(EncodedEnum::new(
+                    *name,
+                    variants
+                        .iter()
+                        .map(|variant| match variant {
+                            FieldValue::Atom(identifier) => {
+                                Ok(EncodedVariant::new(*identifier, None))
+                            }
+                            _ => Err(TextualError::ReifyShape("enumeration variant")),
+                        })
+                        .collect::<Result<_, _>>()?,
+                ))
+            }
+        };
+        Ok(EncodedDeclaration::public(encoded))
+    }
+
+    fn reify_reference<Resolver: NameResolver + ?Sized>(
+        &self,
+        value: &StructuralValue,
+        names: &Resolver,
     ) -> Result<EncodedReference, TextualError> {
-        match value {
-            StructuralValue::Delegated(inner) => self.reify_reference(inner, names),
-            StructuralValue::Chosen {
-                constructor,
-                payload,
-            } => match ReferenceConstructor::from_index(*constructor) {
-                Some(ReferenceConstructor::Name) => {
-                    let StructuralValue::Atom(identifier) = payload.as_ref() else {
-                        return Err(TextualError::ReifyShape("bare reference name"));
-                    };
-                    Ok(self.universe.reference_from_name(*identifier, names)?)
-                }
-                Some(ReferenceConstructor::Application) => {
-                    let StructuralValue::Application(head, argument) = payload.as_ref() else {
-                        return Err(TextualError::ReifyShape("reference application"));
-                    };
-                    let StructuralValue::Atom(head) = head.as_ref() else {
-                        return Err(TextualError::ReifyShape("reference application head"));
-                    };
-                    let projection = self
-                        .universe
-                        .builtin_from_name(*head, names)?
-                        .and_then(BuiltinReference::single_projection)
-                        .ok_or(TextualError::ReifyShape("universe projection definition"))?;
-                    Ok(EncodedReference::SingleTypeApplication {
-                        projection,
-                        argument: Box::new(self.reify_reference(argument, names)?),
-                    })
-                }
-                None => Err(TextualError::ReifyShape("type reference constructor")),
-            },
-            _ => Err(TextualError::ReifyShape("type reference")),
+        match ReferenceConstructor::from_index(value.constructor().local()) {
+            Some(ReferenceConstructor::Name) => {
+                let Some(FieldValue::Atom(identifier)) = value.field::<UnaryRoot>() else {
+                    return Err(TextualError::ReifyShape("bare reference name"));
+                };
+                self.reference_from_atom(*identifier, names)
+            }
+            Some(ReferenceConstructor::Application) => {
+                let Some(FieldValue::Atom(head)) = value.field::<ApplicationHead>() else {
+                    return Err(TextualError::ReifyShape("reference application head"));
+                };
+                let Some(FieldValue::Delegated(argument)) = value.field::<ApplicationPayload>()
+                else {
+                    return Err(TextualError::ReifyShape("reference application"));
+                };
+                let projection = self
+                    .universe
+                    .builtin_from_name(*head, names)?
+                    .and_then(BuiltinReference::single_projection)
+                    .ok_or(TextualError::ReifyShape("universe projection definition"))?;
+                Ok(EncodedReference::SingleTypeApplication {
+                    projection,
+                    argument: Box::new(self.reify_reference(argument, names)?),
+                })
+            }
+            None => Err(TextualError::ReifyShape("type reference constructor")),
         }
     }
 
-    /// Reflect a reference into a bare universe definition or a name-applied
-    /// reference payload. The grammar owns no keyword forms.
+    fn reify_interface_variants<Resolver: NameResolver + ?Sized>(
+        &self,
+        value: &StructuralValue,
+        names: &Resolver,
+    ) -> Result<Vec<EncodedVariant>, TextualError> {
+        let Some(FieldValue::Repeated(entries)) = value.field::<DelimitedItems>() else {
+            return Err(TextualError::ReifyShape("interface entries"));
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                let FieldValue::Delegated(entry) = entry else {
+                    return Err(TextualError::ReifyShape("interface entry delegate"));
+                };
+                let Some(FieldValue::Atom(name)) = entry.field::<ApplicationHead>() else {
+                    return Err(TextualError::ReifyShape("interface entry name"));
+                };
+                let Some(FieldValue::Delegated(reference)) = entry.field::<ApplicationPayload>()
+                else {
+                    return Err(TextualError::ReifyShape("interface entry payload"));
+                };
+                Ok(EncodedVariant::new(
+                    *name,
+                    Some(self.reify_reference(reference, names)?),
+                ))
+            })
+            .collect()
+    }
+
+    fn reflect_types<'declaration>(
+        &self,
+        declarations: impl Iterator<Item = &'declaration EncodedDeclaration>,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        let items = declarations
+            .map(|declaration| {
+                self.reflect_declaration(declaration, names)
+                    .map(|value| FieldValue::Delegated(Box::new(value)))
+            })
+            .collect::<Result<_, _>>()?;
+        Self::delimited_mirror(TYPES_BLOCK, items)
+    }
+
+    fn reflect_declaration(
+        &self,
+        declaration: &EncodedDeclaration,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        match declaration.value() {
+            EncodedType::Newtype(newtype) => Self::application_mirror(
+                DECLARATION,
+                DeclarationConstructor::Newtype.index(),
+                newtype.identifier(),
+                FieldValue::Delegated(Box::new(
+                    self.reflect_reference(newtype.reference(), names)?,
+                )),
+            ),
+            EncodedType::Struct(structure) => Self::application_delimited_mirror(
+                DECLARATION,
+                DeclarationConstructor::Struct.index(),
+                structure.identifier(),
+                structure
+                    .fields()
+                    .iter()
+                    .map(|field| Self::reflect_field(field, names, DOCUMENT_FIELD))
+                    .collect::<Result<_, _>>()?,
+            ),
+            EncodedType::Enumeration(enumeration) => Self::application_delimited_mirror(
+                DECLARATION,
+                DeclarationConstructor::Enumeration.index(),
+                enumeration.identifier(),
+                enumeration
+                    .variants()
+                    .iter()
+                    .map(|variant| {
+                        if variant.payload().is_some() {
+                            Err(TextualError::ReifyShape(
+                                "enumeration declaration payload variant",
+                            ))
+                        } else {
+                            Ok(FieldValue::Atom(variant.identifier()))
+                        }
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+        }
+    }
+
+    fn reflect_interface(
+        &self,
+        interface: &EncodedType,
+        names: &NameTable,
+    ) -> Result<StructuralValue, TextualError> {
+        let EncodedType::Enumeration(enumeration) = interface else {
+            return Err(TextualError::ReifyShape("interface root enumeration"));
+        };
+        let items = enumeration
+            .variants()
+            .iter()
+            .map(|variant| {
+                let reference = variant
+                    .payload()
+                    .ok_or(TextualError::ReifyShape("interface entry payload"))?;
+                Ok(FieldValue::Delegated(Box::new(Self::application_mirror(
+                    INTERFACE_VARIANT,
+                    0,
+                    variant.identifier(),
+                    FieldValue::Delegated(Box::new(self.reflect_reference(reference, names)?)),
+                )?)))
+            })
+            .collect::<Result<_, TextualError>>()?;
+        Self::delimited_mirror(INTERFACE, items)
+    }
+
     fn reflect_reference(
         &self,
         reference: &EncodedReference,
-        names: &mut NameTable,
+        names: &NameTable,
     ) -> Result<StructuralValue, TextualError> {
-        let bare = |builtin: BuiltinReference, names: &mut NameTable| {
-            Ok(StructuralValue::chosen(
-                ReferenceConstructor::Name.index(),
-                StructuralValue::Atom(names.intern(Name::new(builtin.spelling()))?),
-            ))
-        };
         match reference {
-            EncodedReference::Integer => bare(BuiltinReference::Integer, names),
-            EncodedReference::String => bare(BuiltinReference::String, names),
-            EncodedReference::Boolean => bare(BuiltinReference::Boolean, names),
-            EncodedReference::Bytes => bare(BuiltinReference::Bytes, names),
-            EncodedReference::Plain(identifier) => Ok(StructuralValue::chosen(
-                ReferenceConstructor::Name.index(),
-                StructuralValue::Atom(*identifier),
-            )),
+            EncodedReference::Integer => Self::unary_mirror(
+                TYPE_REFERENCE,
+                0,
+                FieldValue::Atom(Self::builtin_identifier(BuiltinReference::Integer, names)?),
+            ),
+            EncodedReference::String => Self::unary_mirror(
+                TYPE_REFERENCE,
+                0,
+                FieldValue::Atom(Self::builtin_identifier(BuiltinReference::String, names)?),
+            ),
+            EncodedReference::Boolean => Self::unary_mirror(
+                TYPE_REFERENCE,
+                0,
+                FieldValue::Atom(Self::builtin_identifier(BuiltinReference::Boolean, names)?),
+            ),
+            EncodedReference::Bytes => Self::unary_mirror(
+                TYPE_REFERENCE,
+                0,
+                FieldValue::Atom(Self::builtin_identifier(BuiltinReference::Bytes, names)?),
+            ),
+            EncodedReference::Plain(identifier) => {
+                Self::unary_mirror(TYPE_REFERENCE, 0, FieldValue::Atom(*identifier))
+            }
             EncodedReference::SingleTypeApplication {
                 projection,
                 argument,
@@ -496,16 +709,12 @@ impl TextualSchema {
                         BuiltinReference::ScopeOf
                     }
                 };
-                let inner = self.reflect_reference(argument, names)?;
-                Ok(StructuralValue::chosen(
-                    ReferenceConstructor::Application.index(),
-                    StructuralValue::Application(
-                        Box::new(StructuralValue::Atom(
-                            names.intern(Name::new(builtin.spelling()))?,
-                        )),
-                        Box::new(StructuralValue::Delegated(Box::new(inner))),
-                    ),
-                ))
+                Self::application_mirror(
+                    TYPE_REFERENCE,
+                    1,
+                    Self::builtin_identifier(builtin, names)?,
+                    FieldValue::Delegated(Box::new(self.reflect_reference(argument, names)?)),
+                )
             }
             EncodedReference::MultiTypeApplication { .. } => {
                 Err(TextualError::ReifyShape("multi-type application encode"))
@@ -516,425 +725,119 @@ impl TextualSchema {
         }
     }
 
-    // ===== the six-slot document layout =====
+    // ===== checked typed mirror construction =====
 
-    /// Decode a whole six-slot document — `imports {} input [] output [] types {}
-    /// generics {} impls {}` — into a full [`EncodedSchema`]. The two interface lines
-    /// decode into role-tagged enumeration declarations (the [`InterfaceInput`] /
-    /// [`InterfaceOutput`] roots) and the `types` block into data declarations; all
-    /// three land in the one declaration substrate, interface roots first. The
-    /// imports, generics, and impls slots must be empty braces (a non-empty one is
-    /// not yet modelled and is rejected, never dropped).
-    ///
-    /// [`InterfaceInput`]: DeclarationRole::InterfaceInput
-    /// [`InterfaceOutput`]: DeclarationRole::InterfaceOutput
-    pub fn decode_document(
-        &self,
-        text: &str,
-        names: &mut NameTable,
-    ) -> Result<EncodedSchema, TextualError> {
-        let document = Recognizer::with_profile(self.profile.clone()).recognize(text)?;
-        let roots = document.root_objects();
-        if roots.len() != DOCUMENT_SLOTS {
-            return Err(TextualError::DocumentArity(roots.len()));
-        }
-        Self::require_empty_brace(&roots[0], "imports")?;
-        let input =
-            self.decode_interface_slot(&roots[1], DeclarationRole::InterfaceInput, names)?;
-        let output =
-            self.decode_interface_slot(&roots[2], DeclarationRole::InterfaceOutput, names)?;
-        let types = self.decode_types_slot(&roots[3], names)?;
-        Self::require_empty_brace(&roots[4], "generics")?;
-        Self::require_empty_brace(&roots[5], "impls")?;
-        let mut declarations = Vec::with_capacity(types.len() + 2);
-        declarations.push(input);
-        declarations.push(output);
-        declarations.extend(types);
-        for declaration in &declarations {
-            self.universe
-                .validate_declaration_name(declaration.identifier(), names)?;
-        }
-        Ok(EncodedSchema::new(declarations))
-    }
-
-    /// Encode a [`EncodedSchema`] back into six-slot document text, one slot per line.
-    /// The interface roots render into the `input` / `output` brackets and the data
-    /// declarations into the `types` block; a schema missing an interface root is
-    /// rejected loudly rather than rendered with an empty protocol line.
-    pub fn encode_document(
-        &self,
-        schema: &EncodedSchema,
-        names: &mut NameTable,
-    ) -> Result<String, TextualError> {
-        let input = schema
-            .input()
-            .ok_or(TextualError::MissingInterfaceRoot("input"))?;
-        let output = schema
-            .output()
-            .ok_or(TextualError::MissingInterfaceRoot("output"))?;
-        let slots = [
-            Self::empty_brace(),
-            self.encode_interface_slot(input, names)?,
-            self.encode_interface_slot(output, names)?,
-            self.encode_types_slot(schema, names)?,
-            Self::empty_brace(),
-            Self::empty_brace(),
-        ];
-        Ok(slots.join("\n"))
-    }
-
-    /// The evaluator for the document grammar. Builtins are universe definitions,
-    /// so the grammar needs no keyword lexicon.
-    fn document_evaluator(&self) -> StructuralEvaluator<'_> {
-        StructuralEvaluator::with_profile(&self.table, &self.profile)
-    }
-
-    fn schema_evaluator(&self) -> StructuralEvaluator<'_> {
-        StructuralEvaluator::with_profile(&self.table, &self.profile)
-    }
-
-    /// The canonical empty brace an unmodelled document slot renders to.
-    fn empty_brace() -> String {
-        Delimiter::Brace.wrap(std::iter::empty::<String>())
-    }
-
-    /// Prove a document slot is an empty brace; otherwise a loud, typed slot error.
-    fn require_empty_brace(block: &Block, slot: &'static str) -> Result<(), TextualError> {
-        match block.as_delimited(Delimiter::Brace) {
-            Some([]) => Ok(()),
-            _ => Err(TextualError::DocumentSlot(slot)),
-        }
-    }
-
-    /// Decode one interface-line bracket into its role-tagged enumeration
-    /// declaration: the `Name.Payload` entries become the enumeration's variants, and
-    /// the declaration takes the role's canonical protocol-line name (`Input` /
-    /// `Output`) — the same name legacy ingestion carries, so the two front ends
-    /// agree on the interface surface.
-    fn decode_interface_slot(
-        &self,
-        block: &Block,
-        role: DeclarationRole,
-        names: &mut NameTable,
-    ) -> Result<EncodedDeclaration, TextualError> {
-        let value = self.document_evaluator().decode(INTERFACE, block, names)?;
-        let variants = self.reify_interface_variants(&value, names)?;
-        let name = names.intern(Name::new(
-            role.interface_root_name()
-                .ok_or(TextualError::ReifyShape("interface role"))?,
-        ))?;
-        Ok(EncodedDeclaration::interface(
-            role,
-            EncodedType::Enumeration(EncodedEnum::new(name, variants)),
-        ))
-    }
-
-    fn encode_interface_slot(
-        &self,
-        interface: &EncodedDeclaration,
-        names: &mut NameTable,
-    ) -> Result<String, TextualError> {
-        let EncodedType::Enumeration(enumeration) = interface.value() else {
-            return Err(TextualError::ReifyShape("interface root enumeration"));
-        };
-        let mirror = self.reflect_interface(enumeration, names)?;
-        Ok(self
-            .document_evaluator()
-            .encode_text(INTERFACE, &mirror, names)?)
-    }
-
-    fn decode_types_slot(
-        &self,
-        block: &Block,
-        names: &mut NameTable,
-    ) -> Result<Vec<EncodedDeclaration>, TextualError> {
-        let value = self
-            .document_evaluator()
-            .decode(TYPES_BLOCK, block, names)?;
-        self.reify_types(&value, names)
-    }
-
-    /// Encode the schema's `types` block — its data declarations only. The interface
-    /// roots are rendered by [`encode_interface_slot`](Self::encode_interface_slot)
-    /// into their own brackets, never the `types` block.
-    fn encode_types_slot(
-        &self,
-        schema: &EncodedSchema,
-        names: &mut NameTable,
-    ) -> Result<String, TextualError> {
-        let mirror = self.reflect_types(schema.data_declarations(), names)?;
-        Ok(self
-            .document_evaluator()
-            .encode_text(TYPES_BLOCK, &mirror, names)?)
-    }
-
-    /// Reify the `types` block mirror into the declaration set. Each child is a
-    /// `Delegate` over a `Declaration` mirror.
-    fn reify_types(
-        &self,
-        value: &StructuralValue,
-        names: &mut NameTable,
-    ) -> Result<Vec<EncodedDeclaration>, TextualError> {
-        let StructuralValue::Chosen { payload, .. } = value else {
-            return Err(TextualError::ReifyShape("types block"));
-        };
-        let StructuralValue::Delimited(declarations) = payload.as_ref() else {
-            return Err(TextualError::ReifyShape("types block declarations"));
-        };
-        let mut result = Vec::with_capacity(declarations.len());
-        for declaration in declarations {
-            let StructuralValue::Delegated(inner) = declaration else {
-                return Err(TextualError::ReifyShape("declaration delegate"));
-            };
-            result.push(self.reify_declaration(inner, names)?);
-        }
-        Ok(result)
-    }
-
-    /// Reflect a declaration set into the `types` block mirror.
-    fn reflect_types<'declaration>(
-        &self,
-        declarations: impl Iterator<Item = &'declaration EncodedDeclaration>,
-        names: &mut NameTable,
+    fn unary_mirror(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        constructor: u16,
+        root: FieldValue,
     ) -> Result<StructuralValue, TextualError> {
-        let mut mirrors = Vec::new();
-        for declaration in declarations {
-            let declaration_mirror = self.reflect_declaration(declaration, names)?;
-            mirrors.push(StructuralValue::Delegated(Box::new(declaration_mirror)));
-        }
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Delimited(mirrors),
-        ))
-    }
-
-    /// Reify one `Declaration` mirror, dispatching on the winning grammar constructor
-    /// index to a newtype, struct, or enumeration. Every document declaration is
-    /// public — the surface carries no visibility marker in this layout.
-    fn reify_declaration(
-        &self,
-        value: &StructuralValue,
-        names: &mut NameTable,
-    ) -> Result<EncodedDeclaration, TextualError> {
-        let StructuralValue::Chosen {
+        let mut record = StructuralValue::record(structural_codec::EncodedConstructorId::under(
+            type_id,
             constructor,
-            payload,
-        } = value
-        else {
-            return Err(TextualError::ReifyShape("declaration"));
-        };
-        let constructor = DeclarationConstructor::from_index(*constructor)
-            .ok_or(TextualError::ReifyShape("declaration constructor"))?;
-        let StructuralValue::Application(head, body) = payload.as_ref() else {
-            return Err(TextualError::ReifyShape("declaration application"));
-        };
-        let StructuralValue::Atom(name) = head.as_ref() else {
-            return Err(TextualError::ReifyShape("declaration name"));
-        };
-        let encoded_type = match constructor {
-            DeclarationConstructor::Newtype => EncodedType::Newtype(EncodedNewtype::new(
-                *name,
-                self.reify_reference(body, names)?,
-            )),
-            DeclarationConstructor::Struct => {
-                let StructuralValue::Delimited(fields) = body.as_ref() else {
-                    return Err(TextualError::ReifyShape("struct fields"));
-                };
-                let mut encoded_fields = Vec::with_capacity(fields.len());
-                for field in fields {
-                    encoded_fields.push(self.reify_field(field, names)?);
-                }
-                // A single-field braced body lowers to a newtype canonically, matching
-                // the legacy front end (psyche ruling, bead primary-56d1.36).
-                EncodedType::from_braced_body(*name, encoded_fields)
-            }
-            DeclarationConstructor::Enumeration => {
-                let StructuralValue::Delimited(variants) = body.as_ref() else {
-                    return Err(TextualError::ReifyShape("enumeration variants"));
-                };
-                EncodedType::Enumeration(EncodedEnum::new(
-                    *name,
-                    Self::variants_from_atoms(variants)?,
-                ))
-            }
-        };
-        Ok(EncodedDeclaration::public(encoded_type))
+        ));
+        record.insert::<UnaryRoot>(root)?;
+        Ok(record.finish())
     }
 
-    /// Reflect a [`EncodedDeclaration`] into its `Declaration` mirror.
-    fn reflect_declaration(
-        &self,
-        declaration: &EncodedDeclaration,
-        names: &mut NameTable,
+    fn application_mirror(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        constructor: u16,
+        head: name_table::Identifier,
+        payload: FieldValue,
     ) -> Result<StructuralValue, TextualError> {
-        let encoded_type = declaration.value();
-        let (constructor, body) = match encoded_type {
-            EncodedType::Newtype(newtype) => {
-                let reference_mirror = self.reflect_reference(newtype.reference(), names)?;
-                (
-                    DeclarationConstructor::Newtype,
-                    StructuralValue::Delegated(Box::new(reference_mirror)),
-                )
-            }
-            EncodedType::Struct(structure) => {
-                let mut fields = Vec::with_capacity(structure.fields().len());
-                for field in structure.fields() {
-                    fields.push(self.reflect_field(field, names)?);
-                }
-                (
-                    DeclarationConstructor::Struct,
-                    StructuralValue::Delimited(fields),
-                )
-            }
-            EncodedType::Enumeration(enumeration) => (
-                DeclarationConstructor::Enumeration,
-                StructuralValue::Delimited(Self::variant_atoms(enumeration)?),
-            ),
+        let head_value = FieldValue::Atom(head);
+        let root = FieldValue::Application {
+            head: Box::new(head_value.clone()),
+            payload: Box::new(payload.clone()),
         };
-        Ok(StructuralValue::chosen(
-            constructor.index(),
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(encoded_type.identifier())),
-                Box::new(body),
-            ),
-        ))
+        let mut record = StructuralValue::record(structural_codec::EncodedConstructorId::under(
+            type_id,
+            constructor,
+        ));
+        record.insert::<ApplicationRoot>(root)?;
+        record.insert::<ApplicationHead>(head_value)?;
+        record.insert::<ApplicationPayload>(payload)?;
+        Ok(record.finish())
     }
 
-    /// Reify an interface line mirror into its enumeration variants — the
-    /// `Name.Payload` entries that [`decode_interface_slot`](Self::decode_interface_slot)
-    /// wraps in the role-tagged interface-root declaration.
-    fn reify_interface_variants(
-        &self,
-        value: &StructuralValue,
-        names: &NameTable,
-    ) -> Result<Vec<EncodedVariant>, TextualError> {
-        let StructuralValue::Chosen { payload, .. } = value else {
-            return Err(TextualError::ReifyShape("interface"));
-        };
-        let StructuralValue::Delimited(entries) = payload.as_ref() else {
-            return Err(TextualError::ReifyShape("interface entries"));
-        };
-        entries
-            .iter()
-            .map(|entry| self.reify_interface_variant(entry, names))
-            .collect()
-    }
-
-    /// Reify one `Name.Payload` interface entry into a payload-carrying variant.
-    fn reify_interface_variant(
-        &self,
-        entry: &StructuralValue,
-        names: &NameTable,
-    ) -> Result<EncodedVariant, TextualError> {
-        let StructuralValue::Delegated(inner) = entry else {
-            return Err(TextualError::ReifyShape("interface entry delegate"));
-        };
-        let StructuralValue::Chosen { payload, .. } = inner.as_ref() else {
-            return Err(TextualError::ReifyShape("interface entry constructor"));
-        };
-        let StructuralValue::Application(head, reference) = payload.as_ref() else {
-            return Err(TextualError::ReifyShape("interface entry application"));
-        };
-        let StructuralValue::Atom(name) = head.as_ref() else {
-            return Err(TextualError::ReifyShape("interface entry name"));
-        };
-        Ok(EncodedVariant::new(
-            *name,
-            Some(self.reify_reference(reference, names)?),
-        ))
-    }
-
-    /// Reflect an interface root's enumeration into its interface-line mirror.
-    fn reflect_interface(
-        &self,
-        interface: &EncodedEnum,
-        names: &mut NameTable,
+    fn application_delimited_mirror(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        constructor: u16,
+        head: name_table::Identifier,
+        items: Vec<FieldValue>,
     ) -> Result<StructuralValue, TextualError> {
-        let mut entries = Vec::with_capacity(interface.variants().len());
-        for variant in interface.variants() {
-            entries.push(self.reflect_interface_variant(variant, names)?);
-        }
-        Ok(StructuralValue::chosen(
-            0,
-            StructuralValue::Delimited(entries),
-        ))
+        let head_value = FieldValue::Atom(head);
+        let item_value = FieldValue::Repeated(items);
+        let body_value = FieldValue::Delimited(Box::new(item_value.clone()));
+        let root = FieldValue::Application {
+            head: Box::new(head_value.clone()),
+            payload: Box::new(body_value.clone()),
+        };
+        let mut record = StructuralValue::record(structural_codec::EncodedConstructorId::under(
+            type_id,
+            constructor,
+        ));
+        record.insert::<ApplicationDelimitedRoot>(root)?;
+        record.insert::<ApplicationDelimitedHead>(head_value)?;
+        record.insert::<ApplicationDelimitedBody>(body_value)?;
+        record.insert::<ApplicationDelimitedItems>(item_value)?;
+        Ok(record.finish())
     }
 
-    /// Reflect one interface variant into its `Name.Payload` entry mirror.
-    fn reflect_interface_variant(
-        &self,
-        variant: &EncodedVariant,
-        names: &mut NameTable,
+    fn delimited_mirror(
+        type_id: structural_codec::ScopedEncodedTypeId,
+        items: Vec<FieldValue>,
     ) -> Result<StructuralValue, TextualError> {
-        let reference = variant
-            .payload()
-            .ok_or(TextualError::ReifyShape("interface entry payload"))?;
-        let reference_mirror = self.reflect_reference(reference, names)?;
-        let entry = StructuralValue::chosen(
-            0,
-            StructuralValue::Application(
-                Box::new(StructuralValue::Atom(variant.identifier())),
-                Box::new(StructuralValue::Delegated(Box::new(reference_mirror))),
-            ),
-        );
-        Ok(StructuralValue::Delegated(Box::new(entry)))
+        let item_value = FieldValue::Repeated(items);
+        let root = FieldValue::Delimited(Box::new(item_value.clone()));
+        let mut record =
+            StructuralValue::record(structural_codec::EncodedConstructorId::under(type_id, 0));
+        record.insert::<DelimitedRoot>(root)?;
+        record.insert::<DelimitedItems>(item_value)?;
+        Ok(record.finish())
     }
 }
 
-/// `TextualSchema` is the reference instance of the shared textual interface,
-/// [`TextualForm`](structural_codec::TextualForm). Its structuretree is the authored
-/// structural table; its nametree is the caller's `NameTable`; and its EncodedForm is
-/// an `EncodedType` declaration. The provided `view` / `unview` reproduce this crate's
-/// single-declaration `encode` / `decode` exactly — the interface was generalized out
-/// of schema, not bolted on — so existing behavior proves the shared view fits without
-/// change (witnessed by `tests/textual_form.rs`).
-impl Textual for TextualSchema {
+impl Textual<SchemaRule> for TextualSchema {
     type Encoded = EncodedType;
     type Language = SchemaLanguage;
     type Error = TextualError;
 
-    fn structuretree(&self) -> &AddressedStructuralTable {
+    fn structuretree(&self) -> &structural_codec::AddressedStructuralTable<SchemaRule> {
         &self.table
     }
 
-    fn token_profile(&self) -> &raw_discovery::SealedTokenProfile {
-        &self.profile
-    }
-
-    fn missing_root_object(&self) -> TextualError {
+    fn missing_root_object(&self) -> Self::Error {
         TextualError::EmptySource
     }
 
     fn reify(
         &self,
-        expected: ScopedEncodedTypeId,
+        expected: structural_codec::ScopedEncodedTypeId,
         mirror: &StructuralValue,
         names: &mut NameTransaction<'_>,
-    ) -> Result<EncodedType, TextualError> {
+    ) -> Result<Self::Encoded, Self::Error> {
         self.reify_type(expected, mirror, names)
     }
 
     fn reflect(
         &self,
-        _expected: ScopedEncodedTypeId,
-        encoded: &EncodedType,
+        expected: structural_codec::ScopedEncodedTypeId,
+        encoded: &Self::Encoded,
         names: &NameTable,
-    ) -> Result<StructuralValue, TextualError> {
-        self.reflect_type_from_table(encoded, names)
+    ) -> Result<StructuralValue, Self::Error> {
+        self.reflect_type(expected, encoded, names)
     }
 }
 
-/// The schema language identity — the `T` shared by schema's truth side
-/// ([`EncodedForm`] for [`EncodedSchema`]), its textual interface side ([`Textual`] for
-/// [`TextualSchema`] producing a `TextualForm<SchemaLanguage>` value type), and any
-/// conversion off the schema layer. A stringless marker; it carries no runtime value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SchemaLanguage;
 
-/// [`EncodedSchema`] is the reference [`EncodedForm`] of the Protos pairing: the whole-
-/// language stringless truth a [`Textual`] interface views and an `EncodedConversion`
-/// (the schema→logos lowering in `core-nomos`) moves. Its language identity is
-/// [`SchemaLanguage`].
+impl EncodedForm for EncodedType {
+    type Language = SchemaLanguage;
+}
+
 impl EncodedForm for EncodedSchema {
     type Language = SchemaLanguage;
 }
