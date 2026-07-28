@@ -1,5 +1,5 @@
 {
-  description = "core-schema — the first real stringless Encoded schema layer and the first real Textual form (TextualSchema)";
+  description = "core-ethos — the first real stringless Encoded Ethos layer and the first real Textual form (TextualEthos)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -52,7 +52,7 @@
           });
         };
         devShells.default = pkgs.mkShell {
-          name = "core-schema";
+          name = "core-ethos";
           packages = [ pkgs.jujutsu toolchain ];
         };
       });

@@ -1,4 +1,4 @@
-//! Encoded-schema consumes namespace-sliced name tables without flattening or
+//! Encoded-ethos consumes namespace-sliced name tables without flattening or
 //! renumbering a completed foreign slice.
 
 use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
@@ -11,12 +11,12 @@ fn composed_foreign_slice_retains_its_namespace_and_local_identifier() {
         .expect("one Logos name fits its namespace");
     assert_eq!(foreign, Identifier::Logos(0));
 
-    let mut schema = NameTable::new(IdentifierNamespace::Schema);
-    let home = schema
-        .intern(Name::new("SchemaOnly"))
-        .expect("schema home fits its namespace");
+    let mut ethos = NameTable::new(IdentifierNamespace::Schema);
+    let home = ethos
+        .intern(Name::new("EthosOnly"))
+        .expect("ethos home fits its namespace");
     assert_eq!(home, Identifier::Schema(0));
-    let mut composed = schema
+    let mut composed = ethos
         .compose(&logos)
         .expect("compose completed Logos slice");
 
@@ -37,9 +37,9 @@ fn composed_foreign_slice_retains_its_namespace_and_local_identifier() {
     assert_eq!(
         composed
             .resolve(home)
-            .expect("schema home name resolves")
+            .expect("ethos home name resolves")
             .as_str(),
-        "SchemaOnly",
+        "EthosOnly",
         "composition retains the consumer's completed Schema home slice",
     );
 }

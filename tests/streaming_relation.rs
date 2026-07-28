@@ -1,10 +1,10 @@
 //! Streaming relations are closed encoded protocol data whose construction checks
-//! the schema relation law: Schema-owned endpoints, role-correct interfaces, and
+//! the ethos relation law: Schema-owned endpoints, role-correct interfaces, and
 //! data-type value references.
 
-use core_schema::{
-    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedNewtype, EncodedReference,
-    EncodedSchema, EncodedSchemaError, EncodedType, EncodedVariant, MultiTypeReferenceProjection,
+use core_ethos::{
+    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos, EncodedEthosError,
+    EncodedNewtype, EncodedReference, EncodedType, EncodedVariant, MultiTypeReferenceProjection,
     SingleTypeReferenceProjection, StreamingReferenceForm, StreamingRelation,
     StreamingRelationReference, ValueReferenceProjection,
 };
@@ -21,11 +21,11 @@ struct RelationNames {
     close: Identifier,
 }
 
-fn schema_parts() -> (RelationNames, Vec<EncodedDeclaration>) {
-    schema_parts_in(IdentifierNamespace::Schema)
+fn ethos_parts() -> (RelationNames, Vec<EncodedDeclaration>) {
+    ethos_parts_in(IdentifierNamespace::Schema)
 }
 
-fn schema_parts_in(namespace: IdentifierNamespace) -> (RelationNames, Vec<EncodedDeclaration>) {
+fn ethos_parts_in(namespace: IdentifierNamespace) -> (RelationNames, Vec<EncodedDeclaration>) {
     let mut names = NameTable::new(namespace);
     let identifier = |names: &mut NameTable, name| names.intern(Name::new(name)).unwrap();
     let input = identifier(&mut names, "Input");
@@ -132,11 +132,10 @@ fn relation_with_value_reference(
 
 #[test]
 fn streaming_relation_accepts_data_type_value_references() {
-    let (names, declarations) = schema_parts();
-    let schema =
-        EncodedSchema::with_streaming_relations(declarations, vec![valid_relation(&names)])
-            .expect("valid relation");
-    let relation = &schema.streaming_relations()[0];
+    let (names, declarations) = ethos_parts();
+    let ethos = EncodedEthos::with_streaming_relations(declarations, vec![valid_relation(&names)])
+        .expect("valid relation");
+    let relation = &ethos.streaming_relations()[0];
 
     assert_eq!(relation.opening_input_variant(), names.open);
     assert_eq!(
@@ -152,21 +151,21 @@ fn streaming_relation_accepts_data_type_value_references() {
     assert!(
         matches!(relation.close_token(), EncodedReference::Plain(identifier) if *identifier == names.close)
     );
-    assert_eq!(schema.input().unwrap().identifier(), names.input);
-    assert_eq!(schema.output().unwrap().identifier(), names.output);
+    assert_eq!(ethos.input().unwrap().identifier(), names.input);
+    assert_eq!(ethos.output().unwrap().identifier(), names.output);
 }
 
 /// A graph may be internally consistent in the Logos namespace, but it is still
-/// foreign to EncodedSchema. Matching references must not launder its identifiers.
+/// foreign to EncodedEthos. Matching references must not launder its identifiers.
 #[test]
 fn streaming_relation_rejects_a_fully_matching_logos_graph() {
-    let (names, declarations) = schema_parts_in(IdentifierNamespace::Logos);
-    let error = EncodedSchema::with_streaming_relations(declarations, vec![valid_relation(&names)])
-        .expect_err("Logos identifiers are foreign to a EncodedSchema relation boundary");
+    let (names, declarations) = ethos_parts_in(IdentifierNamespace::Logos);
+    let error = EncodedEthos::with_streaming_relations(declarations, vec![valid_relation(&names)])
+        .expect_err("Logos identifiers are foreign to a EncodedEthos relation boundary");
 
     assert!(matches!(
         error,
-        EncodedSchemaError::NonSchemaIdentifier(identifier) if identifier == names.open
+        EncodedEthosError::NonEthosIdentifier(identifier) if identifier == names.open
     ));
 }
 
@@ -178,7 +177,7 @@ fn streaming_relation_rejects_a_fully_matching_logos_graph() {
 /// Plain arguments are not recursively accepted as relation values.
 #[test]
 fn streaming_relation_requires_plain_data_type_references_at_every_value_position() {
-    let (names, declarations) = schema_parts();
+    let (names, declarations) = ethos_parts();
     let cases = [
         (EncodedReference::String, StreamingReferenceForm::Scalar),
         (EncodedReference::Integer, StreamingReferenceForm::Scalar),
@@ -216,7 +215,7 @@ fn streaming_relation_requires_plain_data_type_references_at_every_value_positio
         StreamingRelationReference::CloseToken,
     ] {
         for (reference, expected_form) in &cases {
-            let error = EncodedSchema::with_streaming_relations(
+            let error = EncodedEthos::with_streaming_relations(
                 declarations.clone(),
                 vec![relation_with_value_reference(
                     &names,
@@ -227,7 +226,7 @@ fn streaming_relation_requires_plain_data_type_references_at_every_value_positio
             .expect_err("only Plain data-type identifiers may fill streaming value positions");
             assert!(matches!(
                 error,
-                EncodedSchemaError::StreamingReferenceMustNameDataType { part: actual_part, form }
+                EncodedEthosError::StreamingReferenceMustNameDataType { part: actual_part, form }
                     if actual_part == part && form == *expected_form
             ));
         }
@@ -236,7 +235,7 @@ fn streaming_relation_requires_plain_data_type_references_at_every_value_positio
 
 #[test]
 fn streaming_relation_rejects_interface_roots_as_value_references() {
-    let (names, declarations) = schema_parts();
+    let (names, declarations) = ethos_parts();
     let cases = [
         (
             StreamingRelationReference::Token,
@@ -256,7 +255,7 @@ fn streaming_relation_rejects_interface_roots_as_value_references() {
     ];
 
     for (part, identifier, expected_role) in cases {
-        let error = EncodedSchema::with_streaming_relations(
+        let error = EncodedEthos::with_streaming_relations(
             declarations.clone(),
             vec![relation_with_value_reference(
                 &names,
@@ -267,7 +266,7 @@ fn streaming_relation_rejects_interface_roots_as_value_references() {
         .expect_err("interface roots cannot supply relation values");
         assert!(matches!(
             error,
-            EncodedSchemaError::StreamingReferenceNotDataType {
+            EncodedEthosError::StreamingReferenceNotDataType {
                 part: actual_part,
                 identifier: actual_identifier,
                 actual,
@@ -278,8 +277,8 @@ fn streaming_relation_rejects_interface_roots_as_value_references() {
 
 #[test]
 fn streaming_relation_rejects_swapped_endpoints() {
-    let (names, declarations) = schema_parts();
-    let error = EncodedSchema::with_streaming_relations(
+    let (names, declarations) = ethos_parts();
+    let error = EncodedEthos::with_streaming_relations(
         declarations,
         vec![StreamingRelation::new(
             names.acknowledged,
@@ -292,11 +291,11 @@ fn streaming_relation_rejects_swapped_endpoints() {
     .expect_err("an output variant cannot open an input relation");
     assert!(matches!(
         error,
-        EncodedSchemaError::OpeningEndpointNotInputVariant(identifier) if identifier == names.acknowledged
+        EncodedEthosError::OpeningEndpointNotInputVariant(identifier) if identifier == names.acknowledged
     ));
 
-    let output_error = EncodedSchema::with_streaming_relations(
-        schema_parts().1,
+    let output_error = EncodedEthos::with_streaming_relations(
+        ethos_parts().1,
         vec![StreamingRelation::new(
             names.open,
             names.open,
@@ -308,14 +307,14 @@ fn streaming_relation_rejects_swapped_endpoints() {
     .expect_err("an input variant cannot acknowledge an output relation");
     assert!(matches!(
         output_error,
-        EncodedSchemaError::AcknowledgementEndpointNotOutputVariant(identifier) if identifier == names.open
+        EncodedEthosError::AcknowledgementEndpointNotOutputVariant(identifier) if identifier == names.open
     ));
 }
 
 #[test]
 fn streaming_relation_rejects_arbitrary_endpoint() {
-    let (names, declarations) = schema_parts();
-    let error = EncodedSchema::with_streaming_relations(
+    let (names, declarations) = ethos_parts();
+    let error = EncodedEthos::with_streaming_relations(
         declarations,
         vec![StreamingRelation::new(
             names.arbitrary,
@@ -328,15 +327,15 @@ fn streaming_relation_rejects_arbitrary_endpoint() {
     .expect_err("data declaration is not an input interface variant");
     assert!(matches!(
         error,
-        EncodedSchemaError::OpeningEndpointNotInputVariant(identifier) if identifier == names.arbitrary
+        EncodedEthosError::OpeningEndpointNotInputVariant(identifier) if identifier == names.arbitrary
     ));
 }
 
 #[test]
 fn streaming_relation_rejects_unresolved_endpoint_and_reference() {
-    let (names, declarations) = schema_parts();
+    let (names, declarations) = ethos_parts();
     let unresolved = Identifier::Schema(999);
-    let endpoint_error = EncodedSchema::with_streaming_relations(
+    let endpoint_error = EncodedEthos::with_streaming_relations(
         declarations.clone(),
         vec![StreamingRelation::new(
             unresolved,
@@ -349,10 +348,10 @@ fn streaming_relation_rejects_unresolved_endpoint_and_reference() {
     .expect_err("unresolved endpoint is not an input-interface variant");
     assert!(matches!(
         endpoint_error,
-        EncodedSchemaError::OpeningEndpointNotInputVariant(identifier) if identifier == unresolved
+        EncodedEthosError::OpeningEndpointNotInputVariant(identifier) if identifier == unresolved
     ));
 
-    let reference_error = EncodedSchema::with_streaming_relations(
+    let reference_error = EncodedEthos::with_streaming_relations(
         declarations,
         vec![StreamingRelation::new(
             names.open,
@@ -365,7 +364,7 @@ fn streaming_relation_rejects_unresolved_endpoint_and_reference() {
     .expect_err("unresolved relation reference is rejected");
     assert!(matches!(
         reference_error,
-        EncodedSchemaError::UnresolvedStreamingReference {
+        EncodedEthosError::UnresolvedStreamingReference {
             part: StreamingRelationReference::Token,
             identifier,
         } if identifier == unresolved

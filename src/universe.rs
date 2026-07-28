@@ -1,4 +1,4 @@
-//! The schema universe and its validation against archived typed table records.
+//! The ethos universe and its validation against archived typed table records.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -8,7 +8,7 @@ use structural_codec::{
     Position, SharedDescriptor, StructureRecord,
 };
 
-use crate::declaration::{EncodedDeclaration, EncodedSchema, EncodedType};
+use crate::declaration::{EncodedDeclaration, EncodedEthos, EncodedType};
 use crate::error::UniverseError;
 use crate::reference::{BuiltinReference, EncodedReference};
 
@@ -51,7 +51,7 @@ impl UniverseType {
 
 /// The layout-derived constructor field signature.  Structural-codec no longer
 /// stores a positional signature vector in each codec, so this remains a
-/// core-schema value used to compare the Encoded layout to typed record metadata.
+/// core-ethos value used to compare the Encoded layout to typed record metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedFieldSignature(Vec<structural_codec::ScopedEncodedTypeId>);
 
@@ -94,10 +94,10 @@ impl EncodedUniverse {
         &self.members
     }
 
-    pub fn declared_schema(&self) -> EncodedSchema {
+    pub fn declared_ethos(&self) -> EncodedEthos {
         let mut ordered: Vec<&UniverseType> = self.members.iter().collect();
         ordered.sort_by_key(|member| member.id);
-        EncodedSchema::new(
+        EncodedEthos::new(
             ordered
                 .into_iter()
                 .filter_map(|member| match member.kind() {
@@ -131,11 +131,11 @@ impl EncodedUniverse {
         builder.build(language)
     }
 
-    fn validate_schema_identifier(identifier: Identifier) -> Result<(), UniverseError> {
+    fn validate_ethos_identifier(identifier: Identifier) -> Result<(), UniverseError> {
         if identifier.namespace() == IdentifierNamespace::Schema {
             Ok(())
         } else {
-            Err(UniverseError::WrongSchemaIdentifier(identifier))
+            Err(UniverseError::WrongEthosIdentifier(identifier))
         }
     }
 
@@ -185,7 +185,7 @@ impl EncodedUniverse {
             EncodedReference::Boolean => validate_scalar(ScalarSlot::Boolean),
             EncodedReference::Bytes => validate_scalar(ScalarSlot::Bytes),
             EncodedReference::Plain(identifier) => {
-                Self::validate_schema_identifier(*identifier)?;
+                Self::validate_ethos_identifier(*identifier)?;
                 names
                     .resolve(*identifier)
                     .map_err(|_| UniverseError::ReferenceNameAbsent {
@@ -230,7 +230,7 @@ impl EncodedUniverse {
         identifier: Identifier,
         names: &Resolver,
     ) -> Result<EncodedReference, UniverseError> {
-        Self::validate_schema_identifier(identifier)?;
+        Self::validate_ethos_identifier(identifier)?;
         let name = names.resolve(identifier)?;
         Ok(self
             .builtins
@@ -244,7 +244,7 @@ impl EncodedUniverse {
         identifier: Identifier,
         names: &Resolver,
     ) -> Result<Option<BuiltinReference>, UniverseError> {
-        Self::validate_schema_identifier(identifier)?;
+        Self::validate_ethos_identifier(identifier)?;
         Ok(self
             .builtins
             .get(names.resolve(identifier)?.as_str())
@@ -270,7 +270,7 @@ impl EncodedUniverse {
         expected_language: EncodedLanguage,
     ) -> Result<(), UniverseError> {
         let validate_identifier = |identifier| {
-            Self::validate_schema_identifier(identifier)?;
+            Self::validate_ethos_identifier(identifier)?;
             names.resolve(identifier)?;
             Ok::<_, UniverseError>(())
         };
@@ -671,7 +671,7 @@ impl EncodedUniverseBuilder {
         let mut member_ids = BTreeSet::new();
         let mut member_names = HashSet::new();
         for member in &self.members {
-            EncodedUniverse::validate_schema_identifier(member.name)?;
+            EncodedUniverse::validate_ethos_identifier(member.name)?;
             let resolved_name = self.names.resolve(member.name)?;
             EncodedUniverse::validate_scoped_type_id(language, member.id)?;
             if let Some(builtin) = builtins.get(resolved_name.as_str()) {

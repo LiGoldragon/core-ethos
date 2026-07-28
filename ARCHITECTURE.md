@@ -1,6 +1,6 @@
-# Architecture — core-schema
+# Architecture — core-ethos
 
-This document states the durable direction of `core-schema`: what it is, why it is
+This document states the durable direction of `core-ethos`: what it is, why it is
 greenfield, and the design of its one load-bearing piece, the universe bridge. It
 is the pickup point for the next agent on the language-family train.
 
@@ -19,7 +19,7 @@ hand-authored with nothing to check them against (structural-codec named this it
 one deferred deviation: "signature-vs-Encoded validation deferred — no Encoded layout in
 the PoC").
 
-`core-schema` is slice two: the first **real** stringless Encoded layer and the first
+`core-ethos` is slice two: the first **real** stringless Encoded layer and the first
 **real** Textual form. It depends on all four foundation crates by pinned git rev
 and closes the deferred deviation.
 
@@ -30,7 +30,7 @@ and closes the deferred deviation.
 faithful shapes carried over:
 
 - Every name is an `Identifier` into a `NameTable`; the declarations carry no
-  strings. Content identity (`EncodedSchemaDomain`, blake3 over stringless rkyv bytes
+  strings. Content identity (`EncodedEthosDomain`, blake3 over stringless rkyv bytes
   via `content-identity`'s `ContentHash::of_core`) excludes the NameTable, so a
   rename is hash-stable by construction — a structural edit moves the hash, a
   rename does not.
@@ -42,12 +42,12 @@ faithful shapes carried over:
 
 ## The universe bridge (the crux)
 
-`EncodedUniverse` turns a set of `EncodedSchema` declarations into a structural-codec Encoded
+`EncodedUniverse` turns a set of `EncodedEthos` declarations into a structural-codec Encoded
 universe:
 
 - **Id allocation.** One `ScopedEncodedTypeId` per Encoded type — the scalar-leaf
   primitives, the `Field` meta-type, and each user declaration — in an explicit
-  fixture universe (the "unit of one schema" question stays parked with the psyche,
+  fixture universe (the "unit of one Ethos document" question stays parked with the psyche,
   `primary-56d1.11`). One `EncodedConstructorId` per constructor: a product (newtype,
   struct) has one; a sum (enumeration) one per variant.
 - **Signature derivation.** `EncodedUniverse::encoded_signature` derives, from the Encoded
@@ -64,7 +64,7 @@ universe:
   so the agreement test is real, not a tautology — `tests/universe_bridge.rs` proves
   both the agreement and the loud rejection of a corrupted table.
 
-The table's `core_layout_identity` is the schema's own `EncodedSchema` content hash,
+The table's `core_layout_identity` is the Ethos value's own `EncodedEthos` content hash,
 tying each structural table to the exact stringless Encoded it targets while the table
 identity itself stays **excluded** from Encoded value identity (law 4).
 
@@ -76,7 +76,7 @@ identity keystone (`primary-56d1.11`, design v2):
 - **Local / offline mode** — `EncodedUniverseBuilder` interns names in call order and
   the caller assigns type ids (the `fixture` family's hardcoded fixture ids). This is
   the self-contained path the existing tests use. It is a **lean**: because interning
-  is parse-order, two ingestions of one declared schema that parse its declarations in
+  is parse-order, two ingestions of one declared Ethos document that parse its declarations in
   different orders assign different name indices and declaration orders, so their Encoded
   values — hence content identities — diverge. That is exactly the "same thing,
   re-ID'ed" defect the keystone forbids.
@@ -88,9 +88,9 @@ identity keystone (`primary-56d1.11`, design v2):
   `from_assignment` nor `build` resolves and re-interns, re-stamps, or converts an
   identifier: the seal instead validates Schema ownership, table resolution, assigned
   declaration identity, and registered reference targets (`tests/authority_assignment.rs`).
-  This is the schema-side plumbing the sema-storage identity authority feeds: the
+  This is the Ethos-side plumbing the sema-storage identity authority feeds: the
   authority (one logical seat per deployment, in sema — settled, not a lean) binds the
-  same declared schema to the same identities across ingestions and processes.
+  same declared Ethos document to the same identities across ingestions and processes.
 
 ### The Encoded/text granularity split
 
@@ -102,11 +102,11 @@ field is decoded through the `Field` meta-type's two disjoint constructors. Sign
 is the Encoded-first split made concrete, and it is why the evaluator walks forms while
 `validate_table` checks signatures against Encoded.
 
-## TextualSchema — the first real Textual form
+## TextualEthos — the first real Textual form
 
-`TextualSchema` is one bidirectional codec over the universe. Decode: raw-discovery
+`TextualEthos` is one bidirectional codec over the universe. Decode: raw-discovery
 recognizes text into a `Block`; structural-codec's trusted evaluator decodes it
-(under the expected Encoded type) to a generic `StructuralValue`; `core-schema`
+(under the expected Encoded type) to a generic `StructuralValue`; `core-ethos`
 **reifies** that mirror into a real `EncodedType` with a real `NameTable`. Encode
 **reflects** a `EncodedType` back into a `StructuralValue`, the evaluator renders it to
 a `Block`, and it is written as canonical text. The `Field` elided-vs-explicit
@@ -120,7 +120,7 @@ two will be proven equal in a later slice.
 
 ## Greenfield by design — the coordination boundary
 
-`core-schema` does **not** edit `schema-language`, `schema`, `schema-rust`, `nota`,
+`core-ethos` does **not** edit `schema-language`, `schema`, `schema-rust`, `nota`,
 `sema-engine`, or the four slice-one crates. Codex owns adapting the existing
 `schema`-stack repositories on its release train; this crate models their proven
 Encoded shapes in the new stringless discipline so convergence can happen later,

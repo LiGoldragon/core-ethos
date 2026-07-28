@@ -1,12 +1,12 @@
 //! The four conformance laws, exercised through structural-codec's source path.
 
-use core_schema::fixture::{COMMIT_SEQUENCE, DOCUMENTATION, FIELD, FLOAT, FixtureFamily};
-use core_schema::rules::SchemaRule;
+use core_ethos::fixture::{COMMIT_SEQUENCE, DOCUMENTATION, FIELD, FLOAT, FixtureFamily};
+use core_ethos::rules::EthosRule;
 use name_table::{IdentifierNamespace, Name, NameTable};
 use raw_discovery::Delimiter;
 use structural_codec::{AddressedStructuralTable, ScopedEncodedTypeId, StructuralEvaluator};
 
-fn standard_table() -> AddressedStructuralTable<SchemaRule> {
+fn standard_table() -> AddressedStructuralTable<EthosRule> {
     FixtureFamily::build()
         .standard_table()
         .expect("seal real-Encoded table")

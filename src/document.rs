@@ -14,7 +14,7 @@ use crate::fixture::{
     APPLICATION_OPERATOR, BRACE_BOUNDARY, SQUARE_BOUNDARY, standard_block_discovery,
     standard_textual_rendering, standard_token_profile,
 };
-use crate::rules::{DelimitedRule, SchemaRule, core_rule, delimited_rule};
+use crate::rules::{DelimitedRule, EthosRule, core_rule, delimited_rule};
 
 pub const TYPE_REFERENCE: structural_codec::ScopedEncodedTypeId =
     structural_codec::ScopedEncodedTypeId::schema(100);
@@ -76,11 +76,11 @@ impl DeclarationConstructor {
 }
 
 #[derive(Clone, Debug)]
-pub struct SchemaDocumentGrammar {
-    table: AddressedStructuralTable<SchemaRule>,
+pub struct EthosDocumentGrammar {
+    table: AddressedStructuralTable<EthosRule>,
 }
 
-impl SchemaDocumentGrammar {
+impl EthosDocumentGrammar {
     pub fn build() -> Result<Self, UniverseError> {
         let profile = standard_token_profile();
         let entries = DocumentTableAuthor
@@ -103,7 +103,7 @@ impl SchemaDocumentGrammar {
         Ok(Self { table })
     }
 
-    pub fn table(&self) -> &AddressedStructuralTable<SchemaRule> {
+    pub fn table(&self) -> &AddressedStructuralTable<EthosRule> {
         &self.table
     }
 }
@@ -111,7 +111,7 @@ impl SchemaDocumentGrammar {
 struct DocumentTableAuthor;
 
 impl DocumentTableAuthor {
-    fn entries(&self) -> Result<Vec<StructuralEntry<SchemaRule>>, UniverseError> {
+    fn entries(&self) -> Result<Vec<StructuralEntry<EthosRule>>, UniverseError> {
         Ok(vec![
             self.type_reference_entry(),
             Self::field_entry(),
@@ -122,7 +122,7 @@ impl DocumentTableAuthor {
         ])
     }
 
-    fn type_reference_entry(&self) -> StructuralEntry<SchemaRule> {
+    fn type_reference_entry(&self) -> StructuralEntry<EthosRule> {
         let name = core_rule(StructuralRule::Unary(
             UnaryRule::new(SharedDescriptor::Atom(AtomDescriptor::with_case(
                 AtomCase::PascalCase,
@@ -153,7 +153,7 @@ impl DocumentTableAuthor {
         )
     }
 
-    fn field_entry() -> StructuralEntry<SchemaRule> {
+    fn field_entry() -> StructuralEntry<EthosRule> {
         let rule = core_rule(StructuralRule::Unary(
             UnaryRule::new(SharedDescriptor::Atom(AtomDescriptor::with_case(
                 AtomCase::PascalCase,
@@ -163,7 +163,7 @@ impl DocumentTableAuthor {
         Self::entry(FIELD, vec![Self::codec(FIELD, 0, rule)])
     }
 
-    fn declaration_entry(&self) -> StructuralEntry<SchemaRule> {
+    fn declaration_entry(&self) -> StructuralEntry<EthosRule> {
         let newtype = core_rule(StructuralRule::Application(
             ApplicationRule::new(
                 APPLICATION_OPERATOR,
@@ -222,7 +222,7 @@ impl DocumentTableAuthor {
         )
     }
 
-    fn types_block_entry() -> StructuralEntry<SchemaRule> {
+    fn types_block_entry() -> StructuralEntry<EthosRule> {
         let rule = delimited_rule(
             DelimitedRule::new(
                 BRACE_BOUNDARY,
@@ -233,12 +233,12 @@ impl DocumentTableAuthor {
                 0,
                 None,
             )
-            .expect("schema roles"),
+            .expect("ethos roles"),
         );
         Self::entry(TYPES_BLOCK, vec![Self::codec(TYPES_BLOCK, 0, rule)])
     }
 
-    fn interface_variant_entry() -> StructuralEntry<SchemaRule> {
+    fn interface_variant_entry() -> StructuralEntry<EthosRule> {
         let rule = core_rule(StructuralRule::Application(
             ApplicationRule::new(
                 APPLICATION_OPERATOR,
@@ -256,7 +256,7 @@ impl DocumentTableAuthor {
         )
     }
 
-    fn interface_entry() -> StructuralEntry<SchemaRule> {
+    fn interface_entry() -> StructuralEntry<EthosRule> {
         let rule = delimited_rule(
             DelimitedRule::new(
                 SQUARE_BOUNDARY,
@@ -267,7 +267,7 @@ impl DocumentTableAuthor {
                 0,
                 None,
             )
-            .expect("schema roles"),
+            .expect("ethos roles"),
         );
         Self::entry(INTERFACE, vec![Self::codec(INTERFACE, 0, rule)])
     }
@@ -275,8 +275,8 @@ impl DocumentTableAuthor {
     fn codec(
         type_id: structural_codec::ScopedEncodedTypeId,
         constructor: u16,
-        rule: SchemaRule,
-    ) -> ConstructorCodec<SchemaRule> {
+        rule: EthosRule,
+    ) -> ConstructorCodec<EthosRule> {
         ConstructorCodec::new(
             EncodedConstructorId::under(type_id, constructor),
             vec![AcceptedDecodeForm::new(DecodeFormId::new(0), rule.clone())],
@@ -286,18 +286,18 @@ impl DocumentTableAuthor {
 
     fn entry(
         type_id: structural_codec::ScopedEncodedTypeId,
-        constructors: Vec<ConstructorCodec<SchemaRule>>,
-    ) -> StructuralEntry<SchemaRule> {
+        constructors: Vec<ConstructorCodec<EthosRule>>,
+    ) -> StructuralEntry<EthosRule> {
         StructuralEntry::new(type_id, constructors)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SchemaDocumentGrammar;
+    use super::EthosDocumentGrammar;
 
     #[test]
     fn full_grammar_seals() {
-        SchemaDocumentGrammar::build().expect("the complete document grammar seals");
+        EthosDocumentGrammar::build().expect("the complete document grammar seals");
     }
 }

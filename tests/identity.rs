@@ -2,8 +2,8 @@
 //! excluded, so a rename is hash-stable by construction while a structural edit
 //! moves the hash.
 
-use core_schema::declaration::{EncodedNewtype, EncodedType};
-use core_schema::{EncodedDeclaration, EncodedReference, EncodedSchema, FixtureFamily};
+use core_ethos::declaration::{EncodedNewtype, EncodedType};
+use core_ethos::{EncodedDeclaration, EncodedEthos, EncodedReference, FixtureFamily};
 use name_table::{IdentifierNamespace, Name, NameTable};
 
 /// Rebuild a table identical to `original` except that identifier `target` resolves
@@ -29,17 +29,17 @@ fn rename(original: &NameTable, target: name_table::Identifier, replacement: &st
     renamed
 }
 
-/// A rename is a NameTable-only edit: the EncodedSchema value is untouched, so its
+/// A rename is a NameTable-only edit: the EncodedEthos value is untouched, so its
 /// content identity does not move, even though the projected name genuinely changes.
 #[test]
 fn a_rename_leaves_encoded_identity_unchanged() {
     let family = FixtureFamily::build();
-    let schema = family.schema();
+    let ethos = family.ethos();
     let names = family.universe().names();
 
     // CommitSequence is the first declaration; take its identifier.
-    let commit_identifier = schema.declarations()[0].identifier();
-    let before = schema.content_identity().expect("hash before rename");
+    let commit_identifier = ethos.declarations()[0].identifier();
+    let before = ethos.content_identity().expect("hash before rename");
 
     let renamed = rename(names, commit_identifier, "Commitment");
 
@@ -54,7 +54,7 @@ fn a_rename_leaves_encoded_identity_unchanged() {
     );
 
     // The Encoded hash did not — the stringless value carries no names.
-    let after = schema.content_identity().expect("hash after rename");
+    let after = ethos.content_identity().expect("hash after rename");
     assert_eq!(before, after, "rename is hash-stable");
 }
 
@@ -63,13 +63,13 @@ fn a_rename_leaves_encoded_identity_unchanged() {
 #[test]
 fn a_structural_edit_moves_encoded_identity() {
     let family = FixtureFamily::build();
-    let base = family.schema().content_identity().expect("base hash");
+    let base = family.ethos().content_identity().expect("base hash");
 
-    // A one-declaration schema and the same declaration with an extra newtype hash
+    // A one-declaration ethos and the same declaration with an extra newtype hash
     // differently.
-    let commit = family.schema().declarations()[0].clone();
-    let smaller = EncodedSchema::new(vec![commit.clone()]);
-    let larger = EncodedSchema::new(vec![
+    let commit = family.ethos().declarations()[0].clone();
+    let smaller = EncodedEthos::new(vec![commit.clone()]);
+    let larger = EncodedEthos::new(vec![
         commit,
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             name_table::Identifier::Schema(999),
@@ -85,6 +85,6 @@ fn a_structural_edit_moves_encoded_identity() {
     assert_ne!(
         base,
         smaller.content_identity().expect("small vs full"),
-        "the full family and a single-declaration schema differ",
+        "the full family and a single-declaration ethos differ",
     );
 }

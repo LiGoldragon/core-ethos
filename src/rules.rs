@@ -1,4 +1,4 @@
-//! The schema vocabulary's archived typed rule records.
+//! The ethos vocabulary's archived typed rule records.
 //!
 //! `structural-codec` owns evaluation.  These records only name this vocabulary's
 //! fixed positions and the one metadata sidecar needed to validate the fixture
@@ -265,19 +265,19 @@ impl StructureRecord for SignatureApplicationDelimitedRule {
     }
 }
 
-/// The whole core-schema vocabulary, combined as data-only coproducts.  The
+/// The whole core-ethos vocabulary, combined as data-only coproducts.  The
 /// evaluator remains one shared implementation for every branch.
-pub type SchemaRule =
+pub type EthosRule =
     RuleCoproduct<RuleCoproduct<SignatureApplicationDelimitedRule, DelimitedRule>, StructuralRule>;
 
-pub(crate) fn core_rule(rule: StructuralRule) -> SchemaRule {
+pub(crate) fn core_rule(rule: StructuralRule) -> EthosRule {
     RuleCoproduct::Right(rule)
 }
 
-pub(crate) fn delimited_rule(rule: DelimitedRule) -> SchemaRule {
+pub(crate) fn delimited_rule(rule: DelimitedRule) -> EthosRule {
     RuleCoproduct::Left(RuleCoproduct::Right(rule))
 }
 
-pub(crate) fn signature_rule(rule: SignatureApplicationDelimitedRule) -> SchemaRule {
+pub(crate) fn signature_rule(rule: SignatureApplicationDelimitedRule) -> EthosRule {
     RuleCoproduct::Left(RuleCoproduct::Left(rule))
 }

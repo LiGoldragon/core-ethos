@@ -3,8 +3,8 @@
 //! another namespace.
 
 use content_identity::PortableArchive;
-use core_schema::declaration::{EncodedEnum, EncodedField, EncodedStruct, EncodedType};
-use core_schema::{
+use core_ethos::declaration::{EncodedEnum, EncodedField, EncodedStruct, EncodedType};
+use core_ethos::{
     AssignedKind, AssignedMember, BuiltinReference, EncodedDeclaration, EncodedNewtype,
     EncodedReference, EncodedUniverse, EncodedUniverseBuilder, ScalarSlot,
     SingleTypeReferenceProjection, StructuralRedefinition, UniverseError,
@@ -12,11 +12,11 @@ use core_schema::{
 use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
 use structural_codec::{EncodedLanguage, ScopedEncodedTypeId};
 
-fn schema_id(local: u16) -> ScopedEncodedTypeId {
+fn ethos_id(local: u16) -> ScopedEncodedTypeId {
     ScopedEncodedTypeId::schema(local)
 }
 
-fn schema_table(names: &[&str]) -> (NameTable, Vec<Identifier>) {
+fn ethos_table(names: &[&str]) -> (NameTable, Vec<Identifier>) {
     let mut table = NameTable::new(IdentifierNamespace::Schema);
     let identifiers = names
         .iter()
@@ -29,8 +29,8 @@ fn schema_table(names: &[&str]) -> (NameTable, Vec<Identifier>) {
 /// verbatim. In particular, declarations, field names, and Plain targets are not
 /// converted by resolving their spelling.
 #[test]
-fn authority_assignment_preserves_schema_identifiers_and_complete_table() {
-    let (names, identifiers) = schema_table(&["Record", "label", "Target", "Integer"]);
+fn authority_assignment_preserves_ethos_identifiers_and_complete_table() {
+    let (names, identifiers) = ethos_table(&["Record", "label", "Target", "Integer"]);
     let [record, label, target, integer] = identifiers.as_slice() else {
         panic!("fixture identifiers")
     };
@@ -59,7 +59,7 @@ fn authority_assignment_preserves_schema_identifiers_and_complete_table() {
     .expect("Schema-home assignment is accepted");
 
     let stored = universe
-        .encoded_type(schema_id(3))
+        .encoded_type(ethos_id(3))
         .expect("record declaration");
     assert_eq!(
         stored,
@@ -74,16 +74,16 @@ fn authority_assignment_preserves_schema_identifiers_and_complete_table() {
 }
 
 /// A completed foreign slice remains borrowed by the moved Schema-home table; it is
-/// not copied, flattened, or renumbered while the EncodedSchema member retains its own
+/// not copied, flattened, or renumbered while the EncodedEthos member retains its own
 /// Schema identifier.
 #[test]
 fn assignment_transfers_complete_composed_name_table() {
     let mut logos = NameTable::new(IdentifierNamespace::Logos);
     let foreign = logos.intern(Name::new("LogosToken")).expect("fixture fits");
-    let mut schema = NameTable::new(IdentifierNamespace::Schema);
-    let record = schema.intern(Name::new("Record")).expect("fixture fits");
-    let integer = schema.intern(Name::new("Integer")).expect("fixture fits");
-    let composed = schema.compose(&logos).expect("borrow Logos slice");
+    let mut ethos = NameTable::new(IdentifierNamespace::Schema);
+    let record = ethos.intern(Name::new("Record")).expect("fixture fits");
+    let integer = ethos.intern(Name::new("Integer")).expect("fixture fits");
+    let composed = ethos.compose(&logos).expect("borrow Logos slice");
 
     let universe = EncodedUniverse::from_assignment(
         EncodedLanguage::Schema,
@@ -116,13 +116,13 @@ fn assignment_transfers_complete_composed_name_table() {
 /// A Logos identifier remains Logos even in a composed Schema table. The authority
 /// boundary rejects it rather than turning its spelling into a Schema identifier.
 #[test]
-fn logos_identifier_is_never_silently_converted_to_schema() {
+fn logos_identifier_is_never_silently_converted_to_ethos() {
     let mut logos = NameTable::new(IdentifierNamespace::Logos);
     let logos_record = logos.intern(Name::new("Record")).expect("fixture fits");
     assert_eq!(logos_record, Identifier::Logos(0));
 
-    let schema = NameTable::new(IdentifierNamespace::Schema);
-    let composed = schema.compose(&logos).expect("borrow Logos slice");
+    let ethos = NameTable::new(IdentifierNamespace::Schema);
+    let composed = ethos.compose(&logos).expect("borrow Logos slice");
     let declaration = EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
         logos_record,
         EncodedReference::Integer,
@@ -140,12 +140,12 @@ fn logos_identifier_is_never_silently_converted_to_schema() {
 
     assert!(matches!(
         error,
-        UniverseError::WrongSchemaIdentifier(Identifier::Logos(0))
+        UniverseError::WrongEthosIdentifier(Identifier::Logos(0))
     ));
 }
 
 #[test]
-fn non_schema_name_table_home_is_rejected() {
+fn non_ethos_name_table_home_is_rejected() {
     let mut logos = NameTable::new(IdentifierNamespace::Logos);
     let identifier = logos.intern(Name::new("Record")).expect("fixture fits");
     let error = EncodedUniverse::from_assignment(
@@ -157,7 +157,7 @@ fn non_schema_name_table_home_is_rejected() {
         )],
         logos,
     )
-    .expect_err("EncodedSchema owns a Schema-home table");
+    .expect_err("EncodedEthos owns a Schema-home table");
     assert!(matches!(
         error,
         UniverseError::WrongNameTableHome {
@@ -168,7 +168,7 @@ fn non_schema_name_table_home_is_rejected() {
 
 #[test]
 fn declaration_identifier_must_match_assigned_identifier() {
-    let (names, identifiers) = schema_table(&["Assigned", "Stored"]);
+    let (names, identifiers) = ethos_table(&["Assigned", "Stored"]);
     let error = EncodedUniverse::from_assignment(
         EncodedLanguage::Schema,
         vec![AssignedMember::new(
@@ -189,7 +189,7 @@ fn declaration_identifier_must_match_assigned_identifier() {
 
 #[test]
 fn duplicate_assigned_identity_is_rejected() {
-    let (names, identifiers) = schema_table(&["Alpha", "Beta"]);
+    let (names, identifiers) = ethos_table(&["Alpha", "Beta"]);
     let clash = EncodedUniverse::from_assignment(
         EncodedLanguage::Schema,
         vec![
@@ -200,7 +200,7 @@ fn duplicate_assigned_identity_is_rejected() {
     );
     assert!(matches!(
         clash,
-        Err(UniverseError::DuplicateMemberIdentity(id)) if id == schema_id(3)
+        Err(UniverseError::DuplicateMemberIdentity(id)) if id == ethos_id(3)
     ));
 }
 
@@ -220,14 +220,14 @@ fn direct_builder_seal_rejects_wrong_home_foreign_unresolved_and_duplicate_membe
     ));
 
     let mut foreign_builder = EncodedUniverseBuilder::new();
-    foreign_builder.primitive_at(schema_id(0), Identifier::Logos(0), ScalarSlot::Integer);
+    foreign_builder.primitive_at(ethos_id(0), Identifier::Logos(0), ScalarSlot::Integer);
     assert!(matches!(
         foreign_builder.build(EncodedLanguage::Schema),
-        Err(UniverseError::WrongSchemaIdentifier(Identifier::Logos(0)))
+        Err(UniverseError::WrongEthosIdentifier(Identifier::Logos(0)))
     ));
 
     let mut unresolved_builder = EncodedUniverseBuilder::new();
-    unresolved_builder.leaf_at(schema_id(0), Identifier::Schema(99));
+    unresolved_builder.leaf_at(ethos_id(0), Identifier::Schema(99));
     assert!(matches!(
         unresolved_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::Names(_))
@@ -236,7 +236,7 @@ fn direct_builder_seal_rejects_wrong_home_foreign_unresolved_and_duplicate_membe
     let mut duplicate_id_builder = EncodedUniverseBuilder::new();
     let alpha = duplicate_id_builder.intern("Alpha").unwrap();
     let beta = duplicate_id_builder.intern("Beta").unwrap();
-    let duplicate_id = schema_id(0);
+    let duplicate_id = ethos_id(0);
     duplicate_id_builder.leaf_at(duplicate_id, alpha);
     duplicate_id_builder.leaf_at(duplicate_id, beta);
     assert!(matches!(
@@ -246,8 +246,8 @@ fn direct_builder_seal_rejects_wrong_home_foreign_unresolved_and_duplicate_membe
 
     let mut duplicate_name_builder = EncodedUniverseBuilder::new();
     let alpha = duplicate_name_builder.intern("Alpha").unwrap();
-    duplicate_name_builder.leaf_at(schema_id(0), alpha);
-    duplicate_name_builder.leaf_at(schema_id(1), alpha);
+    duplicate_name_builder.leaf_at(ethos_id(0), alpha);
+    duplicate_name_builder.leaf_at(ethos_id(1), alpha);
     assert!(matches!(
         duplicate_name_builder.build(EncodedLanguage::Schema),
         Err(UniverseError::DuplicateMemberName(name)) if name == alpha
@@ -282,7 +282,7 @@ fn direct_builder_seal_rejects_nested_plain_reference_from_another_language() {
     let target = builder.intern("Target").unwrap();
     let foreign_target = ScopedEncodedTypeId::logos(1);
     builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -312,7 +312,7 @@ fn direct_builder_seal_rejects_nested_scalar_reference_from_another_language() {
     let integer = builder.intern("Integer").unwrap();
     let foreign_integer = ScopedEncodedTypeId::logos(1);
     builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -339,7 +339,7 @@ fn direct_builder_seal_rejects_an_absent_scalar_slot() {
     let mut builder = EncodedUniverseBuilder::new();
     let record = builder.intern("Record").unwrap();
     builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Integer,
@@ -362,7 +362,7 @@ fn direct_builder_seal_rejects_a_name_table_only_plain_target() {
     let record = builder.intern("Record").unwrap();
     let target = builder.intern("TableOnlyTarget").unwrap();
     builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Plain(target),
@@ -384,7 +384,7 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
     let mut scalar_builder = EncodedUniverseBuilder::new();
     let record = scalar_builder.intern("Record").unwrap();
     scalar_builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -405,7 +405,7 @@ fn direct_builder_seal_rejects_nested_missing_scalar_and_member_references() {
     let record = member_builder.intern("Record").unwrap();
     let target = member_builder.intern("TableOnlyTarget").unwrap();
     member_builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::SingleTypeApplication {
@@ -430,10 +430,10 @@ fn direct_builder_seal_resolves_registered_scalar_and_plain_targets() {
     let record = builder.intern("Record").unwrap();
     let target = builder.intern("Target").unwrap();
     let integer = builder.intern("Integer").unwrap();
-    let target_id = schema_id(1);
-    let integer_id = schema_id(2);
+    let target_id = ethos_id(1);
+    let integer_id = ethos_id(2);
     builder.declaration(
-        schema_id(0),
+        ethos_id(0),
         EncodedDeclaration::public(EncodedType::Newtype(EncodedNewtype::new(
             record,
             EncodedReference::Plain(target),
@@ -537,7 +537,7 @@ fn direct_builder_builtin_member(
 ) -> (Identifier, Result<EncodedUniverse, UniverseError>) {
     let mut builder = EncodedUniverseBuilder::new();
     let identifier = builder.intern(builtin.spelling()).expect("intern builtin");
-    let id = schema_id(0);
+    let id = ethos_id(0);
     match member {
         BuiltinWitnessMember::Scalar(slot) => builder.primitive_at(id, identifier, slot),
         BuiltinWitnessMember::LeafPrimitive => builder.leaf_at(id, identifier),
@@ -594,7 +594,7 @@ fn from_assignment_rejects_every_builtin_as_an_archiveable_redefinition() {
 
     for builtin in BuiltinReference::ALL {
         for member in BuiltinWitnessMember::ALL {
-            let (names, identifiers) = schema_table(&[builtin.spelling()]);
+            let (names, identifiers) = ethos_table(&[builtin.spelling()]);
             let identifier = identifiers[0];
             let result = EncodedUniverse::from_assignment(
                 language,

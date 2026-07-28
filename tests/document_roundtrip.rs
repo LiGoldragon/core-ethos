@@ -1,21 +1,21 @@
 //! The six-slot document layout: a whole spirit-min-shaped document decodes to a
-//! full `EncodedSchema` — every type declaration, both enumerations, the `Vector`
+//! full `EncodedEthos` — every type declaration, both enumerations, the `Vector`
 //! reference projections, and both interface lines — and encodes back to stable
 //! canonical text. Identifier binding through a central authority (content-hash
 //! equality across front-ends) is a SEPARATE queued slice and is deliberately NOT
 //! asserted here; this proves the native surface represents the accepted grammar.
 
 use content_identity::PortableArchive;
-use core_schema::declaration::EncodedType;
-use core_schema::reference::{EncodedReference, SingleTypeReferenceProjection};
-use core_schema::{
-    BuiltinReference, DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedSchema,
-    EncodedVariant, TextualError, TextualSchema, UniverseError,
+use core_ethos::declaration::EncodedType;
+use core_ethos::reference::{EncodedReference, SingleTypeReferenceProjection};
+use core_ethos::{
+    BuiltinReference, DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos,
+    EncodedVariant, TextualError, TextualEthos, UniverseError,
 };
 use name_table::{Identifier, IdentifierNamespace, Name, NameTable};
 use raw_discovery::Recognizer;
 
-/// The spirit-min schema in core-schema's native dialect: its shape verbatim — the
+/// The spirit-min ethos in core-ethos's native dialect: its shape verbatim — the
 /// six root slots, the type declarations, both enumerations, the `Vector`
 /// projections, and the two interface lines — with the string scalar spelled
 /// `String`, its canonical spelling under the 2026-07-17 ruling ("Strings are
@@ -49,11 +49,11 @@ fn text(names: &NameTable, identifier: Identifier) -> &str {
         .as_str()
 }
 
-fn declaration<'schema>(
-    declarations: &'schema [EncodedDeclaration],
+fn declaration<'ethos>(
+    declarations: &'ethos [EncodedDeclaration],
     names: &NameTable,
     wanted: &str,
-) -> &'schema EncodedType {
+) -> &'ethos EncodedType {
     declarations
         .iter()
         .map(EncodedDeclaration::value)
@@ -76,7 +76,7 @@ fn builtin_type_declarations_are_typed_redefinitions() {
             "{{}}\n[]\n[]\n{{\n  {}.[]\n}}\n{{}}\n{{}}",
             builtin.spelling()
         );
-        let textual = TextualSchema::schema_document().expect("seal document grammar");
+        let textual = TextualEthos::ethos_document().expect("seal document grammar");
         let mut names = NameTable::new(IdentifierNamespace::Schema);
         let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();
         let error = textual
@@ -103,7 +103,7 @@ fn builtin_type_declarations_are_typed_redefinitions() {
             .to_archive_bytes()
             .expect("archive typed redefinition");
         assert_eq!(
-            core_schema::StructuralRedefinition::from_archive_bytes(&bytes)
+            core_ethos::StructuralRedefinition::from_archive_bytes(&bytes)
                 .expect("load typed redefinition"),
             redefinition,
         );
@@ -114,50 +114,50 @@ fn builtin_type_declarations_are_typed_redefinitions() {
 /// every kind of newtype (plain, scalar, and both `Vector` projections), both
 /// structs, both enumerations, and both interface lines.
 #[test]
-fn spirit_min_document_decodes_to_the_full_encoded_schema() {
-    let textual = TextualSchema::schema_document().expect("build the document grammar");
+fn spirit_min_document_decodes_to_the_full_encoded_ethos() {
+    let textual = TextualEthos::ethos_document().expect("build the document grammar");
     let mut names = NameTable::new(IdentifierNamespace::Schema);
-    let schema = textual
+    let ethos = textual
         .decode_document(SPIRIT_MIN, &mut names)
         .expect("decode the whole document");
 
     // Thirteen data-type declarations plus the two interface roots.
     assert_eq!(
-        schema.data_declarations().count(),
+        ethos.data_declarations().count(),
         13,
         "every type declaration decoded"
     );
     assert_eq!(
-        schema.declarations().len(),
+        ethos.declarations().len(),
         15,
         "the substrate holds the data declarations and both interface roots"
     );
     let EncodedType::Enumeration(input_root) =
-        schema.input().expect("an input interface root").value()
+        ethos.input().expect("an input interface root").value()
     else {
         panic!("the input interface root is an enumeration");
     };
     let EncodedType::Enumeration(output_root) =
-        schema.output().expect("an output interface root").value()
+        ethos.output().expect("an output interface root").value()
     else {
         panic!("the output interface root is an enumeration");
     };
     assert_eq!(input_root.variants().len(), 2, "two input mail types");
     assert_eq!(output_root.variants().len(), 2, "two output mail types");
     assert_eq!(
-        text(&names, schema.input().unwrap().identifier()),
+        text(&names, ethos.input().unwrap().identifier()),
         "Input",
         "the input root carries the canonical Input name"
     );
     assert_eq!(
-        text(&names, schema.output().unwrap().identifier()),
+        text(&names, ethos.output().unwrap().identifier()),
         "Output",
         "the output root carries the canonical Output name"
     );
 
     // A newtype over a Plain declared type.
     let EncodedType::Newtype(record_payload) =
-        declaration(schema.declarations(), &names, "RecordPayload")
+        declaration(ethos.declarations(), &names, "RecordPayload")
     else {
         panic!("RecordPayload is a newtype");
     };
@@ -167,7 +167,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     // A newtype over the string scalar leaf.
-    let EncodedType::Newtype(topic) = declaration(schema.declarations(), &names, "Topic") else {
+    let EncodedType::Newtype(topic) = declaration(ethos.declarations(), &names, "Topic") else {
         panic!("Topic is a newtype");
     };
     assert_eq!(
@@ -177,7 +177,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     // A newtype over a single-type Vector projection of a Plain type.
-    let EncodedType::Newtype(topics) = declaration(schema.declarations(), &names, "Topics") else {
+    let EncodedType::Newtype(topics) = declaration(ethos.declarations(), &names, "Topics") else {
         panic!("Topics is a newtype");
     };
     let EncodedReference::SingleTypeApplication {
@@ -197,7 +197,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     // A Vector projection over a struct type: RecordSet = Vector.Entry.
-    let EncodedType::Newtype(record_set) = declaration(schema.declarations(), &names, "RecordSet")
+    let EncodedType::Newtype(record_set) = declaration(ethos.declarations(), &names, "RecordSet")
     else {
         panic!("RecordSet is a newtype");
     };
@@ -214,7 +214,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     // A struct: four fields whose elided names are derived from their types.
-    let EncodedType::Struct(entry) = declaration(schema.declarations(), &names, "Entry") else {
+    let EncodedType::Struct(entry) = declaration(ethos.declarations(), &names, "Entry") else {
         panic!("Entry is a struct");
     };
     let entry_fields: Vec<&str> = entry
@@ -228,7 +228,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     // The two enumerations, with their unit variants in order.
-    let EncodedType::Enumeration(kind) = declaration(schema.declarations(), &names, "Kind") else {
+    let EncodedType::Enumeration(kind) = declaration(ethos.declarations(), &names, "Kind") else {
         panic!("Kind is an enumeration");
     };
     let kind_variants: Vec<&str> = kind
@@ -254,7 +254,7 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
     );
 
     let EncodedType::Enumeration(magnitude) =
-        declaration(schema.declarations(), &names, "Magnitude")
+        declaration(ethos.declarations(), &names, "Magnitude")
     else {
         panic!("Magnitude is an enumeration");
     };
@@ -280,19 +280,19 @@ fn spirit_min_document_decodes_to_the_full_encoded_schema() {
 }
 
 /// Encode is a genuine inverse of decode: re-decoding the encoded document yields an
-/// equal `EncodedSchema`, and every root slot's canonical text is stable against the
+/// equal `EncodedEthos`, and every root slot's canonical text is stable against the
 /// source.
 #[test]
 fn spirit_min_document_round_trips_to_stable_text() {
-    let textual = TextualSchema::schema_document().expect("build the document grammar");
+    let textual = TextualEthos::ethos_document().expect("build the document grammar");
 
     let mut names = NameTable::new(IdentifierNamespace::Schema);
-    let schema = textual
+    let ethos = textual
         .decode_document(SPIRIT_MIN, &mut names)
         .expect("decode the whole document");
 
     let encoded = textual
-        .encode_document(&schema, &mut names)
+        .encode_document(&ethos, &mut names)
         .expect("encode the whole document");
 
     let mut names_again = NameTable::new(IdentifierNamespace::Schema);
@@ -300,8 +300,8 @@ fn spirit_min_document_round_trips_to_stable_text() {
         .decode_document(&encoded, &mut names_again)
         .expect("re-decode the encoded document");
     assert_eq!(
-        schema, redecoded,
-        "the document round-trips to an equal EncodedSchema"
+        ethos, redecoded,
+        "the document round-trips to an equal EncodedEthos"
     );
 
     let source = Recognizer::standard()
@@ -342,15 +342,15 @@ const RULING_MIN: &str = "\
 
 #[test]
 fn string_scalar_and_single_field_brace_follow_the_rulings() {
-    let textual = TextualSchema::schema_document().expect("build the document grammar");
+    let textual = TextualEthos::ethos_document().expect("build the document grammar");
     let mut names = NameTable::new(IdentifierNamespace::Schema);
-    let schema = textual
+    let ethos = textual
         .decode_document(RULING_MIN, &mut names)
         .expect("decode the ruling document");
 
     // Ruling 1: `Note.String` is a newtype over the string SCALAR leaf, not a Plain
     // reference to a user type named `String`.
-    let EncodedType::Newtype(note) = declaration(schema.declarations(), &names, "Note") else {
+    let EncodedType::Newtype(note) = declaration(ethos.declarations(), &names, "Note") else {
         panic!("Note is a newtype");
     };
     assert_eq!(
@@ -361,8 +361,7 @@ fn string_scalar_and_single_field_brace_follow_the_rulings() {
 
     // Ruling 2: `Summary.{ Note }` — a single-field braced body — lowers to a newtype
     // over the field's reference, the name `Note` dropped.
-    let EncodedType::Newtype(summary) = declaration(schema.declarations(), &names, "Summary")
-    else {
+    let EncodedType::Newtype(summary) = declaration(ethos.declarations(), &names, "Summary") else {
         panic!("Summary is a newtype (single-field brace collapses)");
     };
     assert!(
@@ -373,7 +372,7 @@ fn string_scalar_and_single_field_brace_follow_the_rulings() {
 
     // Ruling 1, field position: an elided `String` field recognizes the scalar and
     // derives the name `string`.
-    let EncodedType::Struct(entry) = declaration(schema.declarations(), &names, "Entry") else {
+    let EncodedType::Struct(entry) = declaration(ethos.declarations(), &names, "Entry") else {
         panic!("Entry is a struct (two fields)");
     };
     let entry_fields: Vec<(&str, &EncodedReference)> = entry
@@ -394,14 +393,14 @@ fn string_scalar_and_single_field_brace_follow_the_rulings() {
 
 #[test]
 fn document_reflection_is_lookup_only_with_preloaded_names() {
-    let textual = TextualSchema::schema_document().expect("seal document grammar");
+    let textual = TextualEthos::ethos_document().expect("seal document grammar");
     let mut names = NameTable::new(IdentifierNamespace::Schema);
     let input = names.intern(Name::new("Input")).expect("fixture name");
     let output = names.intern(Name::new("Output")).expect("fixture name");
     let request = names.intern(Name::new("Request")).expect("fixture name");
     let reply = names.intern(Name::new("Reply")).expect("fixture name");
     names.intern(Name::new("Integer")).expect("preload scalar");
-    let schema = EncodedSchema::new(vec![
+    let ethos = EncodedEthos::new(vec![
         EncodedDeclaration::interface(
             DeclarationRole::InterfaceInput,
             EncodedType::Enumeration(EncodedEnum::new(
@@ -424,7 +423,7 @@ fn document_reflection_is_lookup_only_with_preloaded_names() {
     let identity_before = names.identity().expect("identity before");
 
     let encoded = textual
-        .encode_document(&schema, &mut names)
+        .encode_document(&ethos, &mut names)
         .expect("preloaded document reflection");
 
     assert_eq!(

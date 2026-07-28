@@ -1,8 +1,8 @@
 //! The universe bridge: id allocation, Encoded-derived positional signatures, and the
 //! signature-vs-Encoded validation that closes structural-codec's deferred deviation.
 
-use core_schema::UniverseError;
-use core_schema::fixture::{
+use core_ethos::UniverseError;
+use core_ethos::fixture::{
     COMMIT_SEQUENCE, DATABASE_MARKER, DOCUMENTATION, FixtureFamily, INTEGER, STATE_DIGEST, SUMMARY,
     TEXT,
 };

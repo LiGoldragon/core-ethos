@@ -1,14 +1,14 @@
-//! EncodedSchema owns its archive API and rejects semantic invalidity after rkyv
+//! EncodedEthos owns its archive API and rejects semantic invalidity after rkyv
 //! validation; callers cannot deserialize the domain type directly.
 
-use core_schema::{
-    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedNewtype, EncodedReference,
-    EncodedSchema, EncodedType, EncodedVariant, StreamingRelation,
+use core_ethos::{
+    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos, EncodedNewtype,
+    EncodedReference, EncodedType, EncodedVariant, StreamingRelation,
 };
 use name_table::Identifier;
 
 #[test]
-fn validated_archive_round_trips_a_streaming_schema() {
+fn validated_archive_round_trips_a_streaming_ethos_value() {
     let input = Identifier::Schema(0);
     let output = Identifier::Schema(1);
     let open = Identifier::Schema(2);
@@ -16,7 +16,7 @@ fn validated_archive_round_trips_a_streaming_schema() {
     let token = Identifier::Schema(4);
     let event = Identifier::Schema(5);
     let close = Identifier::Schema(6);
-    let schema = EncodedSchema::with_streaming_relations(
+    let ethos = EncodedEthos::with_streaming_relations(
         vec![
             EncodedDeclaration::interface(
                 DeclarationRole::InterfaceInput,
@@ -55,12 +55,12 @@ fn validated_archive_round_trips_a_streaming_schema() {
     )
     .expect("fixture is semantically valid");
 
-    let bytes = schema.to_archive_bytes().expect("archive schema");
-    let loaded = EncodedSchema::from_archive_bytes(&bytes).expect("load schema");
+    let bytes = ethos.to_archive_bytes().expect("archive ethos");
+    let loaded = EncodedEthos::from_archive_bytes(&bytes).expect("load ethos");
 
-    assert_eq!(loaded, schema);
+    assert_eq!(loaded, ethos);
     assert_eq!(
         loaded.content_identity().unwrap(),
-        schema.content_identity().unwrap()
+        ethos.content_identity().unwrap()
     );
 }

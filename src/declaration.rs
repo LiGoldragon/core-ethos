@@ -1,4 +1,4 @@
-//! The stringless `EncodedSchema` declaration family, modelled on `schema-language`'s
+//! The stringless `EncodedEthos` declaration family, modelled on `schema-language`'s
 //! `EncodedType { Struct | Enum | Newtype }`. Every name is an [`Identifier`] into the
 //! [`NameTable`]; the declarations carry no strings, so a rename is a table-only
 //! edit that never moves a Encoded value's content identity.
@@ -9,32 +9,32 @@ use content_identity::{ContentHash, DomainSeparation, HashDomain, LayoutVersion,
 use name_table::{Identifier, NameResolver, NameTableError};
 
 use crate::error::{
-    EncodedIdentityError, EncodedSchemaError, EncodedSchemaLoadError, StreamingReferenceForm,
+    EncodedEthosError, EncodedEthosLoadError, EncodedIdentityError, StreamingReferenceForm,
     StreamingRelationReference,
 };
 use crate::reference::EncodedReference;
 
-/// The hash domain for stringless EncodedSchema values, layout-version tagged. A
-/// EncodedSchema value's identity is blake3 over its stringless rkyv bytes under this
+/// The hash domain for stringless EncodedEthos values, layout-version tagged. A
+/// EncodedEthos value's identity is blake3 over its stringless rkyv bytes under this
 /// domain; the NameTable is not in the pre-image, so identity is rename-stable.
-pub struct EncodedSchemaDomain;
+pub struct EncodedEthosDomain;
 
-impl HashDomain for EncodedSchemaDomain {
+impl HashDomain for EncodedEthosDomain {
     fn separation() -> DomainSeparation {
         DomainSeparation::Contextual {
             context: "core-schema 2026 stringless core schema layer",
             // Layout 5: `StreamingRelation` is closed encoded protocol data on
-            // EncodedSchema. The validated archive DTO intentionally preserves this
+            // EncodedEthos. The validated archive DTO intentionally preserves this
             // exact canonical field layout. Layout 4 introduced namespace-variant `u16` identifiers;
             // both layout changes are intentional producer-to-consumer breaks. Old
-            // schema packages are regenerated with their accompanying NameTable rather
+            // ethos packages are regenerated with their accompanying NameTable rather
             // than decoded as sliced identifiers. Layout 3 carried interface roles.
             layout: LayoutVersion::new(5),
         }
     }
 }
 
-/// A loaded schema as a whole: one stringless declaration substrate in which the
+/// A loaded ethos as a whole: one stringless declaration substrate in which the
 /// document's two protocol lines live as ordinary declarations, distinguished by
 /// their [`DeclarationRole`]. Names live in the accompanying `NameTable` produced
 /// by the same decode.
@@ -59,34 +59,34 @@ impl HashDomain for EncodedSchemaDomain {
 /// document-kind design review, which may reshape how interface roots and the
 /// document kinds relate.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EncodedSchema {
+pub struct EncodedEthos {
     declarations: Vec<EncodedDeclaration>,
     streaming_relations: Vec<StreamingRelation>,
 }
 
-/// The private wire representation of [`EncodedSchema`]. Keeping rkyv on this DTO
-/// makes archive bytes a validated boundary rather than a second public EncodedSchema
-/// constructor. Its fields deliberately match EncodedSchema's canonical layout so
+/// The private wire representation of [`EncodedEthos`]. Keeping rkyv on this DTO
+/// makes archive bytes a validated boundary rather than a second public EncodedEthos
+/// constructor. Its fields deliberately match EncodedEthos's canonical layout so
 /// content identity remains over the same stringless data.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-struct EncodedSchemaArchive {
+struct EncodedEthosArchive {
     declarations: Vec<EncodedDeclaration>,
     streaming_relations: Vec<StreamingRelation>,
 }
 
-impl From<&EncodedSchema> for EncodedSchemaArchive {
-    fn from(schema: &EncodedSchema) -> Self {
+impl From<&EncodedEthos> for EncodedEthosArchive {
+    fn from(ethos: &EncodedEthos) -> Self {
         Self {
-            declarations: schema.declarations.clone(),
-            streaming_relations: schema.streaming_relations.clone(),
+            declarations: ethos.declarations.clone(),
+            streaming_relations: ethos.streaming_relations.clone(),
         }
     }
 }
 
-impl TryFrom<EncodedSchemaArchive> for EncodedSchema {
-    type Error = EncodedSchemaError;
+impl TryFrom<EncodedEthosArchive> for EncodedEthos {
+    type Error = EncodedEthosError;
 
-    fn try_from(archive: EncodedSchemaArchive) -> Result<Self, Self::Error> {
+    fn try_from(archive: EncodedEthosArchive) -> Result<Self, Self::Error> {
         Self::with_streaming_relations(archive.declarations, archive.streaming_relations)
     }
 }
@@ -145,19 +145,19 @@ impl StreamingRelation {
         &self.close_token
     }
 
-    /// Validate this relation in its owning schema. A relation is valid only when
+    /// Validate this relation in its owning ethos. A relation is valid only when
     /// every carried identifier belongs to the Schema namespace, its endpoints are
     /// variants of the role-correct interface enumerations, and its encoded value
-    /// references name data-type declarations in that same schema.
-    pub fn validate_in(&self, schema: &EncodedSchema) -> Result<(), EncodedSchemaError> {
-        schema.require_schema_identifier(self.opening_input_variant)?;
-        schema.require_schema_identifier(self.acknowledgement_output_variant)?;
+    /// references name data-type declarations in that same ethos.
+    pub fn validate_in(&self, ethos: &EncodedEthos) -> Result<(), EncodedEthosError> {
+        ethos.require_ethos_identifier(self.opening_input_variant)?;
+        ethos.require_ethos_identifier(self.acknowledgement_output_variant)?;
 
-        let input = schema
+        let input = ethos
             .input()
-            .ok_or(EncodedSchemaError::MissingInputInterface)?;
+            .ok_or(EncodedEthosError::MissingInputInterface)?;
         let EncodedType::Enumeration(input) = input.value() else {
-            return Err(EncodedSchemaError::InterfaceRootNotEnumeration(
+            return Err(EncodedEthosError::InterfaceRootNotEnumeration(
                 DeclarationRole::InterfaceInput,
             ));
         };
@@ -166,16 +166,16 @@ impl StreamingRelation {
             .iter()
             .any(|variant| variant.identifier() == self.opening_input_variant)
         {
-            return Err(EncodedSchemaError::OpeningEndpointNotInputVariant(
+            return Err(EncodedEthosError::OpeningEndpointNotInputVariant(
                 self.opening_input_variant,
             ));
         }
 
-        let output = schema
+        let output = ethos
             .output()
-            .ok_or(EncodedSchemaError::MissingOutputInterface)?;
+            .ok_or(EncodedEthosError::MissingOutputInterface)?;
         let EncodedType::Enumeration(output) = output.value() else {
-            return Err(EncodedSchemaError::InterfaceRootNotEnumeration(
+            return Err(EncodedEthosError::InterfaceRootNotEnumeration(
                 DeclarationRole::InterfaceOutput,
             ));
         };
@@ -184,15 +184,15 @@ impl StreamingRelation {
             .iter()
             .any(|variant| variant.identifier() == self.acknowledgement_output_variant)
         {
-            return Err(EncodedSchemaError::AcknowledgementEndpointNotOutputVariant(
+            return Err(EncodedEthosError::AcknowledgementEndpointNotOutputVariant(
                 self.acknowledgement_output_variant,
             ));
         }
 
-        Self::validate_reference(schema, self.token(), StreamingRelationReference::Token)?;
-        Self::validate_reference(schema, self.event(), StreamingRelationReference::Event)?;
+        Self::validate_reference(ethos, self.token(), StreamingRelationReference::Token)?;
+        Self::validate_reference(ethos, self.event(), StreamingRelationReference::Event)?;
         Self::validate_reference(
-            schema,
+            ethos,
             self.close_token(),
             StreamingRelationReference::CloseToken,
         )?;
@@ -200,37 +200,37 @@ impl StreamingRelation {
     }
 
     fn validate_reference(
-        schema: &EncodedSchema,
+        ethos: &EncodedEthos,
         reference: &EncodedReference,
         part: StreamingRelationReference,
-    ) -> Result<(), EncodedSchemaError> {
+    ) -> Result<(), EncodedEthosError> {
         match reference {
             EncodedReference::Plain(identifier) => {
-                schema.streaming_data_type(*identifier, part).map(|_| ())
+                ethos.streaming_data_type(*identifier, part).map(|_| ())
             }
             EncodedReference::String
             | EncodedReference::Integer
             | EncodedReference::Boolean
             | EncodedReference::Bytes => {
-                Err(EncodedSchemaError::StreamingReferenceMustNameDataType {
+                Err(EncodedEthosError::StreamingReferenceMustNameDataType {
                     part,
                     form: StreamingReferenceForm::Scalar,
                 })
             }
             EncodedReference::ValueApplication { .. } => {
-                Err(EncodedSchemaError::StreamingReferenceMustNameDataType {
+                Err(EncodedEthosError::StreamingReferenceMustNameDataType {
                     part,
                     form: StreamingReferenceForm::BytesLength,
                 })
             }
             EncodedReference::SingleTypeApplication { .. } => {
-                Err(EncodedSchemaError::StreamingReferenceMustNameDataType {
+                Err(EncodedEthosError::StreamingReferenceMustNameDataType {
                     part,
                     form: StreamingReferenceForm::SingleTypeApplication,
                 })
             }
             EncodedReference::MultiTypeApplication { .. } => {
-                Err(EncodedSchemaError::StreamingReferenceMustNameDataType {
+                Err(EncodedEthosError::StreamingReferenceMustNameDataType {
                     part,
                     form: StreamingReferenceForm::MultiTypeApplication,
                 })
@@ -239,8 +239,8 @@ impl StreamingRelation {
     }
 }
 
-impl EncodedSchema {
-    /// A schema over the given declaration substrate, without streaming relations.
+impl EncodedEthos {
+    /// A ethos over the given declaration substrate, without streaming relations.
     pub fn new(declarations: Vec<EncodedDeclaration>) -> Self {
         Self {
             declarations,
@@ -248,27 +248,27 @@ impl EncodedSchema {
         }
     }
 
-    /// Construct a schema with closed streaming protocol relations. The relation law
+    /// Construct a ethos with closed streaming protocol relations. The relation law
     /// is checked against this exact declaration substrate: opening endpoints are
     /// input-interface variants, acknowledgement endpoints are output-interface
     /// variants, and every encoded relation reference resolves here.
     pub fn with_streaming_relations(
         declarations: Vec<EncodedDeclaration>,
         streaming_relations: Vec<StreamingRelation>,
-    ) -> Result<Self, EncodedSchemaError> {
-        let schema = Self {
+    ) -> Result<Self, EncodedEthosError> {
+        let ethos = Self {
             declarations,
             streaming_relations,
         };
-        schema.validate_streaming_relations()?;
-        Ok(schema)
+        ethos.validate_streaming_relations()?;
+        Ok(ethos)
     }
 
     pub fn declarations(&self) -> &[EncodedDeclaration] {
         &self.declarations
     }
 
-    /// The reusable streaming protocol relations this schema declares, in order.
+    /// The reusable streaming protocol relations this ethos declares, in order.
     pub fn streaming_relations(&self) -> &[StreamingRelation] {
         &self.streaming_relations
     }
@@ -307,18 +307,18 @@ impl EncodedSchema {
 
     /// The central role boundary for encoded streaming value references. A relation
     /// value is a declared data type, never an interface root merely because that
-    /// root happens to carry the same schema-local identifier.
+    /// root happens to carry the same ethos-local identifier.
     fn streaming_data_type(
         &self,
         identifier: Identifier,
         part: StreamingRelationReference,
-    ) -> Result<&EncodedDeclaration, EncodedSchemaError> {
-        self.require_schema_identifier(identifier)?;
+    ) -> Result<&EncodedDeclaration, EncodedEthosError> {
+        self.require_ethos_identifier(identifier)?;
         let declaration = self
             .declaration(identifier)
-            .ok_or(EncodedSchemaError::UnresolvedStreamingReference { part, identifier })?;
+            .ok_or(EncodedEthosError::UnresolvedStreamingReference { part, identifier })?;
         if declaration.role() != DeclarationRole::DataType {
-            return Err(EncodedSchemaError::StreamingReferenceNotDataType {
+            return Err(EncodedEthosError::StreamingReferenceNotDataType {
                 part,
                 identifier,
                 actual: declaration.role(),
@@ -327,44 +327,44 @@ impl EncodedSchema {
         Ok(declaration)
     }
 
-    /// EncodedSchema is Schema-owned data. Relation boundaries must not accept a
+    /// EncodedEthos is Schema-owned data. Relation boundaries must not accept a
     /// foreign namespace identifier simply because another declaration matches it.
-    fn require_schema_identifier(&self, identifier: Identifier) -> Result<(), EncodedSchemaError> {
+    fn require_ethos_identifier(&self, identifier: Identifier) -> Result<(), EncodedEthosError> {
         if matches!(identifier, Identifier::Schema(_)) {
             Ok(())
         } else {
-            Err(EncodedSchemaError::NonSchemaIdentifier(identifier))
+            Err(EncodedEthosError::NonEthosIdentifier(identifier))
         }
     }
 
-    fn validate_streaming_relations(&self) -> Result<(), EncodedSchemaError> {
+    fn validate_streaming_relations(&self) -> Result<(), EncodedEthosError> {
         for relation in &self.streaming_relations {
             relation.validate_in(self)?;
         }
         Ok(())
     }
 
-    /// Archive this schema through its private wire DTO. The domain type itself
+    /// Archive this ethos through its private wire DTO. The domain type itself
     /// intentionally has no raw rkyv surface, so every load must pass semantic
     /// relation validation.
-    pub fn to_archive_bytes(&self) -> Result<rkyv::util::AlignedVec, EncodedSchemaLoadError> {
-        Ok(EncodedSchemaArchive::from(self).to_archive_bytes()?)
+    pub fn to_archive_bytes(&self) -> Result<rkyv::util::AlignedVec, EncodedEthosLoadError> {
+        Ok(EncodedEthosArchive::from(self).to_archive_bytes()?)
     }
 
-    /// Load and validate a EncodedSchema archive. Archive corruption and a valid rkyv
-    /// payload that violates the EncodedSchema relation law are distinct typed errors.
-    pub fn from_archive_bytes(bytes: &[u8]) -> Result<Self, EncodedSchemaLoadError> {
-        let archive = EncodedSchemaArchive::from_archive_bytes(bytes)?;
+    /// Load and validate a EncodedEthos archive. Archive corruption and a valid rkyv
+    /// payload that violates the EncodedEthos relation law are distinct typed errors.
+    pub fn from_archive_bytes(bytes: &[u8]) -> Result<Self, EncodedEthosLoadError> {
+        let archive = EncodedEthosArchive::from_archive_bytes(bytes)?;
         Ok(Self::try_from(archive)?)
     }
 
-    /// This schema's content identity, blake3 over the private DTO's canonical
+    /// This ethos's content identity, blake3 over the private DTO's canonical
     /// stringless rkyv bytes with the NameTable excluded by construction — a rename
     /// cannot move it.
     pub fn content_identity(
         &self,
-    ) -> Result<ContentHash<EncodedSchemaDomain>, EncodedIdentityError> {
-        Ok(ContentHash::of_core(&EncodedSchemaArchive::from(self))?)
+    ) -> Result<ContentHash<EncodedEthosDomain>, EncodedIdentityError> {
+        Ok(ContentHash::of_core(&EncodedEthosArchive::from(self))?)
     }
 }
 
@@ -643,10 +643,10 @@ mod archive_tests {
     use name_table::Identifier;
 
     use super::{
-        DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedNewtype, EncodedReference,
-        EncodedSchema, EncodedSchemaArchive, EncodedType, EncodedVariant, StreamingRelation,
+        DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos, EncodedEthosArchive,
+        EncodedNewtype, EncodedReference, EncodedType, EncodedVariant, StreamingRelation,
     };
-    use crate::error::{EncodedSchemaError, EncodedSchemaLoadError};
+    use crate::error::{EncodedEthosError, EncodedEthosLoadError};
 
     #[test]
     fn serialized_invalid_dto_is_rejected_at_the_semantic_archive_boundary() {
@@ -657,7 +657,7 @@ mod archive_tests {
         let token = Identifier::Schema(4);
         let event = Identifier::Schema(5);
         let close = Identifier::Schema(6);
-        let archive = EncodedSchemaArchive {
+        let archive = EncodedEthosArchive {
             declarations: vec![
                 EncodedDeclaration::interface(
                     DeclarationRole::InterfaceInput,
@@ -697,9 +697,9 @@ mod archive_tests {
         let bytes = archive.to_archive_bytes().expect("serialize crafted DTO");
 
         assert!(matches!(
-            EncodedSchema::from_archive_bytes(&bytes),
-            Err(EncodedSchemaLoadError::Schema(
-                EncodedSchemaError::StreamingReferenceMustNameDataType { .. }
+            EncodedEthos::from_archive_bytes(&bytes),
+            Err(EncodedEthosLoadError::Ethos(
+                EncodedEthosError::StreamingReferenceMustNameDataType { .. }
             ))
         ));
     }

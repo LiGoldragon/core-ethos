@@ -1,15 +1,15 @@
 [package]
-name         = "core-schema"
-version      = "0.8.0"
+name         = "core-ethos"
+version      = "0.9.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/LiGoldragon/core-schema"
-description  = "The stringless EncodedSchema layer and TextualSchema form: sliced identifiers, universe signatures, and bidirectional schema text."
+repository   = "https://github.com/LiGoldragon/core-ethos"
+description  = "The stringless EncodedEthos layer and TextualEthos form: sliced identifiers, universe signatures, and bidirectional Ethos text."
 publish      = false
 
 [lib]
-name = "core_schema"
+name = "core_ethos"
 path = "src/lib.rs"
 
 [dependencies]

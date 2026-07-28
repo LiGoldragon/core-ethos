@@ -1,4 +1,4 @@
-//! `TextualSchema` — source-bounded schema text and stringless encoded values.
+//! `TextualEthos` — source-bounded ethos text and stringless encoded values.
 
 use name_table::{Name, NameInterner, NameResolver, NameTable, NameTransaction};
 use raw_discovery::{BlockTree, DiscoveredBlockTree};
@@ -9,26 +9,26 @@ use structural_codec::{
 };
 
 use crate::declaration::{
-    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedField, EncodedNewtype, EncodedSchema,
+    DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos, EncodedField, EncodedNewtype,
     EncodedStruct, EncodedType, EncodedVariant,
 };
 use crate::document::{
-    DECLARATION, DeclarationConstructor, FIELD as DOCUMENT_FIELD, INTERFACE, INTERFACE_VARIANT,
-    ReferenceConstructor, SchemaDocumentGrammar, TYPE_REFERENCE, TYPES_BLOCK,
+    DECLARATION, DeclarationConstructor, EthosDocumentGrammar, FIELD as DOCUMENT_FIELD, INTERFACE,
+    INTERFACE_VARIANT, ReferenceConstructor, TYPE_REFERENCE, TYPES_BLOCK,
 };
 use crate::error::TextualError;
 use crate::fixture::{FIELD as FIXTURE_FIELD, FixtureFamily};
 use crate::reference::{BuiltinReference, EncodedReference};
-use crate::rules::{DelimitedItems, DelimitedRoot, SchemaRule};
+use crate::rules::{DelimitedItems, DelimitedRoot, EthosRule};
 use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder};
 
 #[derive(Clone, Debug)]
-pub struct TextualSchema {
+pub struct TextualEthos {
     universe: EncodedUniverse,
-    table: structural_codec::AddressedStructuralTable<SchemaRule>,
+    table: structural_codec::AddressedStructuralTable<EthosRule>,
 }
 
-impl TextualSchema {
+impl TextualEthos {
     pub fn fixture() -> Result<Self, TextualError> {
         let family = FixtureFamily::build();
         Ok(Self {
@@ -37,8 +37,8 @@ impl TextualSchema {
         })
     }
 
-    pub fn schema_document() -> Result<Self, TextualError> {
-        let grammar = SchemaDocumentGrammar::build()?;
+    pub fn ethos_document() -> Result<Self, TextualError> {
+        let grammar = EthosDocumentGrammar::build()?;
         Ok(Self {
             universe: EncodedUniverseBuilder::new().build(ENCODED_UNIVERSE)?,
             table: grammar.table().clone(),
@@ -47,7 +47,7 @@ impl TextualSchema {
 
     pub fn new(
         universe: EncodedUniverse,
-        table: structural_codec::AddressedStructuralTable<SchemaRule>,
+        table: structural_codec::AddressedStructuralTable<EthosRule>,
     ) -> Self {
         Self { universe, table }
     }
@@ -56,7 +56,7 @@ impl TextualSchema {
         &self.universe
     }
 
-    pub fn table(&self) -> &structural_codec::AddressedStructuralTable<SchemaRule> {
+    pub fn table(&self) -> &structural_codec::AddressedStructuralTable<EthosRule> {
         &self.table
     }
 
@@ -68,7 +68,7 @@ impl TextualSchema {
         text: &str,
         names: &mut NameTable,
     ) -> Result<EncodedType, TextualError> {
-        let evaluator = self.schema_evaluator()?;
+        let evaluator = self.ethos_evaluator()?;
         names.try_intern(|transaction| {
             let mirror = evaluator.decode_text_with_interner(expected, text, transaction)?;
             self.reify_type(expected, &mirror, transaction)
@@ -85,11 +85,11 @@ impl TextualSchema {
     ) -> Result<String, TextualError> {
         let mirror = self.reflect_type(expected, value, names)?;
         Ok(self
-            .schema_evaluator()?
+            .ethos_evaluator()?
             .encode_text(expected, &mirror, names)?)
     }
 
-    fn schema_evaluator(&self) -> Result<StructuralEvaluator<'_, SchemaRule>, TextualError> {
+    fn ethos_evaluator(&self) -> Result<StructuralEvaluator<'_, EthosRule>, TextualError> {
         Ok(StructuralEvaluator::new(&self.table)?)
     }
 
@@ -306,7 +306,7 @@ impl TextualSchema {
         &self,
         text: &str,
         names: &mut NameTable,
-    ) -> Result<EncodedSchema, TextualError> {
+    ) -> Result<EncodedEthos, TextualError> {
         let roots = self.document_roots(text)?;
         if roots.len() != crate::document::DOCUMENT_SLOTS {
             return Err(TextualError::DocumentArity(roots.len()));
@@ -320,7 +320,7 @@ impl TextualSchema {
         if !Self::empty_brace(roots[5]) {
             return Err(TextualError::DocumentSlot("impls"));
         }
-        let evaluator = self.schema_evaluator()?;
+        let evaluator = self.ethos_evaluator()?;
         names.try_intern(|transaction| {
             let input = self.decode_interface_slot(
                 &evaluator,
@@ -343,22 +343,22 @@ impl TextualSchema {
                 self.universe
                     .validate_declaration_name(declaration.identifier(), transaction)?;
             }
-            Ok(EncodedSchema::new(declarations))
+            Ok(EncodedEthos::new(declarations))
         })
     }
 
     pub fn encode_document(
         &self,
-        schema: &EncodedSchema,
+        ethos: &EncodedEthos,
         names: &mut NameTable,
     ) -> Result<String, TextualError> {
-        let input = schema
+        let input = ethos
             .input()
             .ok_or(TextualError::MissingInterfaceRoot("input"))?;
-        let output = schema
+        let output = ethos
             .output()
             .ok_or(TextualError::MissingInterfaceRoot("output"))?;
-        let evaluator = self.schema_evaluator()?;
+        let evaluator = self.ethos_evaluator()?;
         Ok([
             "{}".to_owned(),
             evaluator.encode_text(
@@ -373,7 +373,7 @@ impl TextualSchema {
             )?,
             evaluator.encode_text(
                 TYPES_BLOCK,
-                &self.reflect_types(schema.data_declarations(), names)?,
+                &self.reflect_types(ethos.data_declarations(), names)?,
                 names,
             )?,
             "{}".to_owned(),
@@ -409,7 +409,7 @@ impl TextualSchema {
 
     fn decode_interface_slot<Names: NameInterner + NameResolver>(
         &self,
-        evaluator: &StructuralEvaluator<'_, SchemaRule>,
+        evaluator: &StructuralEvaluator<'_, EthosRule>,
         source: &str,
         role: DeclarationRole,
         names: &mut Names,
@@ -428,7 +428,7 @@ impl TextualSchema {
 
     fn decode_types_slot<Names: NameInterner + NameResolver>(
         &self,
-        evaluator: &StructuralEvaluator<'_, SchemaRule>,
+        evaluator: &StructuralEvaluator<'_, EthosRule>,
         source: &str,
         names: &mut Names,
     ) -> Result<Vec<EncodedDeclaration>, TextualError> {
@@ -799,12 +799,12 @@ impl TextualSchema {
     }
 }
 
-impl Textual<SchemaRule> for TextualSchema {
+impl Textual<EthosRule> for TextualEthos {
     type Encoded = EncodedType;
-    type Language = SchemaLanguage;
+    type Language = EthosLanguage;
     type Error = TextualError;
 
-    fn structuretree(&self) -> &structural_codec::AddressedStructuralTable<SchemaRule> {
+    fn structuretree(&self) -> &structural_codec::AddressedStructuralTable<EthosRule> {
         &self.table
     }
 
@@ -832,12 +832,12 @@ impl Textual<SchemaRule> for TextualSchema {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SchemaLanguage;
+pub struct EthosLanguage;
 
 impl EncodedForm for EncodedType {
-    type Language = SchemaLanguage;
+    type Language = EthosLanguage;
 }
 
-impl EncodedForm for EncodedSchema {
-    type Language = SchemaLanguage;
+impl EncodedForm for EncodedEthos {
+    type Language = EthosLanguage;
 }

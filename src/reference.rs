@@ -12,7 +12,7 @@
 
 use name_table::{Identifier, Name, NameInterner, NameResolver, NameTableError};
 
-/// A builtin reference spelling reserved by the schema textual interface. A declared
+/// A builtin reference spelling reserved by the ethos textual interface. A declared
 /// type cannot reuse one of these spellings: each already denotes a built-in
 /// reference form.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]

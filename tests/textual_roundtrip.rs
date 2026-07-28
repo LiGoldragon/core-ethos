@@ -1,13 +1,13 @@
-//! TextualSchema, the first real Textual form: real schema TEXT decodes into real
-//! EncodedSchema values with a real NameTable, and encodes back canonically. The
+//! TextualEthos, the first real Textual form: real ethos TEXT decodes into real
+//! EncodedEthos values with a real NameTable, and encodes back canonically. The
 //! A struct field is a bare positional type reference — field names are illegal, so
 //! same-typed fields are told apart by position alone against the real Encoded layout.
 
-use core_schema::TextualError;
-use core_schema::TextualSchema;
-use core_schema::declaration::EncodedType;
-use core_schema::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
-use core_schema::reference::EncodedReference;
+use core_ethos::TextualError;
+use core_ethos::TextualEthos;
+use core_ethos::declaration::EncodedType;
+use core_ethos::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
+use core_ethos::reference::EncodedReference;
 use name_table::{IdentifierNamespace, NameTable};
 fn name_table_rows(names: &NameTable) -> String {
     (0..names.len())
@@ -26,7 +26,7 @@ fn name_table_rows(names: &NameTable) -> String {
 /// identical canonical text.
 #[test]
 fn newtype_declaration_round_trips() {
-    let textual = TextualSchema::fixture().expect("build textual schema");
+    let textual = TextualEthos::fixture().expect("build textual ethos");
     let source = "CommitSequence.{ Integer }";
     let mut names = NameTable::new(IdentifierNamespace::Schema);
 
@@ -65,7 +65,7 @@ fn newtype_declaration_round_trips() {
 /// are told apart by position alone. It encodes back to the identical canonical text.
 #[test]
 fn struct_declaration_round_trips_positionally() {
-    let textual = TextualSchema::fixture().expect("build textual schema");
+    let textual = TextualEthos::fixture().expect("build textual ethos");
     let source = "DatabaseMarker.{ CommitSequence StateDigest StateDigest }";
     let mut names = NameTable::new(IdentifierNamespace::Schema);
 
@@ -123,7 +123,7 @@ fn struct_declaration_round_trips_positionally() {
 /// no longer any place a field name is legal.
 #[test]
 fn decode_rejects_explicit_field_name() {
-    let textual = TextualSchema::fixture().expect("build textual schema");
+    let textual = TextualEthos::fixture().expect("build textual ethos");
     let source = "DatabaseMarker.{ CommitSequence StateDigest secretDigest.StateDigest }";
     let mut names = NameTable::new(IdentifierNamespace::Schema);
 

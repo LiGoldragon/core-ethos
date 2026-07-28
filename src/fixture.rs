@@ -1,4 +1,4 @@
-//! The proof-of-concept schema family and its typed structural vocabulary.
+//! The proof-of-concept ethos family and its typed structural vocabulary.
 
 use std::collections::BTreeMap;
 
@@ -16,11 +16,11 @@ use structural_codec::{
 };
 
 use crate::declaration::{
-    EncodedDeclaration, EncodedField, EncodedNewtype, EncodedSchema, EncodedStruct, EncodedType,
+    EncodedDeclaration, EncodedEthos, EncodedField, EncodedNewtype, EncodedStruct, EncodedType,
 };
 use crate::error::UniverseError;
 use crate::reference::EncodedReference;
-use crate::rules::{SchemaRule, SignatureApplicationDelimitedRule, core_rule, signature_rule};
+use crate::rules::{EthosRule, SignatureApplicationDelimitedRule, core_rule, signature_rule};
 use crate::universe::{ENCODED_UNIVERSE, EncodedUniverse, EncodedUniverseBuilder, ScalarSlot};
 
 // Schema-owned local identities retain the established values, now in the closed
@@ -57,7 +57,7 @@ pub(crate) const ROOT_CONTEXT: BoundaryDiscoveryContextIdentifier =
 pub(crate) fn standard_token_profile() -> SealedTokenProfile {
     RawProfile::standard()
         .seal()
-        .expect("the standard schema token profile seals")
+        .expect("the standard ethos token profile seals")
 }
 
 pub(crate) fn standard_block_discovery() -> BlockTreeDiscoveryConfiguration {
@@ -109,7 +109,7 @@ pub(crate) fn standard_textual_rendering() -> TextualRenderingPolicy {
 #[derive(Clone, Debug)]
 pub struct FixtureFamily {
     universe: EncodedUniverse,
-    schema: EncodedSchema,
+    ethos: EncodedEthos,
 }
 
 impl FixtureFamily {
@@ -168,32 +168,32 @@ impl FixtureFamily {
         let universe = builder
             .build(ENCODED_UNIVERSE)
             .expect("fixture universe satisfies the universal builder seal");
-        let schema = EncodedSchema::new(vec![
+        let ethos = EncodedEthos::new(vec![
             commit_declaration,
             state_declaration,
             summary_declaration,
             documentation_declaration,
             database_declaration,
         ]);
-        Self { universe, schema }
+        Self { universe, ethos }
     }
 
     pub fn universe(&self) -> &EncodedUniverse {
         &self.universe
     }
 
-    pub fn schema(&self) -> &EncodedSchema {
-        &self.schema
+    pub fn ethos(&self) -> &EncodedEthos {
+        &self.ethos
     }
 
-    pub fn standard_table(&self) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+    pub fn standard_table(&self) -> Result<AddressedStructuralTable<EthosRule>, UniverseError> {
         self.table(Delimiter::Brace)
     }
 
     pub fn table(
         &self,
         delimiter: Delimiter,
-    ) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+    ) -> Result<AddressedStructuralTable<EthosRule>, UniverseError> {
         self.seal_entries(
             self.entries(
                 delimiter,
@@ -211,7 +211,7 @@ impl FixtureFamily {
 
     /// Negative control: this record keeps the executable form but replaces one
     /// archived layout witness.  Validation must reject the mismatch.
-    pub fn corrupted_table(&self) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+    pub fn corrupted_table(&self) -> Result<AddressedStructuralTable<EthosRule>, UniverseError> {
         self.seal_entries(
             self.entries(
                 Delimiter::Brace,
@@ -224,22 +224,19 @@ impl FixtureFamily {
     }
 
     fn encoded_layout(&self) -> Result<TargetLayoutIdentity, UniverseError> {
-        let bytes = self
-            .schema
-            .to_archive_bytes()
-            .map_err(|error| match error {
-                crate::error::EncodedSchemaLoadError::Archive(archive) => {
-                    UniverseError::Table(structural_codec::TableError::Archive(archive))
-                }
-                crate::error::EncodedSchemaLoadError::Schema(_) => unreachable!("fresh schema"),
-            })?;
+        let bytes = self.ethos.to_archive_bytes().map_err(|error| match error {
+            crate::error::EncodedEthosLoadError::Archive(archive) => {
+                UniverseError::Table(structural_codec::TableError::Archive(archive))
+            }
+            crate::error::EncodedEthosLoadError::Ethos(_) => unreachable!("fresh Ethos"),
+        })?;
         Ok(TargetLayoutIdentity::derive(bytes.as_ref()))
     }
 
     fn seal_entries(
         &self,
-        entries: BTreeMap<structural_codec::ScopedEncodedTypeId, StructuralEntry<SchemaRule>>,
-    ) -> Result<AddressedStructuralTable<SchemaRule>, UniverseError> {
+        entries: BTreeMap<structural_codec::ScopedEncodedTypeId, StructuralEntry<EthosRule>>,
+    ) -> Result<AddressedStructuralTable<EthosRule>, UniverseError> {
         let profile = standard_token_profile();
         Ok(AddressedStructuralTable::seal(
             TableIdentityPayload::new(
@@ -261,7 +258,7 @@ impl FixtureFamily {
         &self,
         delimiter: Delimiter,
         database_signature: [Option<structural_codec::ScopedEncodedTypeId>; 3],
-    ) -> Vec<StructuralEntry<SchemaRule>> {
+    ) -> Vec<StructuralEntry<EthosRule>> {
         vec![
             Self::unary(INTEGER, SharedDescriptor::Leaf(LeafCodec::Integer)),
             Self::unary(FLOAT, SharedDescriptor::Leaf(LeafCodec::Float)),
@@ -293,7 +290,7 @@ impl FixtureFamily {
     fn unary(
         type_id: structural_codec::ScopedEncodedTypeId,
         descriptor: SharedDescriptor,
-    ) -> StructuralEntry<SchemaRule> {
+    ) -> StructuralEntry<EthosRule> {
         Self::entry(
             type_id,
             core_rule(StructuralRule::Unary(
@@ -306,7 +303,7 @@ impl FixtureFamily {
         type_id: structural_codec::ScopedEncodedTypeId,
         delimiter: Delimiter,
         reference: structural_codec::ScopedEncodedTypeId,
-    ) -> StructuralEntry<SchemaRule> {
+    ) -> StructuralEntry<EthosRule> {
         let rule = SignatureApplicationDelimitedRule::new(
             APPLICATION_OPERATOR,
             Self::boundary_trigger(delimiter),
@@ -316,13 +313,13 @@ impl FixtureFamily {
             Some(1),
             [Some(reference), None, None],
         )
-        .expect("schema roles");
+        .expect("ethos roles");
         Self::entry(type_id, signature_rule(rule))
     }
 
     fn database_marker(
         signature: [Option<structural_codec::ScopedEncodedTypeId>; 3],
-    ) -> StructuralEntry<SchemaRule> {
+    ) -> StructuralEntry<EthosRule> {
         let rule = SignatureApplicationDelimitedRule::new(
             APPLICATION_OPERATOR,
             BRACE_BOUNDARY,
@@ -335,14 +332,14 @@ impl FixtureFamily {
             Some(3),
             signature,
         )
-        .expect("schema roles");
+        .expect("ethos roles");
         Self::entry(DATABASE_MARKER, signature_rule(rule))
     }
 
     fn entry(
         type_id: structural_codec::ScopedEncodedTypeId,
-        rule: SchemaRule,
-    ) -> StructuralEntry<SchemaRule> {
+        rule: EthosRule,
+    ) -> StructuralEntry<EthosRule> {
         StructuralEntry::new(
             type_id,
             vec![ConstructorCodec::new(

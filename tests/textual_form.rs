@@ -1,14 +1,14 @@
-//! `TextualSchema` is the reference instance of the shared `TextualForm` textual
-//! interface. This witness proves its generalized `view` / `unview` reproduce schema's
+//! `TextualEthos` is the reference instance of the shared `TextualForm` textual
+//! interface. This witness proves its generalized `view` / `unview` reproduce ethos's
 //! own single-declaration `encode` / `decode` byte-for-byte and value-for-value, on both
-//! the newtype and struct golden. The interface was generalized out of schema, so
-//! schema's existing behavior proves the shared view fits without change.
+//! the newtype and struct golden. The interface was generalized out of ethos, so
+//! ethos's existing behavior proves the shared view fits without change.
 
-use core_schema::SchemaLanguage;
-use core_schema::TextualSchema;
-use core_schema::declaration::{EncodedNewtype, EncodedType};
-use core_schema::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
-use core_schema::{EncodedReference, TextualError};
+use core_ethos::EthosLanguage;
+use core_ethos::TextualEthos;
+use core_ethos::declaration::{EncodedNewtype, EncodedType};
+use core_ethos::fixture::{COMMIT_SEQUENCE, DATABASE_MARKER};
+use core_ethos::{EncodedReference, TextualError};
 use name_table::{IdentifierNamespace, Name, NameTable};
 use structural_codec::{Textual, TextualForm};
 
@@ -23,9 +23,9 @@ fn view_and_unview_reproduce_encode_and_decode() {
     ];
 
     for (expected, source) in goldens {
-        let textual = TextualSchema::fixture().expect("build textual schema");
+        let textual = TextualEthos::fixture().expect("build textual ethos");
 
-        // The inherent single-declaration path (schema's own decode/encode).
+        // The inherent single-declaration path (ethos's own decode/encode).
         let mut inherent_names = NameTable::new(IdentifierNamespace::Schema);
         let decoded: EncodedType = textual
             .decode(expected, source, &mut inherent_names)
@@ -35,13 +35,13 @@ fn view_and_unview_reproduce_encode_and_decode() {
             .expect("inherent encode");
 
         // The shared textual interface uses the same structuretree and nametree.
-        // Data crosses the boundary only as a `TextualForm<SchemaLanguage>` value.
+        // Data crosses the boundary only as a `TextualForm<EthosLanguage>` value.
         let mut textual_names = NameTable::new(IdentifierNamespace::Schema);
-        let source_view: TextualForm<SchemaLanguage> = TextualForm::single(source.to_string());
+        let source_view: TextualForm<EthosLanguage> = TextualForm::single(source.to_string());
         let unviewed: EncodedType = textual
             .unview(expected, &source_view, &mut textual_names)
             .expect("shared unview");
-        let viewed_form: TextualForm<SchemaLanguage> = textual
+        let viewed_form: TextualForm<EthosLanguage> = textual
             .view(expected, &unviewed, &textual_names)
             .expect("shared view");
         let viewed: String = viewed_form.sole_text().expect("sole view text").to_string();
@@ -61,7 +61,7 @@ fn newtype_value(names: &mut NameTable) -> EncodedType {
 
 #[test]
 fn reflection_is_lookup_only_for_inherent_and_shared_textual_routes() {
-    let textual = TextualSchema::fixture().expect("build textual schema");
+    let textual = TextualEthos::fixture().expect("build textual ethos");
     let mut names = NameTable::new(IdentifierNamespace::Schema);
     let value = newtype_value(&mut names);
     names
@@ -96,7 +96,7 @@ fn reflection_is_lookup_only_for_inherent_and_shared_textual_routes() {
 
 #[test]
 fn reflection_reports_missing_spellings_without_mutating_names() {
-    let textual = TextualSchema::fixture().expect("build textual schema");
+    let textual = TextualEthos::fixture().expect("build textual ethos");
     let mut names = NameTable::new(IdentifierNamespace::Schema);
     let value = newtype_value(&mut names);
     let bytes_before = names.to_archive_bytes().expect("before").as_ref().to_vec();

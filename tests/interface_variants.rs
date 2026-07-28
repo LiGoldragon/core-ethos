@@ -2,7 +2,7 @@
 //! single typed payload. This is encoded data only; no unsettled source spelling
 //! is authored here.
 
-use core_schema::{EncodedEnum, EncodedReference, EncodedVariant};
+use core_ethos::{EncodedEnum, EncodedReference, EncodedVariant};
 use name_table::{IdentifierNamespace, Name, NameTable};
 
 #[test]

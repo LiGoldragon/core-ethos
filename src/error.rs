@@ -86,12 +86,12 @@ impl std::fmt::Display for StreamingReferenceForm {
     }
 }
 
-/// A EncodedSchema relation or its schema-local identifiers did not meet the encoded
-/// schema contract.
+/// An EncodedEthos relation or its Ethos-local identifiers did not meet the encoded
+/// Ethos contract.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum EncodedSchemaError {
-    #[error("EncodedSchema requires Schema identifiers, not {0}")]
-    NonSchemaIdentifier(Identifier),
+pub enum EncodedEthosError {
+    #[error("EncodedEthos requires Schema identifiers, not {0}")]
+    NonEthosIdentifier(Identifier),
     #[error("a streaming relation requires an input interface enumeration")]
     MissingInputInterface,
     #[error("a streaming relation requires an output interface enumeration")]
@@ -102,7 +102,7 @@ pub enum EncodedSchemaError {
     OpeningEndpointNotInputVariant(Identifier),
     #[error("streaming acknowledgement endpoint {0} is not an output-interface variant")]
     AcknowledgementEndpointNotOutputVariant(Identifier),
-    #[error("streaming {part} reference {identifier} does not resolve in this schema")]
+    #[error("streaming {part} reference {identifier} does not resolve in this Ethos value")]
     UnresolvedStreamingReference {
         part: StreamingRelationReference,
         identifier: Identifier,
@@ -122,13 +122,13 @@ pub enum EncodedSchemaError {
     },
 }
 
-/// A failure at the validated EncodedSchema archive boundary.
+/// A failure at the validated EncodedEthos archive boundary.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum EncodedSchemaLoadError {
+pub enum EncodedEthosLoadError {
     #[error(transparent)]
     Archive(#[from] ArchiveError),
     #[error(transparent)]
-    Schema(#[from] EncodedSchemaError),
+    Ethos(#[from] EncodedEthosError),
 }
 
 /// The universe bridge — allocating type ids, deriving positional signatures from
@@ -190,10 +190,10 @@ pub enum UniverseError {
     },
     #[error("the structural table holds no entry for Encoded type {0:?}")]
     TableEntryAbsent(ScopedEncodedTypeId),
-    #[error("the authority supplied {actual:?} as the NameTable home; EncodedSchema owns Schema")]
+    #[error("the authority supplied {actual:?} as the NameTable home; EncodedEthos owns Schema")]
     WrongNameTableHome { actual: IdentifierNamespace },
-    #[error("the authority supplied non-Schema identifier {0} for EncodedSchema")]
-    WrongSchemaIdentifier(Identifier),
+    #[error("the authority supplied non-Schema identifier {0} for EncodedEthos")]
+    WrongEthosIdentifier(Identifier),
     #[error(
         "the authority member identifier {assigned} does not equal declaration identifier {declared}"
     )]
@@ -211,8 +211,8 @@ pub enum UniverseError {
     Names(#[from] NameTableError),
 }
 
-/// A Textual round-trip — recognizing schema text, decoding it into a EncodedSchema
-/// value, or encoding a EncodedSchema value back to canonical text — failed.
+/// A Textual round-trip — recognizing Ethos text, decoding it into an EncodedEthos
+/// value, or encoding an EncodedEthos value back to canonical text — failed.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TextualError {
     #[error("the source held no root object to decode")]
@@ -243,6 +243,6 @@ pub enum TextualError {
         "the document's {0} slot is not the expected shape (a non-empty imports/generics/impls slot is not yet modelled)"
     )]
     DocumentSlot(&'static str),
-    #[error("the schema carries no {0} interface root to encode into its protocol-line slot")]
+    #[error("the ethos carries no {0} interface root to encode into its protocol-line slot")]
     MissingInterfaceRoot(&'static str),
 }
