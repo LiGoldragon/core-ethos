@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 
 use core_ethos::{
     DecodedEncodedIdPosition, SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError,
-    SixSlotGrammarIdPosition, SixSlotGrammarIds, SliceOneBuiltinPriorError,
-    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, SliceOneReferencePriorPosition,
-    WholeEthos, WholeEthosItem, WholeEthosTypeReference, WholeEthosVariantPayload,
+    SixSlotGrammarIdPosition, SixSlotGrammarIds, WholeEthos, WholeEthosBuiltinPriorError,
+    WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosItem,
+    WholeEthosReferencePriorPosition, WholeEthosTypeReference, WholeEthosVariantPayload,
     WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
-use slice_structural_codec::{
+use structural_codec::{
     DeclarationAssignment, DecodeError, DecodeNameBindings, EncodedNameResolver, LocalEncodedId,
     NameOccurrence, ResolvedReference,
 };
@@ -43,8 +43,8 @@ fn grammar_ids() -> SixSlotGrammarIds {
     .expect("Universal grammar IDs")
 }
 
-fn builtin_priors() -> SliceOneBuiltinPriors {
-    SliceOneBuiltinPriors::new(
+fn builtin_priors() -> WholeEthosBuiltinPriors {
+    WholeEthosBuiltinPriors::new(
         encoded(VocabularyRoot::Universal, &[3]),
         encoded(VocabularyRoot::Universal, &[4]),
     )
@@ -144,7 +144,7 @@ fn square_enums_payload_variants_and_declared_type_references_decode_structurall
     let one = encoded(VocabularyRoot::Universal, &[42, 2, 1]);
     let two = encoded(VocabularyRoot::Universal, &[42, 2, 2]);
     let collection = encoded(VocabularyRoot::Universal, &[42, 3]);
-    let priors = SliceOneBuiltinPriors::new(integer, vector.clone())
+    let priors = WholeEthosBuiltinPriors::new(integer, vector.clone())
         .expect("Universal builtin priors")
         .with_identity(root.clone())
         .expect("Universal declared reference")
@@ -502,7 +502,7 @@ fn identity_resolution_must_belong_to_the_registered_lookup_only_priors() {
     let found = encoded(VocabularyRoot::Universal, &[19, 4]);
     let codec = SixSlotEthosCodec::build(
         grammar_ids(),
-        SliceOneBuiltinPriors::new(integer, encoded(VocabularyRoot::Universal, &[4]))
+        WholeEthosBuiltinPriors::new(integer, encoded(VocabularyRoot::Universal, &[4]))
             .expect("Universal builtin priors"),
     )
     .expect("typed six-slot table");
@@ -513,7 +513,7 @@ fn identity_resolution_must_belong_to_the_registered_lookup_only_priors() {
 
     match codec.decode(SOURCE, &bindings) {
         Err(SixSlotDecodeError::UnregisteredReferencePrior {
-            position: SliceOneReferencePriorPosition::Identity,
+            position: WholeEthosReferencePriorPosition::Identity,
             found: rejected_found,
         }) => {
             assert_eq!(rejected_found, found);
@@ -546,20 +546,20 @@ fn grammar_identities_are_supplied_and_universal() {
 #[test]
 fn builtin_prior_is_supplied_and_universal() {
     assert!(matches!(
-        SliceOneBuiltinPriors::new(
+        WholeEthosBuiltinPriors::new(
             encoded(VocabularyRoot::Rust, &[3]),
             encoded(VocabularyRoot::Universal, &[4]),
         ),
-        Err(SliceOneBuiltinPriorError::NonUniversal {
-            position: SliceOneBuiltinPriorPosition::Integer,
+        Err(WholeEthosBuiltinPriorError::NonUniversal {
+            position: WholeEthosBuiltinPriorPosition::Integer,
             root: VocabularyRoot::Rust,
         })
     ));
 }
 
 #[test]
-fn slice_path_has_no_positional_split_or_local_name_allocation_surface() {
-    let source = include_str!("../src/slice_one.rs");
+fn whole_path_has_no_positional_split_or_local_name_allocation_surface() {
+    let source = include_str!("../src/whole.rs");
     for forbidden in [
         "NameInterner",
         ".intern(",
@@ -568,13 +568,13 @@ fn slice_path_has_no_positional_split_or_local_name_allocation_surface() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "the slice path must not contain local allocation surface `{forbidden}`"
+            "the whole path must not contain local allocation surface `{forbidden}`"
         );
     }
     for forbidden in ["DOCUMENT_SLOTS", "source.trim", "roots["] {
         assert!(
             !source.contains(forbidden),
-            "the slice path must not contain the legacy positional splitter surface `{forbidden}`"
+            "the whole path must not contain the legacy positional splitter surface `{forbidden}`"
         );
     }
 }

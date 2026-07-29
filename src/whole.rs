@@ -1,20 +1,20 @@
-//! The first complete Ethos slice over translator-issued encoded-ID chains.
+//! Complete whole-Ethos decoding over translator-issued encoded-ID chains.
 //!
 //! This module is deliberately separate from the legacy flat-identifier algebra.
-//! Its item vocabulary is deliberately small: attribute-free newtypes,
+//! Its current item vocabulary is deliberately small: attribute-free newtypes,
 //! brace- or square-delimited enumerations with unit or positional tuple
 //! variants, and named or unary application type references. Every name
 //! position carries the complete Universal encoded-ID chain supplied by the
 //! naming authority.
 
 use content_identity::{ArchiveError, PortableArchive};
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
-use slice_raw_discovery::{
+use raw_discovery::{
     BlockTreeDiscoveryConfiguration, BoundaryDiscoveryConfiguration, BoundaryDiscoveryContext,
     BoundaryDiscoveryContextIdentifier, BoundaryDiscoveryTransition, SealedTokenProfile,
     TriggerIdentifier, TriggerSet,
 };
-use slice_structural_codec::{
+use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
+use structural_codec::{
     AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedHead,
     ApplicationDelimitedItems, ApplicationDelimitedRule, ApplicationHead, ApplicationPayload,
     ApplicationRule, AtomCase, AtomDescriptor, BorrowedFieldView, ConstructorCodec,
@@ -25,7 +25,7 @@ use slice_structural_codec::{
     TextualRenderingPolicy, UnaryRoot, UnaryRule,
 };
 
-pub use slice_raw_discovery::SourceBound;
+pub use raw_discovery::SourceBound;
 
 const SQUARE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(1);
 const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
@@ -35,11 +35,16 @@ const ROOT_CONTEXT: BoundaryDiscoveryContextIdentifier = BoundaryDiscoveryContex
 const CHILD_CONTEXT: BoundaryDiscoveryContextIdentifier =
     BoundaryDiscoveryContextIdentifier::new(2);
 
-/// Ordered Ethos content admitted by the first vertical slice.
+/// Ordered Ethos content admitted by the current whole-document vocabulary.
 ///
 /// The carrier contains no complete NameTree pin and is not a Capsule.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthos(Vec<WholeEthosItem>);
+
+impl structural_codec::EncodedForm for WholeEthos {
+    type VocabularyRoot = VocabularyRoot;
+    type Language = protos::Ethos;
+}
 
 impl WholeEthos {
     /// Construct the content in authored item order.
@@ -156,7 +161,7 @@ fn validate_type_reference(
     }
 }
 
-/// Item kinds supported by the first Ethos slice.
+/// Item kinds supported by the current whole-document vocabulary.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum WholeEthosItem {
     /// One attribute-free newtype declaration.
@@ -199,7 +204,7 @@ impl WholeEthosNewtype {
         &self.1
     }
 
-    /// Typed attribute sequence, empty in this slice.
+    /// Typed attribute sequence, currently empty.
     pub const fn attributes(&self) -> &WholeEthosAttributes {
         &self.2
     }
@@ -210,7 +215,7 @@ impl WholeEthosNewtype {
     }
 }
 
-/// The closed visibility vocabulary needed by the first slice.
+/// The closed visibility vocabulary needed by the whole-document codec.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum WholeEthosVisibility {
     /// Exported item.
@@ -219,7 +224,7 @@ pub enum WholeEthosVisibility {
     Private,
 }
 
-/// The typed empty attribute sequence admitted by the first slice.
+/// The typed empty attribute sequence admitted by the current codec.
 ///
 /// This is a position in the newtype payload, not an omitted or inferred field.
 #[derive(
@@ -233,7 +238,7 @@ impl WholeEthosAttributes {
         Self
     }
 
-    /// This first-slice sequence contains no attributes.
+    /// This sequence currently contains no attributes.
     pub const fn is_empty(self) -> bool {
         true
     }
@@ -407,7 +412,7 @@ impl WholeEthosTupleFields {
 #[error("tuple variant payload requires at least one positional field")]
 pub struct EmptyTupleFields;
 
-/// Encoded-ID position rejected while restoring a first-slice archive.
+/// Encoded-ID position rejected while restoring a Whole-Ethos archive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WholeEthosEncodedIdPosition {
     /// Item declaration identity.
@@ -422,7 +427,7 @@ pub enum WholeEthosEncodedIdPosition {
     ApplicationHead,
 }
 
-/// Failure at the first-slice Whole-Ethos archive boundary.
+/// Failure at the Whole-Ethos archive boundary.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum WholeEthosArchiveError {
     /// Canonical archive serialization or validated reconstruction failed.
@@ -438,7 +443,7 @@ pub enum WholeEthosArchiveError {
         position: WholeEthosEncodedIdPosition,
     },
 
-    /// Ethos declarations and references in this slice must use shared vocabulary.
+    /// Ethos declarations and references in this vocabulary must use Universal.
     #[error("whole-Ethos item {item_index} uses non-Universal root {root:?} at {position:?}")]
     NonUniversalEncodedId {
         /// Ordered item index.
@@ -541,7 +546,7 @@ pub enum SixSlotGrammarError {
     },
 }
 
-macro_rules! slice_role {
+macro_rules! whole_role {
     ($name:ident, $id:expr) => {
         #[derive(
             rkyv::Archive,
@@ -564,15 +569,15 @@ macro_rules! slice_role {
     };
 }
 
-slice_role!(DocumentRootRole, 2001);
-slice_role!(ImportsRole, 2002);
-slice_role!(InputRole, 2003);
-slice_role!(OutputRole, 2004);
-slice_role!(TypesRole, 2005);
-slice_role!(GenericsRole, 2006);
-slice_role!(ImplsRole, 2007);
-slice_role!(DelimitedRootRole, 2010);
-slice_role!(DelimitedItemsRole, 2011);
+whole_role!(DocumentRootRole, 2001);
+whole_role!(ImportsRole, 2002);
+whole_role!(InputRole, 2003);
+whole_role!(OutputRole, 2004);
+whole_role!(TypesRole, 2005);
+whole_role!(GenericsRole, 2006);
+whole_role!(ImplsRole, 2007);
+whole_role!(DelimitedRootRole, 2010);
+whole_role!(DelimitedItemsRole, 2011);
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 struct SixSlotDocumentRecord {
@@ -586,7 +591,7 @@ struct SixSlotDocumentRecord {
 }
 
 impl SixSlotDocumentRecord {
-    fn new(ids: &SixSlotGrammarIds) -> Result<Self, slice_structural_codec::AuthoringError> {
+    fn new(ids: &SixSlotGrammarIds) -> Result<Self, structural_codec::AuthoringError> {
         let product = OrderedProduct::try_new::<ImportsRole>()?
             .then::<InputRole>()?
             .then::<OutputRole>()?
@@ -649,7 +654,7 @@ impl DelimitedItemsRecord {
         item: &EncodedTypeId<VocabularyRoot>,
         minimum: u64,
         maximum: Option<u64>,
-    ) -> Result<Self, slice_structural_codec::AuthoringError> {
+    ) -> Result<Self, structural_codec::AuthoringError> {
         let items = Position::try_new(SharedDescriptor::Repeated {
             minimum,
             maximum,
@@ -691,7 +696,7 @@ impl StructureRecord<VocabularyRoot> for DelimitedItemsRecord {
     }
 }
 
-type SliceOneRule = RuleCoproduct<
+type WholeEthosRule = RuleCoproduct<
     SixSlotDocumentRecord,
     RuleCoproduct<DelimitedItemsRecord, StructuralRule<VocabularyRoot>>,
 >;
@@ -700,40 +705,40 @@ type SliceOneRule = RuleCoproduct<
 #[derive(Clone, Debug)]
 pub struct SixSlotEthosCodec {
     ids: SixSlotGrammarIds,
-    priors: SliceOneBuiltinPriors,
-    table: AddressedStructuralTable<VocabularyRoot, SliceOneRule>,
+    priors: WholeEthosBuiltinPriors,
+    table: AddressedStructuralTable<VocabularyRoot, WholeEthosRule>,
 }
 
 impl SixSlotEthosCodec {
     /// Seal the typed structuretree against caller-supplied grammar identities.
     pub fn build(
         ids: SixSlotGrammarIds,
-        priors: SliceOneBuiltinPriors,
+        priors: WholeEthosBuiltinPriors,
     ) -> Result<Self, SixSlotCodecBuildError> {
-        let document_rule = SliceOneRule::Left(SixSlotDocumentRecord::new(&ids)?);
-        let empty_braces_rule = SliceOneRule::Right(RuleCoproduct::Left(
+        let document_rule = WholeEthosRule::Left(SixSlotDocumentRecord::new(&ids)?);
+        let empty_braces_rule = WholeEthosRule::Right(RuleCoproduct::Left(
             DelimitedItemsRecord::new(BRACE_BOUNDARY, &ids.item, 0, Some(0))?,
         ));
-        let empty_square_rule = SliceOneRule::Right(RuleCoproduct::Left(
+        let empty_square_rule = WholeEthosRule::Right(RuleCoproduct::Left(
             DelimitedItemsRecord::new(SQUARE_BOUNDARY, &ids.item, 0, Some(0))?,
         ));
-        let types_rule = SliceOneRule::Right(RuleCoproduct::Left(DelimitedItemsRecord::new(
+        let types_rule = WholeEthosRule::Right(RuleCoproduct::Left(DelimitedItemsRecord::new(
             BRACE_BOUNDARY,
             &ids.item,
             1,
             None,
         )?));
-        let newtype_rule = SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Application(
-            ApplicationRule::new(
+        let newtype_rule = WholeEthosRule::Right(RuleCoproduct::Right(
+            StructuralRule::Application(ApplicationRule::new(
                 APPLICATION_OPERATOR,
                 SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
                 SharedDescriptor::Delegate {
                     target: ids.type_reference.clone(),
                     payload: None,
                 },
-            )?,
-        )));
-        let brace_enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            )?),
+        ));
+        let brace_enumeration_rule = WholeEthosRule::Right(RuleCoproduct::Right(
             StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
                 APPLICATION_OPERATOR,
                 BRACE_BOUNDARY,
@@ -746,7 +751,7 @@ impl SixSlotEthosCodec {
                 None,
             )?),
         ));
-        let square_enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
+        let square_enumeration_rule = WholeEthosRule::Right(RuleCoproduct::Right(
             StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
                 APPLICATION_OPERATOR,
                 SQUARE_BOUNDARY,
@@ -760,10 +765,10 @@ impl SixSlotEthosCodec {
             )?),
         ));
         let unit_variant_rule =
-            SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
+            WholeEthosRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
                 SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
             )?)));
-        let tuple_variant_rule = SliceOneRule::Right(RuleCoproduct::Right(
+        let tuple_variant_rule = WholeEthosRule::Right(RuleCoproduct::Right(
             StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
                 APPLICATION_OPERATOR,
                 BRACE_BOUNDARY,
@@ -776,7 +781,7 @@ impl SixSlotEthosCodec {
                 None,
             )?),
         ));
-        let payload_variant_rule = SliceOneRule::Right(RuleCoproduct::Right(
+        let payload_variant_rule = WholeEthosRule::Right(RuleCoproduct::Right(
             StructuralRule::Application(ApplicationRule::new(
                 APPLICATION_OPERATOR,
                 SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
@@ -787,10 +792,10 @@ impl SixSlotEthosCodec {
             )?),
         ));
         let identity_reference_rule =
-            SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
+            WholeEthosRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
                 SharedDescriptor::Reference(AtomDescriptor::with_case(AtomCase::PascalCase)),
             )?)));
-        let application_reference_rule = SliceOneRule::Right(RuleCoproduct::Right(
+        let application_reference_rule = WholeEthosRule::Right(RuleCoproduct::Right(
             StructuralRule::Application(ApplicationRule::new(
                 APPLICATION_OPERATOR,
                 SharedDescriptor::Reference(AtomDescriptor::with_case(AtomCase::PascalCase)),
@@ -893,7 +898,7 @@ impl SixSlotEthosCodec {
 
     fn reify_item(
         &self,
-        declaration: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+        declaration: &structural_codec::StructuralValue<VocabularyRoot>,
     ) -> Result<WholeEthosItem, SixSlotDecodeError> {
         if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 0) {
             let name = declaration_id::<ApplicationHead>(declaration, "newtype identity")?;
@@ -934,7 +939,7 @@ impl SixSlotEthosCodec {
 
     fn reify_variant(
         &self,
-        variant: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+        variant: &structural_codec::StructuralValue<VocabularyRoot>,
     ) -> Result<WholeEthosVariant, SixSlotDecodeError> {
         if variant.constructor() == &EncodedConstructorId::under(&self.ids.variant, 0) {
             return Ok(WholeEthosVariant::new(
@@ -981,13 +986,13 @@ impl SixSlotEthosCodec {
 
     fn reify_reference(
         &self,
-        reference: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+        reference: &structural_codec::StructuralValue<VocabularyRoot>,
     ) -> Result<WholeEthosTypeReference, SixSlotDecodeError> {
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 0) {
             let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
             if !self.priors.accepts_identity(&identity) {
                 return Err(SixSlotDecodeError::UnregisteredReferencePrior {
-                    position: SliceOneReferencePriorPosition::Identity,
+                    position: WholeEthosReferencePriorPosition::Identity,
                     found: identity,
                 });
             }
@@ -997,7 +1002,7 @@ impl SixSlotEthosCodec {
             let head = reference_id::<ApplicationHead>(reference, "application reference head")?;
             if !self.priors.accepts_application_head(&head) {
                 return Err(SixSlotDecodeError::UnregisteredReferencePrior {
-                    position: SliceOneReferencePriorPosition::ApplicationHead,
+                    position: WholeEthosReferencePriorPosition::ApplicationHead,
                     found: head,
                 });
             }
@@ -1011,18 +1016,18 @@ impl SixSlotEthosCodec {
     }
 }
 
-/// Lookup-only identities admitted at reference positions in the first Ethos slice.
+/// Lookup-only identities admitted at Whole-Ethos reference positions.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SliceOneBuiltinPriors(Vec<VocabularyEncodedId>, Vec<VocabularyEncodedId>);
+pub struct WholeEthosBuiltinPriors(Vec<VocabularyEncodedId>, Vec<VocabularyEncodedId>);
 
-impl SliceOneBuiltinPriors {
+impl WholeEthosBuiltinPriors {
     /// Register exact Universal identities already assigned to Integer and Vector.
     pub fn new(
         integer: VocabularyEncodedId,
         vector: VocabularyEncodedId,
-    ) -> Result<Self, SliceOneBuiltinPriorError> {
-        validate_builtin_prior(SliceOneBuiltinPriorPosition::Integer, &integer)?;
-        validate_builtin_prior(SliceOneBuiltinPriorPosition::Vector, &vector)?;
+    ) -> Result<Self, WholeEthosBuiltinPriorError> {
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::Integer, &integer)?;
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::Vector, &vector)?;
         Ok(Self(vec![integer], vec![vector]))
     }
 
@@ -1040,8 +1045,8 @@ impl SliceOneBuiltinPriors {
     pub fn with_identity(
         mut self,
         identity: VocabularyEncodedId,
-    ) -> Result<Self, SliceOneBuiltinPriorError> {
-        validate_builtin_prior(SliceOneBuiltinPriorPosition::Identity, &identity)?;
+    ) -> Result<Self, WholeEthosBuiltinPriorError> {
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::Identity, &identity)?;
         if !self.0.contains(&identity) {
             self.0.push(identity);
         }
@@ -1052,8 +1057,8 @@ impl SliceOneBuiltinPriors {
     pub fn with_application_head(
         mut self,
         head: VocabularyEncodedId,
-    ) -> Result<Self, SliceOneBuiltinPriorError> {
-        validate_builtin_prior(SliceOneBuiltinPriorPosition::ApplicationHead, &head)?;
+    ) -> Result<Self, WholeEthosBuiltinPriorError> {
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::ApplicationHead, &head)?;
         if !self.1.contains(&head) {
             self.1.push(head);
         }
@@ -1070,13 +1075,13 @@ impl SliceOneBuiltinPriors {
 }
 
 fn validate_builtin_prior(
-    position: SliceOneBuiltinPriorPosition,
+    position: WholeEthosBuiltinPriorPosition,
     encoded_id: &VocabularyEncodedId,
-) -> Result<(), SliceOneBuiltinPriorError> {
+) -> Result<(), WholeEthosBuiltinPriorError> {
     if encoded_id.root_variant() == &VocabularyRoot::Universal {
         Ok(())
     } else {
-        Err(SliceOneBuiltinPriorError::NonUniversal {
+        Err(WholeEthosBuiltinPriorError::NonUniversal {
             position,
             root: *encoded_id.root_variant(),
         })
@@ -1085,7 +1090,7 @@ fn validate_builtin_prior(
 
 /// Builtin-prior position rejected during codec construction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SliceOneBuiltinPriorPosition {
+pub enum WholeEthosBuiltinPriorPosition {
     /// Scalar Integer.
     Integer,
     /// Unary Vector application.
@@ -1098,12 +1103,12 @@ pub enum SliceOneBuiltinPriorPosition {
 
 /// Invalid builtin-prior configuration.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum SliceOneBuiltinPriorError {
+pub enum WholeEthosBuiltinPriorError {
     /// Builtin Integer is part of the shared Universal vocabulary.
     #[error("builtin {position:?} prior uses non-Universal root {root:?}")]
     NonUniversal {
         /// Builtin position.
-        position: SliceOneBuiltinPriorPosition,
+        position: WholeEthosBuiltinPriorPosition,
         /// Unexpected root.
         root: VocabularyRoot,
     },
@@ -1111,8 +1116,8 @@ pub enum SliceOneBuiltinPriorError {
 
 fn typed_entry(
     type_id: EncodedTypeId<VocabularyRoot>,
-    rule: SliceOneRule,
-) -> StructuralEntry<VocabularyRoot, SliceOneRule> {
+    rule: WholeEthosRule,
+) -> StructuralEntry<VocabularyRoot, WholeEthosRule> {
     let constructor = EncodedConstructorId::under(&type_id, 0);
     StructuralEntry::new(
         type_id,
@@ -1126,8 +1131,8 @@ fn typed_entry(
 
 fn typed_entry_with_rules(
     type_id: EncodedTypeId<VocabularyRoot>,
-    rules: Vec<(u16, SliceOneRule)>,
-) -> StructuralEntry<VocabularyRoot, SliceOneRule> {
+    rules: Vec<(u16, WholeEthosRule)>,
+) -> StructuralEntry<VocabularyRoot, WholeEthosRule> {
     let constructors = rules
         .into_iter()
         .map(|(local, rule)| {
@@ -1169,16 +1174,16 @@ fn six_slot_rendering() -> TextualRenderingPolicy {
 }
 
 fn ensure_delegated<Role: FieldRole>(
-    value: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
 ) -> Result<(), SixSlotDecodeError> {
     delegated::<Role>(value, what).map(|_| ())
 }
 
 fn delegated<'value, Role: FieldRole>(
-    value: &'value slice_structural_codec::StructuralValue<VocabularyRoot>,
+    value: &'value structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<&'value slice_structural_codec::StructuralValue<VocabularyRoot>, SixSlotDecodeError> {
+) -> Result<&'value structural_codec::StructuralValue<VocabularyRoot>, SixSlotDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Delegated(inner)) => Ok(inner),
         _ => Err(SixSlotDecodeError::Shape(what)),
@@ -1186,7 +1191,7 @@ fn delegated<'value, Role: FieldRole>(
 }
 
 fn repeated<'value, Role: FieldRole>(
-    value: &'value slice_structural_codec::StructuralValue<VocabularyRoot>,
+    value: &'value structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
 ) -> Result<&'value [FieldValue<VocabularyRoot>], SixSlotDecodeError> {
     match value.field::<Role>() {
@@ -1196,7 +1201,7 @@ fn repeated<'value, Role: FieldRole>(
 }
 
 fn declaration_id<Role: FieldRole>(
-    value: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
 ) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
     match value.field::<Role>() {
@@ -1210,7 +1215,7 @@ fn declaration_id<Role: FieldRole>(
 }
 
 fn reference_id<Role: FieldRole>(
-    value: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
 ) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
     match value.field::<Role>() {
@@ -1224,7 +1229,7 @@ fn reference_id<Role: FieldRole>(
 }
 
 fn field_bound<Role: FieldRole>(
-    value: &slice_structural_codec::SourceBoundedStructuralValue<VocabularyRoot>,
+    value: &structural_codec::SourceBoundedStructuralValue<VocabularyRoot>,
     what: &'static str,
 ) -> Result<SourceBound, SixSlotDecodeError> {
     value
@@ -1319,16 +1324,16 @@ pub enum DecodedEncodedIdPosition {
     Reference,
 }
 
-/// Failure while sealing the first-slice structuretree.
+/// Failure while sealing the Whole-Ethos structuretree.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum SixSlotCodecBuildError {
     /// A typed record could not be authored.
     #[error(transparent)]
-    Authoring(#[from] slice_structural_codec::AuthoringError),
+    Authoring(#[from] structural_codec::AuthoringError),
 
     /// The complete structural table refused to seal.
     #[error(transparent)]
-    Table(Box<slice_structural_codec::TableError<VocabularyRoot>>),
+    Table(Box<structural_codec::TableError<VocabularyRoot>>),
 }
 
 /// Failure while decoding or reifying the first six-slot document.
@@ -1336,7 +1341,7 @@ pub enum SixSlotCodecBuildError {
 pub enum SixSlotDecodeError {
     /// Shared structural evaluation refused the source.
     #[error(transparent)]
-    Structural(#[from] slice_structural_codec::DecodeError<VocabularyRoot>),
+    Structural(#[from] structural_codec::DecodeError<VocabularyRoot>),
 
     /// The selected structural mirror did not contain its typed role value.
     #[error("the six-slot structural value did not fit {0}")]
@@ -1346,7 +1351,7 @@ pub enum SixSlotDecodeError {
     #[error("the six-slot structural value omitted the source bound for {0}")]
     MissingSourceBound(&'static str),
 
-    /// The first Ethos slice only carries universally shared vocabulary.
+    /// This Whole-Ethos vocabulary only carries universally shared declarations.
     #[error("decoded {position:?} uses non-Universal root {root:?}")]
     NonUniversalEncodedId {
         /// Name role.
@@ -1360,7 +1365,7 @@ pub enum SixSlotDecodeError {
     #[error("type reference at {position:?} resolved to unregistered fixture prior {found:?}")]
     UnregisteredReferencePrior {
         /// Reference role.
-        position: SliceOneReferencePriorPosition,
+        position: WholeEthosReferencePriorPosition,
         /// Resolved identity absent from the corresponding prior set.
         found: VocabularyEncodedId,
     },
@@ -1368,7 +1373,7 @@ pub enum SixSlotDecodeError {
 
 /// Lookup-only prior role rejected while reifying a reference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SliceOneReferencePriorPosition {
+pub enum WholeEthosReferencePriorPosition {
     /// A directly referenced type.
     Identity,
     /// The head of a unary type application.

@@ -1,6 +1,6 @@
 [package]
 name         = "core-ethos"
-version      = "0.14.0"
+version      = "0.15.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "MIT OR Apache-2.0"
@@ -17,11 +17,9 @@ content-identity         = { git = "https://github.com/LiGoldragon/content-ident
 capsule-content-identity = { package = "content-identity", git = "https://github.com/LiGoldragon/content-identity.git", rev = "fdf2db1d5a9e8ea52d24d39a03833c3e6885c355" }
 name-table               = { git = "https://github.com/LiGoldragon/name-table.git", rev = "196610e2907687dcb8dbd0d2dfaafe4aefd9fa27" }
 protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1343d0c405cdb6929552ea6b12c48739e73f35ab" }
-raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2ac78f621980fa02daa3b31e90cc5c73570eed6e" }
-structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "23497c43f81b619158e5cfbd83a012eb63c4186f" }
-signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "8c504ba7aa8dbdc5edf7daadbb862bbdaa5613be" }
-slice-raw-discovery      = { package = "raw-discovery", git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "7290f65bbb5e7825ab2ca58340631d154d69d110" }
-slice-structural-codec   = { package = "structural-codec", git = "https://github.com/LiGoldragon/structural-codec.git", rev = "5c11e1fb7f58444cd860207803d8f705e7415d71" }
+raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "7290f65bbb5e7825ab2ca58340631d154d69d110" }
+structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "5c11e1fb7f58444cd860207803d8f705e7415d71" }
+signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "dd8e7b5656833f640e49c099ab3be6f09881f9c5" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
 
