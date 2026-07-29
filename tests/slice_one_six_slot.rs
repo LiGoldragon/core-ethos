@@ -4,9 +4,10 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use core_ethos::{
-    DecodedEncodedIdPosition, SixSlotDecodeError, SixSlotGrammarError, SixSlotGrammarIdPosition,
-    SixSlotGrammarIds, SixSlotNewtypeCodec, SliceOneBuiltinPriorError, SliceOneBuiltinPriors,
-    WholeEthos, WholeEthosItem, WholeEthosVisibility,
+    DecodedEncodedIdPosition, SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError,
+    SixSlotGrammarIdPosition, SixSlotGrammarIds, SliceOneBuiltinPriorError,
+    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, WholeEthos, WholeEthosItem,
+    WholeEthosTypeReference, WholeEthosVariantPayload, WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -16,6 +17,7 @@ use slice_structural_codec::{
 };
 
 const SOURCE: &str = "  {}\n []  []\n {CommitSequence.Integer}\n {}\t{}  ";
+const BREADTH_SOURCE: &str = "{} [] [] {Identifiers.Vector.Integer Status.{Pending Ready.{Integer} Batch.{Vector.Integer Integer}}} {} {}";
 
 fn encoded(root: VocabularyRoot, chain: &[u16]) -> VocabularyEncodedId {
     VocabularyEncodedId::new(
@@ -32,17 +34,22 @@ fn grammar_ids() -> SixSlotGrammarIds {
         encoded(VocabularyRoot::Universal, &[202]),
         encoded(VocabularyRoot::Universal, &[203]),
         encoded(VocabularyRoot::Universal, &[204]),
+        encoded(VocabularyRoot::Universal, &[205]),
+        encoded(VocabularyRoot::Universal, &[206]),
     )
     .expect("Universal grammar IDs")
 }
 
-fn integer_prior() -> SliceOneBuiltinPriors {
-    SliceOneBuiltinPriors::new(encoded(VocabularyRoot::Universal, &[3]))
-        .expect("Universal Integer prior")
+fn builtin_priors() -> SliceOneBuiltinPriors {
+    SliceOneBuiltinPriors::new(
+        encoded(VocabularyRoot::Universal, &[3]),
+        encoded(VocabularyRoot::Universal, &[4]),
+    )
+    .expect("Universal builtin priors")
 }
 
-fn codec() -> SixSlotNewtypeCodec {
-    SixSlotNewtypeCodec::build(grammar_ids(), integer_prior()).expect("typed six-slot table")
+fn codec() -> SixSlotEthosCodec {
+    SixSlotEthosCodec::build(grammar_ids(), builtin_priors()).expect("typed six-slot table")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,13 +93,108 @@ impl Bindings {
     }
 
     fn bind_reference(&mut self, spelling: &str, encoded_id: VocabularyEncodedId, source: &str) {
-        let start = source.find(spelling).expect("reference spelling");
+        self.bind_reference_occurrence(spelling, 0, encoded_id, source);
+    }
+
+    fn bind_reference_occurrence(
+        &mut self,
+        spelling: &str,
+        occurrence: usize,
+        encoded_id: VocabularyEncodedId,
+        source: &str,
+    ) {
+        let start = source
+            .match_indices(spelling)
+            .nth(occurrence)
+            .expect("reference spelling")
+            .0;
         let end = start + spelling.len();
         self.spellings
             .insert(encoded_id.clone(), Name::new(spelling));
         self.references
             .insert((start, end), (spelling.to_owned(), encoded_id));
     }
+}
+
+#[test]
+fn enum_unit_tuple_and_application_references_decode_structurally() {
+    let codec = codec();
+    let identifiers = encoded(VocabularyRoot::Universal, &[42, 8]);
+    let status = encoded(VocabularyRoot::Universal, &[42, 9]);
+    let pending = encoded(VocabularyRoot::Universal, &[42, 9, 1]);
+    let ready = encoded(VocabularyRoot::Universal, &[42, 9, 2]);
+    let batch = encoded(VocabularyRoot::Universal, &[42, 9, 3]);
+    let integer = encoded(VocabularyRoot::Universal, &[3]);
+    let vector = encoded(VocabularyRoot::Universal, &[4]);
+    let mut bindings = Bindings::empty();
+    for (spelling, identity) in [
+        ("Identifiers", identifiers.clone()),
+        ("Status", status.clone()),
+        ("Pending", pending.clone()),
+        ("Ready", ready.clone()),
+        ("Batch", batch.clone()),
+    ] {
+        bindings.bind_declaration(spelling, identity, BREADTH_SOURCE);
+    }
+    bindings.bind_reference_occurrence("Vector", 0, vector.clone(), BREADTH_SOURCE);
+    bindings.bind_reference_occurrence("Vector", 1, vector.clone(), BREADTH_SOURCE);
+    bindings.bind_reference_occurrence("Integer", 0, integer.clone(), BREADTH_SOURCE);
+    bindings.bind_reference_occurrence("Integer", 1, integer.clone(), BREADTH_SOURCE);
+    bindings.bind_reference_occurrence("Integer", 2, integer.clone(), BREADTH_SOURCE);
+    bindings.bind_reference_occurrence("Integer", 3, integer.clone(), BREADTH_SOURCE);
+
+    let decoded = codec
+        .decode(BREADTH_SOURCE, &bindings)
+        .expect("bounded fixture breadth");
+    let [
+        WholeEthosItem::Newtype(newtype),
+        WholeEthosItem::Enumeration(enumeration),
+    ] = decoded.ethos().items()
+    else {
+        panic!("one application newtype followed by one enumeration")
+    };
+    assert_eq!(newtype.name(), &identifiers);
+    assert_eq!(
+        newtype.wrapped_field().reference(),
+        &WholeEthosTypeReference::Application(core_ethos::WholeEthosTypeApplication::new(
+            vector.clone(),
+            WholeEthosTypeReference::Identity(integer.clone()),
+        ))
+    );
+    assert_eq!(enumeration.name(), &status);
+    assert_eq!(enumeration.variants().len(), 3);
+    assert_eq!(enumeration.variants()[0].name(), &pending);
+    assert_eq!(
+        enumeration.variants()[0].payload(),
+        &WholeEthosVariantPayload::Unit
+    );
+    assert_eq!(enumeration.variants()[1].name(), &ready);
+    let WholeEthosVariantPayload::Tuple(ready_fields) = enumeration.variants()[1].payload() else {
+        panic!("Ready has a tuple payload")
+    };
+    assert_eq!(
+        ready_fields.fields(),
+        &[WholeEthosTypeReference::Identity(integer.clone())]
+    );
+    let WholeEthosVariantPayload::Tuple(batch_fields) = enumeration.variants()[2].payload() else {
+        panic!("Batch has a tuple payload")
+    };
+    assert_eq!(
+        batch_fields.fields(),
+        &[
+            WholeEthosTypeReference::Application(core_ethos::WholeEthosTypeApplication::new(
+                vector,
+                WholeEthosTypeReference::Identity(integer.clone()),
+            )),
+            WholeEthosTypeReference::Identity(integer),
+        ]
+    );
+
+    let archive = decoded.ethos().to_archive_bytes().expect("archive breadth");
+    assert_eq!(
+        WholeEthos::from_archive_bytes(&archive).expect("restore breadth"),
+        *decoded.ethos()
+    );
 }
 
 impl EncodedNameResolver<VocabularyRoot> for Bindings {
@@ -164,7 +266,10 @@ fn six_typed_slots_decode_one_private_field_newtype_with_absolute_bounds() {
         newtype.wrapped_field().visibility(),
         &WholeEthosVisibility::Private
     );
-    assert_eq!(newtype.wrapped_field().reference(), &integer);
+    assert_eq!(
+        newtype.wrapped_field().reference(),
+        &WholeEthosTypeReference::Identity(integer)
+    );
 
     let bounds = decoded.source_bounds();
     assert_eq!(
@@ -305,9 +410,10 @@ fn decoded_declaration_and_builtin_prior_must_both_be_universal() {
 fn integer_resolution_must_equal_the_registered_lookup_only_prior() {
     let expected = encoded(VocabularyRoot::Universal, &[3]);
     let found = encoded(VocabularyRoot::Universal, &[19, 4]);
-    let codec = SixSlotNewtypeCodec::build(
+    let codec = SixSlotEthosCodec::build(
         grammar_ids(),
-        SliceOneBuiltinPriors::new(expected.clone()).expect("Universal Integer prior"),
+        SliceOneBuiltinPriors::new(expected.clone(), encoded(VocabularyRoot::Universal, &[4]))
+            .expect("Universal builtin priors"),
     )
     .expect("typed six-slot table");
     let declaration = encoded(VocabularyRoot::Universal, &[42, 7, 9]);
@@ -335,6 +441,8 @@ fn grammar_identities_are_supplied_and_universal() {
         encoded(VocabularyRoot::Universal, &[202]),
         encoded(VocabularyRoot::Universal, &[203]),
         encoded(VocabularyRoot::Universal, &[204]),
+        encoded(VocabularyRoot::Universal, &[205]),
+        encoded(VocabularyRoot::Universal, &[206]),
     )
     .expect_err("a Rust-root document grammar identity is refused");
     assert!(matches!(
@@ -349,8 +457,12 @@ fn grammar_identities_are_supplied_and_universal() {
 #[test]
 fn builtin_prior_is_supplied_and_universal() {
     assert!(matches!(
-        SliceOneBuiltinPriors::new(encoded(VocabularyRoot::Rust, &[3])),
+        SliceOneBuiltinPriors::new(
+            encoded(VocabularyRoot::Rust, &[3]),
+            encoded(VocabularyRoot::Universal, &[4]),
+        ),
         Err(SliceOneBuiltinPriorError::NonUniversal {
+            position: SliceOneBuiltinPriorPosition::Integer,
             root: VocabularyRoot::Rust,
         })
     ));

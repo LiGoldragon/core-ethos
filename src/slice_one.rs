@@ -1,9 +1,10 @@
 //! The first complete Ethos slice over translator-issued encoded-ID chains.
 //!
 //! This module is deliberately separate from the legacy flat-identifier algebra.
-//! Its only item is the attribute-free newtype needed by the first vertical
-//! witness. Every name position carries the complete Universal encoded-ID chain
-//! supplied by the naming authority.
+//! Its item vocabulary is deliberately small: attribute-free newtypes,
+//! enumerations with unit or positional tuple variants, and named or unary
+//! application type references. Every name position carries the complete
+//! Universal encoded-ID chain supplied by the naming authority.
 
 use content_identity::{ArchiveError, PortableArchive};
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -13,13 +14,14 @@ use slice_raw_discovery::{
     TriggerIdentifier, TriggerSet,
 };
 use slice_structural_codec::{
-    AcceptedDecodeForm, AddressedStructuralTable, ApplicationHead, ApplicationPayload,
+    AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedHead,
+    ApplicationDelimitedItems, ApplicationDelimitedRule, ApplicationHead, ApplicationPayload,
     ApplicationRule, AtomCase, AtomDescriptor, BorrowedFieldView, ConstructorCodec,
     ContextualTextualPolicy, DecodeFormId, DecodeNameBindings, EncodedConstructorId, EncodedTypeId,
     FieldRole, FieldValue, FieldVisitor, OrderedProduct, Position, RuleCoproduct, SharedDescriptor,
     StableRoleId, StructuralEntry, StructuralEvaluator, StructuralRule,
     StructuralVocabularyIdentity, StructureRecord, TableIdentityPayload, TargetLayoutIdentity,
-    TextualRenderingPolicy,
+    TextualRenderingPolicy, UnaryRoot, UnaryRule,
 };
 
 pub use slice_raw_discovery::SourceBound;
@@ -72,12 +74,39 @@ impl WholeEthos {
         for (item_index, item) in self.0.iter().enumerate() {
             match item {
                 WholeEthosItem::Newtype(newtype) => {
-                    validate_universal(item_index, NewtypeEncodedIdPosition::Name, newtype.name())?;
                     validate_universal(
                         item_index,
-                        NewtypeEncodedIdPosition::Wrapped,
+                        WholeEthosEncodedIdPosition::ItemName,
+                        newtype.name(),
+                    )?;
+                    validate_type_reference(
+                        item_index,
+                        WholeEthosEncodedIdPosition::NewtypeField,
                         newtype.wrapped_field().reference(),
                     )?;
+                }
+                WholeEthosItem::Enumeration(enumeration) => {
+                    validate_universal(
+                        item_index,
+                        WholeEthosEncodedIdPosition::ItemName,
+                        enumeration.name(),
+                    )?;
+                    for variant in enumeration.variants() {
+                        validate_universal(
+                            item_index,
+                            WholeEthosEncodedIdPosition::VariantName,
+                            variant.name(),
+                        )?;
+                        if let WholeEthosVariantPayload::Tuple(fields) = variant.payload() {
+                            for field in fields.fields() {
+                                validate_type_reference(
+                                    item_index,
+                                    WholeEthosEncodedIdPosition::VariantField,
+                                    field,
+                                )?;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -87,7 +116,7 @@ impl WholeEthos {
 
 fn validate_universal(
     item_index: usize,
-    position: NewtypeEncodedIdPosition,
+    position: WholeEthosEncodedIdPosition,
     encoded_id: &VocabularyEncodedId,
 ) -> Result<(), WholeEthosArchiveError> {
     if encoded_id.root_variant() != &VocabularyRoot::Universal {
@@ -106,11 +135,33 @@ fn validate_universal(
     Ok(())
 }
 
+fn validate_type_reference(
+    item_index: usize,
+    position: WholeEthosEncodedIdPosition,
+    reference: &WholeEthosTypeReference,
+) -> Result<(), WholeEthosArchiveError> {
+    match reference {
+        WholeEthosTypeReference::Identity(encoded_id) => {
+            validate_universal(item_index, position, encoded_id)
+        }
+        WholeEthosTypeReference::Application(application) => {
+            validate_universal(
+                item_index,
+                WholeEthosEncodedIdPosition::ApplicationHead,
+                application.head(),
+            )?;
+            validate_type_reference(item_index, position, application.payload())
+        }
+    }
+}
+
 /// Item kinds supported by the first Ethos slice.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub enum WholeEthosItem {
     /// One attribute-free newtype declaration.
     Newtype(WholeEthosNewtype),
+    /// One attribute-free, non-generic enumeration declaration.
+    Enumeration(WholeEthosEnumeration),
 }
 
 /// One positional newtype payload.
@@ -189,11 +240,11 @@ impl WholeEthosAttributes {
 
 /// A positional newtype field: visibility followed by referenced type identity.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosWrappedField(WholeEthosVisibility, VocabularyEncodedId);
+pub struct WholeEthosWrappedField(WholeEthosVisibility, WholeEthosTypeReference);
 
 impl WholeEthosWrappedField {
     /// Construct the wrapped field.
-    pub fn new(visibility: WholeEthosVisibility, reference: VocabularyEncodedId) -> Self {
+    pub fn new(visibility: WholeEthosVisibility, reference: WholeEthosTypeReference) -> Self {
         Self(visibility, reference)
     }
 
@@ -203,18 +254,171 @@ impl WholeEthosWrappedField {
     }
 
     /// Complete lookup-resolved type identity.
-    pub const fn reference(&self) -> &VocabularyEncodedId {
+    pub const fn reference(&self) -> &WholeEthosTypeReference {
         &self.1
     }
 }
 
+/// A positional type reference.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub enum WholeEthosTypeReference {
+    /// One complete lookup-resolved identity.
+    Identity(VocabularyEncodedId),
+    /// A unary application whose head and payload are both typed references.
+    Application(WholeEthosTypeApplication),
+}
+
+/// A positional unary type application such as `Vector.Integer`.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+#[rkyv(
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
+)]
+pub struct WholeEthosTypeApplication(
+    VocabularyEncodedId,
+    #[rkyv(omit_bounds)] Box<WholeEthosTypeReference>,
+);
+
+impl WholeEthosTypeApplication {
+    /// Construct a unary application.
+    pub fn new(head: VocabularyEncodedId, payload: WholeEthosTypeReference) -> Self {
+        Self(head, Box::new(payload))
+    }
+
+    /// Lookup-resolved application head.
+    pub const fn head(&self) -> &VocabularyEncodedId {
+        &self.0
+    }
+
+    /// Positional application payload.
+    pub const fn payload(&self) -> &WholeEthosTypeReference {
+        &self.1
+    }
+}
+
+/// One positional enumeration payload.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct WholeEthosEnumeration(
+    VocabularyEncodedId,
+    WholeEthosVisibility,
+    WholeEthosAttributes,
+    Vec<WholeEthosVariant>,
+);
+
+impl WholeEthosEnumeration {
+    /// Construct an attribute-free enumeration.
+    pub fn new(
+        name: VocabularyEncodedId,
+        visibility: WholeEthosVisibility,
+        attributes: WholeEthosAttributes,
+        variants: Vec<WholeEthosVariant>,
+    ) -> Self {
+        Self(name, visibility, attributes, variants)
+    }
+
+    /// Complete declaration identity.
+    pub const fn name(&self) -> &VocabularyEncodedId {
+        &self.0
+    }
+
+    /// Item visibility.
+    pub const fn visibility(&self) -> &WholeEthosVisibility {
+        &self.1
+    }
+
+    /// Typed empty attribute sequence.
+    pub const fn attributes(&self) -> &WholeEthosAttributes {
+        &self.2
+    }
+
+    /// Variants in authored order.
+    pub fn variants(&self) -> &[WholeEthosVariant] {
+        &self.3
+    }
+}
+
+/// One enumeration variant with positional payload data.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct WholeEthosVariant(
+    VocabularyEncodedId,
+    WholeEthosAttributes,
+    WholeEthosVariantPayload,
+);
+
+impl WholeEthosVariant {
+    /// Construct one variant.
+    pub fn new(
+        name: VocabularyEncodedId,
+        attributes: WholeEthosAttributes,
+        payload: WholeEthosVariantPayload,
+    ) -> Self {
+        Self(name, attributes, payload)
+    }
+
+    /// Complete declaration identity.
+    pub const fn name(&self) -> &VocabularyEncodedId {
+        &self.0
+    }
+
+    /// Typed empty attribute sequence.
+    pub const fn attributes(&self) -> &WholeEthosAttributes {
+        &self.1
+    }
+
+    /// Unit or positional tuple payload.
+    pub const fn payload(&self) -> &WholeEthosVariantPayload {
+        &self.2
+    }
+}
+
+/// Closed variant-payload vocabulary for this fixture breadth.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub enum WholeEthosVariantPayload {
+    /// A unit variant.
+    Unit,
+    /// One or more positional fields.
+    Tuple(WholeEthosTupleFields),
+}
+
+/// Positional tuple fields. No stored field-name position exists.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct WholeEthosTupleFields(Vec<WholeEthosTypeReference>);
+
+impl WholeEthosTupleFields {
+    /// Construct a non-empty positional tuple payload.
+    pub fn new(fields: Vec<WholeEthosTypeReference>) -> Result<Self, EmptyTupleFields> {
+        if fields.is_empty() {
+            Err(EmptyTupleFields)
+        } else {
+            Ok(Self(fields))
+        }
+    }
+
+    /// Positional payload fields.
+    pub fn fields(&self) -> &[WholeEthosTypeReference] {
+        &self.0
+    }
+}
+
+/// A tuple-payload construction attempted to encode no fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("tuple variant payload requires at least one positional field")]
+pub struct EmptyTupleFields;
+
 /// Encoded-ID position rejected while restoring a first-slice archive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NewtypeEncodedIdPosition {
-    /// Declaration identity.
-    Name,
-    /// Wrapped type reference.
-    Wrapped,
+pub enum WholeEthosEncodedIdPosition {
+    /// Item declaration identity.
+    ItemName,
+    /// Newtype wrapped-field reference.
+    NewtypeField,
+    /// Enumeration variant declaration identity.
+    VariantName,
+    /// Enumeration tuple-field reference.
+    VariantField,
+    /// Unary application head.
+    ApplicationHead,
 }
 
 /// Failure at the first-slice Whole-Ethos archive boundary.
@@ -230,7 +434,7 @@ pub enum WholeEthosArchiveError {
         /// Ordered item index.
         item_index: usize,
         /// Positional encoded-ID role.
-        position: NewtypeEncodedIdPosition,
+        position: WholeEthosEncodedIdPosition,
     },
 
     /// Ethos declarations and references in this slice must use shared vocabulary.
@@ -239,7 +443,7 @@ pub enum WholeEthosArchiveError {
         /// Ordered item index.
         item_index: usize,
         /// Positional encoded-ID role.
-        position: NewtypeEncodedIdPosition,
+        position: WholeEthosEncodedIdPosition,
         /// Unexpected vocabulary root.
         root: VocabularyRoot,
     },
@@ -255,32 +459,37 @@ pub struct SixSlotGrammarIds {
     empty_braces: EncodedTypeId<VocabularyRoot>,
     empty_square: EncodedTypeId<VocabularyRoot>,
     types_block: EncodedTypeId<VocabularyRoot>,
-    newtype_declaration: EncodedTypeId<VocabularyRoot>,
+    item: EncodedTypeId<VocabularyRoot>,
+    variant: EncodedTypeId<VocabularyRoot>,
+    type_reference: EncodedTypeId<VocabularyRoot>,
 }
 
 impl SixSlotGrammarIds {
-    /// Bind the grammar to five complete Universal encoded-ID chains.
+    /// Bind the grammar to seven complete Universal encoded-ID chains.
     pub fn new(
         document: VocabularyEncodedId,
         empty_braces: VocabularyEncodedId,
         empty_square: VocabularyEncodedId,
         types_block: VocabularyEncodedId,
-        newtype_declaration: VocabularyEncodedId,
+        item: VocabularyEncodedId,
+        variant: VocabularyEncodedId,
+        type_reference: VocabularyEncodedId,
     ) -> Result<Self, SixSlotGrammarError> {
         validate_grammar_id(SixSlotGrammarIdPosition::Document, &document)?;
         validate_grammar_id(SixSlotGrammarIdPosition::EmptyBraces, &empty_braces)?;
         validate_grammar_id(SixSlotGrammarIdPosition::EmptySquare, &empty_square)?;
         validate_grammar_id(SixSlotGrammarIdPosition::TypesBlock, &types_block)?;
-        validate_grammar_id(
-            SixSlotGrammarIdPosition::NewtypeDeclaration,
-            &newtype_declaration,
-        )?;
+        validate_grammar_id(SixSlotGrammarIdPosition::Item, &item)?;
+        validate_grammar_id(SixSlotGrammarIdPosition::Variant, &variant)?;
+        validate_grammar_id(SixSlotGrammarIdPosition::TypeReference, &type_reference)?;
         Ok(Self {
             document: EncodedTypeId::new(document),
             empty_braces: EncodedTypeId::new(empty_braces),
             empty_square: EncodedTypeId::new(empty_square),
             types_block: EncodedTypeId::new(types_block),
-            newtype_declaration: EncodedTypeId::new(newtype_declaration),
+            item: EncodedTypeId::new(item),
+            variant: EncodedTypeId::new(variant),
+            type_reference: EncodedTypeId::new(type_reference),
         })
     }
 }
@@ -310,8 +519,12 @@ pub enum SixSlotGrammarIdPosition {
     EmptySquare,
     /// Types block.
     TypesBlock,
-    /// Newtype declaration.
-    NewtypeDeclaration,
+    /// Type item.
+    Item,
+    /// Enumeration variant.
+    Variant,
+    /// Recursive type reference.
+    TypeReference,
 }
 
 /// Failure before a six-slot structuretree can be sealed.
@@ -482,15 +695,15 @@ type SliceOneRule = RuleCoproduct<
     RuleCoproduct<DelimitedItemsRecord, StructuralRule<VocabularyRoot>>,
 >;
 
-/// The one table-driven decoder for the first six-slot Ethos document.
+/// The one table-driven decoder for the bounded six-slot Ethos fixture breadth.
 #[derive(Clone, Debug)]
-pub struct SixSlotNewtypeCodec {
+pub struct SixSlotEthosCodec {
     ids: SixSlotGrammarIds,
     priors: SliceOneBuiltinPriors,
     table: AddressedStructuralTable<VocabularyRoot, SliceOneRule>,
 }
 
-impl SixSlotNewtypeCodec {
+impl SixSlotEthosCodec {
     /// Seal the typed structuretree against caller-supplied grammar identities.
     pub fn build(
         ids: SixSlotGrammarIds,
@@ -498,31 +711,80 @@ impl SixSlotNewtypeCodec {
     ) -> Result<Self, SixSlotCodecBuildError> {
         let document_rule = SliceOneRule::Left(SixSlotDocumentRecord::new(&ids)?);
         let empty_braces_rule = SliceOneRule::Right(RuleCoproduct::Left(
-            DelimitedItemsRecord::new(BRACE_BOUNDARY, &ids.newtype_declaration, 0, Some(0))?,
+            DelimitedItemsRecord::new(BRACE_BOUNDARY, &ids.item, 0, Some(0))?,
         ));
         let empty_square_rule = SliceOneRule::Right(RuleCoproduct::Left(
-            DelimitedItemsRecord::new(SQUARE_BOUNDARY, &ids.newtype_declaration, 0, Some(0))?,
+            DelimitedItemsRecord::new(SQUARE_BOUNDARY, &ids.item, 0, Some(0))?,
         ));
         let types_rule = SliceOneRule::Right(RuleCoproduct::Left(DelimitedItemsRecord::new(
             BRACE_BOUNDARY,
-            &ids.newtype_declaration,
+            &ids.item,
             1,
-            Some(1),
+            None,
         )?));
         let newtype_rule = SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Application(
             ApplicationRule::new(
                 APPLICATION_OPERATOR,
                 SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
-                SharedDescriptor::Reference(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.type_reference.clone(),
+                    payload: None,
+                },
             )?,
         )));
+        let enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
+                APPLICATION_OPERATOR,
+                BRACE_BOUNDARY,
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.variant.clone(),
+                    payload: None,
+                },
+                1,
+                None,
+            )?),
+        ));
+        let unit_variant_rule =
+            SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            )?)));
+        let tuple_variant_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
+                APPLICATION_OPERATOR,
+                BRACE_BOUNDARY,
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.type_reference.clone(),
+                    payload: None,
+                },
+                1,
+                None,
+            )?),
+        ));
+        let identity_reference_rule =
+            SliceOneRule::Right(RuleCoproduct::Right(StructuralRule::Unary(UnaryRule::new(
+                SharedDescriptor::Reference(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            )?)));
+        let application_reference_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            StructuralRule::Application(ApplicationRule::new(
+                APPLICATION_OPERATOR,
+                SharedDescriptor::Reference(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.type_reference.clone(),
+                    payload: None,
+                },
+            )?),
+        ));
         let profile = SealedTokenProfile::standard();
         let table = AddressedStructuralTable::seal(
             TableIdentityPayload::new(
-                TargetLayoutIdentity::derive(b"core-ethos first six-slot positional layout"),
+                TargetLayoutIdentity::derive(
+                    b"core-ethos six-slot enum and unary-application fixture layout v2",
+                ),
                 profile.identity(),
                 StructuralVocabularyIdentity::language(
-                    b"core-ethos first six-slot typed vocabulary",
+                    b"core-ethos six-slot enum and unary-application typed vocabulary v2",
                 ),
                 six_slot_discovery(),
                 six_slot_rendering(),
@@ -531,7 +793,21 @@ impl SixSlotNewtypeCodec {
                     typed_entry(ids.empty_braces.clone(), empty_braces_rule),
                     typed_entry(ids.empty_square.clone(), empty_square_rule),
                     typed_entry(ids.types_block.clone(), types_rule),
-                    typed_entry(ids.newtype_declaration.clone(), newtype_rule),
+                    typed_entry_with_rules(
+                        ids.item.clone(),
+                        vec![(0, newtype_rule), (1, enumeration_rule)],
+                    ),
+                    typed_entry_with_rules(
+                        ids.variant.clone(),
+                        vec![(0, unit_variant_rule), (1, tuple_variant_rule)],
+                    ),
+                    typed_entry_with_rules(
+                        ids.type_reference.clone(),
+                        vec![
+                            (0, identity_reference_rule),
+                            (1, application_reference_rule),
+                        ],
+                    ),
                 ],
             ),
             &profile,
@@ -563,24 +839,12 @@ impl SixSlotNewtypeCodec {
         ensure_delegated::<ImplsRole>(value, "impls")?;
         let types = delegated::<TypesRole>(value, "types")?;
         let declarations = repeated::<DelimitedItemsRole>(types, "types declarations")?;
-        let [FieldValue::Delegated(declaration)] = declarations else {
-            return Err(SixSlotDecodeError::Shape("one newtype declaration"));
-        };
-        let name = match declaration.field::<ApplicationHead>() {
-            Some(FieldValue::Declaration(assignment)) => assignment.encoded_id().clone(),
-            _ => return Err(SixSlotDecodeError::Shape("newtype declaration identity")),
-        };
-        let wrapped = match declaration.field::<ApplicationPayload>() {
-            Some(FieldValue::Reference(reference)) => reference.encoded_id().clone(),
-            _ => return Err(SixSlotDecodeError::Shape("newtype reference")),
-        };
-        validate_decoded_id(DecodedEncodedIdPosition::Declaration, &name)?;
-        validate_decoded_id(DecodedEncodedIdPosition::Reference, &wrapped)?;
-        if &wrapped != self.priors.integer() {
-            return Err(SixSlotDecodeError::BuiltinPriorMismatch {
-                expected: self.priors.integer().clone(),
-                found: wrapped,
-            });
+        let mut items = Vec::with_capacity(declarations.len());
+        for declaration in declarations {
+            let FieldValue::Delegated(declaration) = declaration else {
+                return Err(SixSlotDecodeError::Shape("type declaration"));
+            };
+            items.push(self.reify_item(declaration)?);
         }
 
         let bounds = SixSlotSourceBounds(
@@ -591,47 +855,173 @@ impl SixSlotNewtypeCodec {
             field_bound::<GenericsRole>(&decoded, "generics")?,
             field_bound::<ImplsRole>(&decoded, "impls")?,
         );
-        let ethos = WholeEthos::new(vec![WholeEthosItem::Newtype(WholeEthosNewtype::new(
-            name,
-            WholeEthosVisibility::Public,
-            WholeEthosAttributes::empty(),
-            WholeEthosWrappedField::new(
-                WholeEthosVisibility::Private,
-                self.priors.integer().clone(),
-            ),
-        ))]);
+        let ethos = WholeEthos::new(items);
         Ok(DecodedSixSlotEthos(ethos, bounds))
+    }
+
+    fn reify_item(
+        &self,
+        declaration: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    ) -> Result<WholeEthosItem, SixSlotDecodeError> {
+        if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 0) {
+            let name = declaration_id::<ApplicationHead>(declaration, "newtype identity")?;
+            let wrapped = delegated::<ApplicationPayload>(declaration, "newtype reference")?;
+            return Ok(WholeEthosItem::Newtype(WholeEthosNewtype::new(
+                name,
+                WholeEthosVisibility::Public,
+                WholeEthosAttributes::empty(),
+                WholeEthosWrappedField::new(
+                    WholeEthosVisibility::Private,
+                    self.reify_reference(wrapped)?,
+                ),
+            )));
+        }
+        if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 1) {
+            let name =
+                declaration_id::<ApplicationDelimitedHead>(declaration, "enumeration identity")?;
+            let encoded_variants =
+                repeated::<ApplicationDelimitedItems>(declaration, "enumeration variants")?;
+            let mut variants = Vec::with_capacity(encoded_variants.len());
+            for variant in encoded_variants {
+                let FieldValue::Delegated(variant) = variant else {
+                    return Err(SixSlotDecodeError::Shape("enumeration variant"));
+                };
+                variants.push(self.reify_variant(variant)?);
+            }
+            return Ok(WholeEthosItem::Enumeration(WholeEthosEnumeration::new(
+                name,
+                WholeEthosVisibility::Public,
+                WholeEthosAttributes::empty(),
+                variants,
+            )));
+        }
+        Err(SixSlotDecodeError::Shape("type-item constructor"))
+    }
+
+    fn reify_variant(
+        &self,
+        variant: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    ) -> Result<WholeEthosVariant, SixSlotDecodeError> {
+        if variant.constructor() == &EncodedConstructorId::under(&self.ids.variant, 0) {
+            return Ok(WholeEthosVariant::new(
+                declaration_id::<UnaryRoot>(variant, "unit variant identity")?,
+                WholeEthosAttributes::empty(),
+                WholeEthosVariantPayload::Unit,
+            ));
+        }
+        if variant.constructor() == &EncodedConstructorId::under(&self.ids.variant, 1) {
+            let name =
+                declaration_id::<ApplicationDelimitedHead>(variant, "tuple variant identity")?;
+            let encoded_fields =
+                repeated::<ApplicationDelimitedItems>(variant, "tuple variant fields")?;
+            let mut fields = Vec::with_capacity(encoded_fields.len());
+            for field in encoded_fields {
+                let FieldValue::Delegated(field) = field else {
+                    return Err(SixSlotDecodeError::Shape("tuple variant field"));
+                };
+                fields.push(self.reify_reference(field)?);
+            }
+            return Ok(WholeEthosVariant::new(
+                name,
+                WholeEthosAttributes::empty(),
+                WholeEthosVariantPayload::Tuple(
+                    WholeEthosTupleFields::new(fields)
+                        .map_err(|_| SixSlotDecodeError::Shape("non-empty tuple variant"))?,
+                ),
+            ));
+        }
+        Err(SixSlotDecodeError::Shape("variant constructor"))
+    }
+
+    fn reify_reference(
+        &self,
+        reference: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    ) -> Result<WholeEthosTypeReference, SixSlotDecodeError> {
+        if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 0) {
+            let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
+            if &identity != self.priors.integer() {
+                return Err(SixSlotDecodeError::BuiltinPriorMismatch {
+                    expected: self.priors.integer().clone(),
+                    found: identity,
+                });
+            }
+            return Ok(WholeEthosTypeReference::Identity(identity));
+        }
+        if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 1) {
+            let head = reference_id::<ApplicationHead>(reference, "application reference head")?;
+            if &head != self.priors.vector() {
+                return Err(SixSlotDecodeError::BuiltinPriorMismatch {
+                    expected: self.priors.vector().clone(),
+                    found: head,
+                });
+            }
+            let payload =
+                delegated::<ApplicationPayload>(reference, "application reference payload")?;
+            return Ok(WholeEthosTypeReference::Application(
+                WholeEthosTypeApplication::new(head, self.reify_reference(payload)?),
+            ));
+        }
+        Err(SixSlotDecodeError::Shape("type-reference constructor"))
     }
 }
 
 /// Lookup-only builtin identities required by the first Ethos slice.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SliceOneBuiltinPriors(VocabularyEncodedId);
+pub struct SliceOneBuiltinPriors(VocabularyEncodedId, VocabularyEncodedId);
 
 impl SliceOneBuiltinPriors {
-    /// Register the exact Universal identity already assigned to builtin Integer.
-    pub fn new(integer: VocabularyEncodedId) -> Result<Self, SliceOneBuiltinPriorError> {
-        if integer.root_variant() == &VocabularyRoot::Universal {
-            Ok(Self(integer))
-        } else {
-            Err(SliceOneBuiltinPriorError::NonUniversal {
-                root: *integer.root_variant(),
-            })
-        }
+    /// Register exact Universal identities already assigned to Integer and Vector.
+    pub fn new(
+        integer: VocabularyEncodedId,
+        vector: VocabularyEncodedId,
+    ) -> Result<Self, SliceOneBuiltinPriorError> {
+        validate_builtin_prior(SliceOneBuiltinPriorPosition::Integer, &integer)?;
+        validate_builtin_prior(SliceOneBuiltinPriorPosition::Vector, &vector)?;
+        Ok(Self(integer, vector))
     }
 
     /// Builtin Integer's complete translator-issued identity.
     pub const fn integer(&self) -> &VocabularyEncodedId {
         &self.0
     }
+
+    /// Builtin Vector's complete translator-issued identity.
+    pub const fn vector(&self) -> &VocabularyEncodedId {
+        &self.1
+    }
+}
+
+fn validate_builtin_prior(
+    position: SliceOneBuiltinPriorPosition,
+    encoded_id: &VocabularyEncodedId,
+) -> Result<(), SliceOneBuiltinPriorError> {
+    if encoded_id.root_variant() == &VocabularyRoot::Universal {
+        Ok(())
+    } else {
+        Err(SliceOneBuiltinPriorError::NonUniversal {
+            position,
+            root: *encoded_id.root_variant(),
+        })
+    }
+}
+
+/// Builtin-prior position rejected during codec construction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SliceOneBuiltinPriorPosition {
+    /// Scalar Integer.
+    Integer,
+    /// Unary Vector application.
+    Vector,
 }
 
 /// Invalid builtin-prior configuration.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SliceOneBuiltinPriorError {
     /// Builtin Integer is part of the shared Universal vocabulary.
-    #[error("builtin Integer prior uses non-Universal root {root:?}")]
+    #[error("builtin {position:?} prior uses non-Universal root {root:?}")]
     NonUniversal {
+        /// Builtin position.
+        position: SliceOneBuiltinPriorPosition,
         /// Unexpected root.
         root: VocabularyRoot,
     },
@@ -650,6 +1040,23 @@ fn typed_entry(
             rule,
         )],
     )
+}
+
+fn typed_entry_with_rules(
+    type_id: EncodedTypeId<VocabularyRoot>,
+    rules: Vec<(u16, SliceOneRule)>,
+) -> StructuralEntry<VocabularyRoot, SliceOneRule> {
+    let constructors = rules
+        .into_iter()
+        .map(|(local, rule)| {
+            ConstructorCodec::new(
+                EncodedConstructorId::under(&type_id, local),
+                vec![AcceptedDecodeForm::new(DecodeFormId::new(0), rule.clone())],
+                rule,
+            )
+        })
+        .collect();
+    StructuralEntry::new(type_id, constructors)
 }
 
 fn six_slot_discovery() -> BlockTreeDiscoveryConfiguration {
@@ -702,6 +1109,34 @@ fn repeated<'value, Role: FieldRole>(
 ) -> Result<&'value [FieldValue<VocabularyRoot>], SixSlotDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Repeated(items)) => Ok(items),
+        _ => Err(SixSlotDecodeError::Shape(what)),
+    }
+}
+
+fn declaration_id<Role: FieldRole>(
+    value: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    what: &'static str,
+) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
+    match value.field::<Role>() {
+        Some(FieldValue::Declaration(assignment)) => {
+            let encoded_id = assignment.encoded_id().clone();
+            validate_decoded_id(DecodedEncodedIdPosition::Declaration, &encoded_id)?;
+            Ok(encoded_id)
+        }
+        _ => Err(SixSlotDecodeError::Shape(what)),
+    }
+}
+
+fn reference_id<Role: FieldRole>(
+    value: &slice_structural_codec::StructuralValue<VocabularyRoot>,
+    what: &'static str,
+) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
+    match value.field::<Role>() {
+        Some(FieldValue::Reference(reference)) => {
+            let encoded_id = reference.encoded_id().clone();
+            validate_decoded_id(DecodedEncodedIdPosition::Reference, &encoded_id)?;
+            Ok(encoded_id)
+        }
         _ => Err(SixSlotDecodeError::Shape(what)),
     }
 }
@@ -839,7 +1274,7 @@ pub enum SixSlotDecodeError {
     },
 
     /// Reference resolution returned a valid name that is not builtin Integer.
-    #[error("newtype reference resolved to {found:?}, expected builtin Integer {expected:?}")]
+    #[error("type reference resolved to {found:?}, expected fixture builtin {expected:?}")]
     BuiltinPriorMismatch {
         /// Registered lookup-only Integer prior.
         expected: VocabularyEncodedId,

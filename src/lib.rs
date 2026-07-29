@@ -63,11 +63,13 @@ pub use reference::{
     SingleTypeReferenceProjection, ValueReferenceProjection,
 };
 pub use slice_one::{
-    DecodedEncodedIdPosition, DecodedSixSlotEthos, NewtypeEncodedIdPosition,
-    SixSlotCodecBuildError, SixSlotDecodeError, SixSlotGrammarError, SixSlotGrammarIdPosition,
-    SixSlotGrammarIds, SixSlotNewtypeCodec, SixSlotSourceBounds, SliceOneBuiltinPriorError,
-    SliceOneBuiltinPriors, WholeEthos, WholeEthosArchiveError, WholeEthosAttributes,
-    WholeEthosItem, WholeEthosNewtype, WholeEthosVisibility, WholeEthosWrappedField,
+    DecodedEncodedIdPosition, DecodedSixSlotEthos, EmptyTupleFields, SixSlotCodecBuildError,
+    SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError, SixSlotGrammarIdPosition,
+    SixSlotGrammarIds, SixSlotSourceBounds, SliceOneBuiltinPriorError,
+    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, WholeEthos, WholeEthosArchiveError,
+    WholeEthosAttributes, WholeEthosEncodedIdPosition, WholeEthosEnumeration, WholeEthosItem,
+    WholeEthosNewtype, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference,
+    WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
 };
 pub use textual::{EthosLanguage, TextualEthos};
 pub use universe::{

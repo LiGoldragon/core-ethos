@@ -52,17 +52,27 @@ evaluator. There is no positional root indexing and no literal
 empty-document check. The bounded result exposes the exact absolute
 `SourceBound` for every slot.
 
-The one supported type item is reified into a positional `WholeEthosNewtype`:
-translator-issued declaration `VocabularyEncodedId`, item visibility, typed
-empty attributes, and a wrapped field containing visibility plus referenced
-`VocabularyEncodedId`. The wrapped-field visibility is `Private`. Fields carry
-no names.
+The supported fixture item set is reified into positional `WholeEthos` data:
+
+- an attribute-free newtype carrying its translator-issued declaration
+  `VocabularyEncodedId`, item visibility, typed empty attributes, and a private
+  wrapped field;
+- an attribute-free, non-generic enumeration carrying its declaration chain
+  and ordered variants, where each variant has its own full declaration chain
+  and either no payload or one or more positional tuple fields;
+- recursively typed unary applications such as `Vector.Integer`, represented
+  as an application-head chain plus one typed payload reference.
+
+The six-slot structural table distinguishes these forms by typed expected
+positions and evaluates them through the shared evaluator. `Integer` and
+`Vector` are exact caller-supplied Universal priors. Fields carry no names.
 
 Naming stays outside this component. The codec receives its structural type
-identities, declaration assignments, and exact Universal `Integer` builtin
-prior from callers using the naming-authority contract. Declaration positions
-consume assignments; reference positions perform lookup only. A missing,
-non-Universal, or different builtin identity is a typed failure. No
+identities, declaration assignments, and exact Universal `Integer` and `Vector`
+builtin priors from callers using the naming-authority contract. Item and
+variant declaration positions consume assignments; every type-reference
+position performs lookup only. A missing, non-Universal, or different fixture
+builtin identity is a typed failure. No
 `NameInterner`, local ID mint, or flat-identifier adapter exists on this path.
 
 `WholeEthos` is an archive-validated content carrier, not a Capsule: it carries
