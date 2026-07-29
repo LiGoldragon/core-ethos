@@ -66,10 +66,11 @@ pub use slice_one::{
     DecodedEncodedIdPosition, DecodedSixSlotEthos, EmptyTupleFields, SixSlotCodecBuildError,
     SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError, SixSlotGrammarIdPosition,
     SixSlotGrammarIds, SixSlotSourceBounds, SliceOneBuiltinPriorError,
-    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, WholeEthos, WholeEthosArchiveError,
-    WholeEthosAttributes, WholeEthosEncodedIdPosition, WholeEthosEnumeration, WholeEthosItem,
-    WholeEthosNewtype, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference,
-    WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
+    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, SliceOneReferencePriorPosition,
+    WholeEthos, WholeEthosArchiveError, WholeEthosAttributes, WholeEthosEncodedIdPosition,
+    WholeEthosEnumeration, WholeEthosItem, WholeEthosNewtype, WholeEthosTupleFields,
+    WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
+    WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
 };
 pub use textual::{EthosLanguage, TextualEthos};
 pub use universe::{

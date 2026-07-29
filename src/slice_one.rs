@@ -2,9 +2,10 @@
 //!
 //! This module is deliberately separate from the legacy flat-identifier algebra.
 //! Its item vocabulary is deliberately small: attribute-free newtypes,
-//! enumerations with unit or positional tuple variants, and named or unary
-//! application type references. Every name position carries the complete
-//! Universal encoded-ID chain supplied by the naming authority.
+//! brace- or square-delimited enumerations with unit or positional tuple
+//! variants, and named or unary application type references. Every name
+//! position carries the complete Universal encoded-ID chain supplied by the
+//! naming authority.
 
 use content_identity::{ArchiveError, PortableArchive};
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -732,10 +733,23 @@ impl SixSlotEthosCodec {
                 },
             )?,
         )));
-        let enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
+        let brace_enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
             StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
                 APPLICATION_OPERATOR,
                 BRACE_BOUNDARY,
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.variant.clone(),
+                    payload: None,
+                },
+                1,
+                None,
+            )?),
+        ));
+        let square_enumeration_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            StructuralRule::ApplicationDelimited(ApplicationDelimitedRule::new(
+                APPLICATION_OPERATOR,
+                SQUARE_BOUNDARY,
                 SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
                 SharedDescriptor::Delegate {
                     target: ids.variant.clone(),
@@ -760,6 +774,16 @@ impl SixSlotEthosCodec {
                 },
                 1,
                 None,
+            )?),
+        ));
+        let payload_variant_rule = SliceOneRule::Right(RuleCoproduct::Right(
+            StructuralRule::Application(ApplicationRule::new(
+                APPLICATION_OPERATOR,
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+                SharedDescriptor::Delegate {
+                    target: ids.type_reference.clone(),
+                    payload: None,
+                },
             )?),
         ));
         let identity_reference_rule =
@@ -795,11 +819,19 @@ impl SixSlotEthosCodec {
                     typed_entry(ids.types_block.clone(), types_rule),
                     typed_entry_with_rules(
                         ids.item.clone(),
-                        vec![(0, newtype_rule), (1, enumeration_rule)],
+                        vec![
+                            (0, newtype_rule),
+                            (1, brace_enumeration_rule),
+                            (2, square_enumeration_rule),
+                        ],
                     ),
                     typed_entry_with_rules(
                         ids.variant.clone(),
-                        vec![(0, unit_variant_rule), (1, tuple_variant_rule)],
+                        vec![
+                            (0, unit_variant_rule),
+                            (1, tuple_variant_rule),
+                            (2, payload_variant_rule),
+                        ],
                     ),
                     typed_entry_with_rules(
                         ids.type_reference.clone(),
@@ -876,7 +908,9 @@ impl SixSlotEthosCodec {
                 ),
             )));
         }
-        if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 1) {
+        if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 1)
+            || declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 2)
+        {
             let name =
                 declaration_id::<ApplicationDelimitedHead>(declaration, "enumeration identity")?;
             let encoded_variants =
@@ -930,6 +964,18 @@ impl SixSlotEthosCodec {
                 ),
             ));
         }
+        if variant.constructor() == &EncodedConstructorId::under(&self.ids.variant, 2) {
+            let name = declaration_id::<ApplicationHead>(variant, "payload variant identity")?;
+            let encoded_field = delegated::<ApplicationPayload>(variant, "payload variant field")?;
+            return Ok(WholeEthosVariant::new(
+                name,
+                WholeEthosAttributes::empty(),
+                WholeEthosVariantPayload::Tuple(
+                    WholeEthosTupleFields::new(vec![self.reify_reference(encoded_field)?])
+                        .map_err(|_| SixSlotDecodeError::Shape("payload variant field"))?,
+                ),
+            ));
+        }
         Err(SixSlotDecodeError::Shape("variant constructor"))
     }
 
@@ -939,9 +985,9 @@ impl SixSlotEthosCodec {
     ) -> Result<WholeEthosTypeReference, SixSlotDecodeError> {
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 0) {
             let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
-            if &identity != self.priors.integer() {
-                return Err(SixSlotDecodeError::BuiltinPriorMismatch {
-                    expected: self.priors.integer().clone(),
+            if !self.priors.accepts_identity(&identity) {
+                return Err(SixSlotDecodeError::UnregisteredReferencePrior {
+                    position: SliceOneReferencePriorPosition::Identity,
                     found: identity,
                 });
             }
@@ -949,9 +995,9 @@ impl SixSlotEthosCodec {
         }
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 1) {
             let head = reference_id::<ApplicationHead>(reference, "application reference head")?;
-            if &head != self.priors.vector() {
-                return Err(SixSlotDecodeError::BuiltinPriorMismatch {
-                    expected: self.priors.vector().clone(),
+            if !self.priors.accepts_application_head(&head) {
+                return Err(SixSlotDecodeError::UnregisteredReferencePrior {
+                    position: SliceOneReferencePriorPosition::ApplicationHead,
                     found: head,
                 });
             }
@@ -965,9 +1011,9 @@ impl SixSlotEthosCodec {
     }
 }
 
-/// Lookup-only builtin identities required by the first Ethos slice.
+/// Lookup-only identities admitted at reference positions in the first Ethos slice.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SliceOneBuiltinPriors(VocabularyEncodedId, VocabularyEncodedId);
+pub struct SliceOneBuiltinPriors(Vec<VocabularyEncodedId>, Vec<VocabularyEncodedId>);
 
 impl SliceOneBuiltinPriors {
     /// Register exact Universal identities already assigned to Integer and Vector.
@@ -977,17 +1023,49 @@ impl SliceOneBuiltinPriors {
     ) -> Result<Self, SliceOneBuiltinPriorError> {
         validate_builtin_prior(SliceOneBuiltinPriorPosition::Integer, &integer)?;
         validate_builtin_prior(SliceOneBuiltinPriorPosition::Vector, &vector)?;
-        Ok(Self(integer, vector))
+        Ok(Self(vec![integer], vec![vector]))
     }
 
     /// Builtin Integer's complete translator-issued identity.
-    pub const fn integer(&self) -> &VocabularyEncodedId {
-        &self.0
+    pub fn integer(&self) -> &VocabularyEncodedId {
+        &self.0[0]
     }
 
     /// Builtin Vector's complete translator-issued identity.
-    pub const fn vector(&self) -> &VocabularyEncodedId {
-        &self.1
+    pub fn vector(&self) -> &VocabularyEncodedId {
+        &self.1[0]
+    }
+
+    /// Admit another exact Universal identity at lookup-only type positions.
+    pub fn with_identity(
+        mut self,
+        identity: VocabularyEncodedId,
+    ) -> Result<Self, SliceOneBuiltinPriorError> {
+        validate_builtin_prior(SliceOneBuiltinPriorPosition::Identity, &identity)?;
+        if !self.0.contains(&identity) {
+            self.0.push(identity);
+        }
+        Ok(self)
+    }
+
+    /// Admit another exact Universal identity as a unary application head.
+    pub fn with_application_head(
+        mut self,
+        head: VocabularyEncodedId,
+    ) -> Result<Self, SliceOneBuiltinPriorError> {
+        validate_builtin_prior(SliceOneBuiltinPriorPosition::ApplicationHead, &head)?;
+        if !self.1.contains(&head) {
+            self.1.push(head);
+        }
+        Ok(self)
+    }
+
+    fn accepts_identity(&self, identity: &VocabularyEncodedId) -> bool {
+        self.0.contains(identity)
+    }
+
+    fn accepts_application_head(&self, head: &VocabularyEncodedId) -> bool {
+        self.1.contains(head)
     }
 }
 
@@ -1012,6 +1090,10 @@ pub enum SliceOneBuiltinPriorPosition {
     Integer,
     /// Unary Vector application.
     Vector,
+    /// Another exact lookup-only type identity.
+    Identity,
+    /// Another exact unary application head.
+    ApplicationHead,
 }
 
 /// Invalid builtin-prior configuration.
@@ -1273,12 +1355,22 @@ pub enum SixSlotDecodeError {
         root: VocabularyRoot,
     },
 
-    /// Reference resolution returned a valid name that is not builtin Integer.
-    #[error("type reference resolved to {found:?}, expected fixture builtin {expected:?}")]
-    BuiltinPriorMismatch {
-        /// Registered lookup-only Integer prior.
-        expected: VocabularyEncodedId,
-        /// Identity resolved at the reference occurrence.
+    /// Reference resolution returned a Universal identity absent from the
+    /// caller-supplied fixture prior set.
+    #[error("type reference at {position:?} resolved to unregistered fixture prior {found:?}")]
+    UnregisteredReferencePrior {
+        /// Reference role.
+        position: SliceOneReferencePriorPosition,
+        /// Resolved identity absent from the corresponding prior set.
         found: VocabularyEncodedId,
     },
+}
+
+/// Lookup-only prior role rejected while reifying a reference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SliceOneReferencePriorPosition {
+    /// A directly referenced type.
+    Identity,
+    /// The head of a unary type application.
+    ApplicationHead,
 }

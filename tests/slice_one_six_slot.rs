@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use core_ethos::{
     DecodedEncodedIdPosition, SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError,
     SixSlotGrammarIdPosition, SixSlotGrammarIds, SliceOneBuiltinPriorError,
-    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, WholeEthos, WholeEthosItem,
-    WholeEthosTypeReference, WholeEthosVariantPayload, WholeEthosVisibility,
+    SliceOneBuiltinPriorPosition, SliceOneBuiltinPriors, SliceOneReferencePriorPosition,
+    WholeEthos, WholeEthosItem, WholeEthosTypeReference, WholeEthosVariantPayload,
+    WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -18,6 +19,8 @@ use slice_structural_codec::{
 
 const SOURCE: &str = "  {}\n []  []\n {CommitSequence.Integer}\n {}\t{}  ";
 const BREADTH_SOURCE: &str = "{} [] [] {Identifiers.Vector.Integer Status.{Pending Ready.{Integer} Batch.{Vector.Integer Integer}}} {} {}";
+const DOMAIN_FORMS_SOURCE: &str =
+    "{} [] [] {Root.[All Leaf.LeafKind] LeafKind.[One Two] Collection.Vector.Root} {} {}";
 
 fn encoded(root: VocabularyRoot, chain: &[u16]) -> VocabularyEncodedId {
     VocabularyEncodedId::new(
@@ -84,7 +87,21 @@ impl Bindings {
     }
 
     fn bind_declaration(&mut self, spelling: &str, encoded_id: VocabularyEncodedId, source: &str) {
-        let start = source.find(spelling).expect("declaration spelling");
+        self.bind_declaration_occurrence(spelling, 0, encoded_id, source);
+    }
+
+    fn bind_declaration_occurrence(
+        &mut self,
+        spelling: &str,
+        occurrence: usize,
+        encoded_id: VocabularyEncodedId,
+        source: &str,
+    ) {
+        let start = source
+            .match_indices(spelling)
+            .nth(occurrence)
+            .expect("declaration spelling")
+            .0;
         let end = start + spelling.len();
         self.spellings
             .insert(encoded_id.clone(), Name::new(spelling));
@@ -114,6 +131,81 @@ impl Bindings {
         self.references
             .insert((start, end), (spelling.to_owned(), encoded_id));
     }
+}
+
+#[test]
+fn square_enums_payload_variants_and_declared_type_references_decode_structurally() {
+    let integer = encoded(VocabularyRoot::Universal, &[3]);
+    let vector = encoded(VocabularyRoot::Universal, &[4]);
+    let root = encoded(VocabularyRoot::Universal, &[42, 1]);
+    let all = encoded(VocabularyRoot::Universal, &[42, 1, 1]);
+    let leaf = encoded(VocabularyRoot::Universal, &[42, 1, 2]);
+    let leaf_kind = encoded(VocabularyRoot::Universal, &[42, 2]);
+    let one = encoded(VocabularyRoot::Universal, &[42, 2, 1]);
+    let two = encoded(VocabularyRoot::Universal, &[42, 2, 2]);
+    let collection = encoded(VocabularyRoot::Universal, &[42, 3]);
+    let priors = SliceOneBuiltinPriors::new(integer, vector.clone())
+        .expect("Universal builtin priors")
+        .with_identity(root.clone())
+        .expect("Universal declared reference")
+        .with_identity(leaf_kind.clone())
+        .expect("Universal declared reference");
+    let codec = SixSlotEthosCodec::build(grammar_ids(), priors).expect("typed six-slot table");
+    let mut bindings = Bindings::empty();
+    for (spelling, occurrence, identity) in [
+        ("Root", 0, root.clone()),
+        ("All", 0, all.clone()),
+        ("Leaf", 0, leaf.clone()),
+        ("LeafKind", 1, leaf_kind.clone()),
+        ("One", 0, one.clone()),
+        ("Two", 0, two.clone()),
+        ("Collection", 0, collection.clone()),
+    ] {
+        bindings.bind_declaration_occurrence(spelling, occurrence, identity, DOMAIN_FORMS_SOURCE);
+    }
+    bindings.bind_reference_occurrence("LeafKind", 0, leaf_kind.clone(), DOMAIN_FORMS_SOURCE);
+    bindings.bind_reference_occurrence("Vector", 0, vector.clone(), DOMAIN_FORMS_SOURCE);
+    bindings.bind_reference_occurrence("Root", 1, root.clone(), DOMAIN_FORMS_SOURCE);
+
+    let decoded = codec
+        .decode(DOMAIN_FORMS_SOURCE, &bindings)
+        .expect("domain fixture forms");
+    let [
+        WholeEthosItem::Enumeration(root_enum),
+        WholeEthosItem::Enumeration(leaf_enum),
+        WholeEthosItem::Newtype(collection_newtype),
+    ] = decoded.ethos().items()
+    else {
+        panic!("two square enums followed by one Vector newtype")
+    };
+    assert_eq!(root_enum.name(), &root);
+    assert_eq!(root_enum.variants()[0].name(), &all);
+    assert_eq!(
+        root_enum.variants()[0].payload(),
+        &WholeEthosVariantPayload::Unit
+    );
+    assert_eq!(root_enum.variants()[1].name(), &leaf);
+    let WholeEthosVariantPayload::Tuple(fields) = root_enum.variants()[1].payload() else {
+        panic!("compact payload variant has one positional field")
+    };
+    assert_eq!(
+        fields.fields(),
+        &[WholeEthosTypeReference::Identity(leaf_kind)]
+    );
+    assert_eq!(leaf_enum.variants().len(), 2);
+    assert!(
+        leaf_enum
+            .variants()
+            .iter()
+            .all(|variant| variant.payload() == &WholeEthosVariantPayload::Unit)
+    );
+    assert_eq!(
+        collection_newtype.wrapped_field().reference(),
+        &WholeEthosTypeReference::Application(core_ethos::WholeEthosTypeApplication::new(
+            vector,
+            WholeEthosTypeReference::Identity(root),
+        ))
+    );
 }
 
 #[test]
@@ -347,7 +439,7 @@ fn unresolved_integer_is_lookup_only_and_changes_no_binding_state() {
 }
 
 #[test]
-fn arity_slot_and_newtype_shape_fail_structurally() {
+fn arity_slot_and_empty_enumeration_shape_fail_structurally() {
     let codec = codec();
     let bindings = Bindings::empty();
 
@@ -367,7 +459,7 @@ fn arity_slot_and_newtype_shape_fail_structurally() {
         ))
     ));
 
-    let malformed = "{} [] [] {CommitSequence.[Integer]} {} {}";
+    let malformed = "{} [] [] {CommitSequence.[]} {} {}";
     let mut malformed_bindings = Bindings::empty();
     malformed_bindings.bind_declaration(
         "CommitSequence",
@@ -376,9 +468,7 @@ fn arity_slot_and_newtype_shape_fail_structurally() {
     );
     assert!(matches!(
         codec.decode(malformed, &malformed_bindings),
-        Err(SixSlotDecodeError::Structural(
-            DecodeError::ProductPositionMismatch { position: 3, .. }
-        ))
+        Err(SixSlotDecodeError::Structural(_))
     ));
 }
 
@@ -407,12 +497,12 @@ fn decoded_declaration_and_builtin_prior_must_both_be_universal() {
 }
 
 #[test]
-fn integer_resolution_must_equal_the_registered_lookup_only_prior() {
-    let expected = encoded(VocabularyRoot::Universal, &[3]);
+fn identity_resolution_must_belong_to_the_registered_lookup_only_priors() {
+    let integer = encoded(VocabularyRoot::Universal, &[3]);
     let found = encoded(VocabularyRoot::Universal, &[19, 4]);
     let codec = SixSlotEthosCodec::build(
         grammar_ids(),
-        SliceOneBuiltinPriors::new(expected.clone(), encoded(VocabularyRoot::Universal, &[4]))
+        SliceOneBuiltinPriors::new(integer, encoded(VocabularyRoot::Universal, &[4]))
             .expect("Universal builtin priors"),
     )
     .expect("typed six-slot table");
@@ -422,11 +512,10 @@ fn integer_resolution_must_equal_the_registered_lookup_only_prior() {
     bindings.bind_reference("Integer", found.clone(), SOURCE);
 
     match codec.decode(SOURCE, &bindings) {
-        Err(SixSlotDecodeError::BuiltinPriorMismatch {
-            expected: rejected_expected,
+        Err(SixSlotDecodeError::UnregisteredReferencePrior {
+            position: SliceOneReferencePriorPosition::Identity,
             found: rejected_found,
         }) => {
-            assert_eq!(rejected_expected, expected);
             assert_eq!(rejected_found, found);
         }
         result => panic!("expected exact builtin-prior refusal, got {result:?}"),
