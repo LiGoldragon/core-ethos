@@ -24,11 +24,27 @@ Encoded layouts and validates authored structural tables against those signature
 Names remain outside Encoded content identity, so a name-table change cannot alter
 an Encoded value's content hash.
 
-## Dependency pin
+## Capsule carrier
 
-All Protos machinery crates resolve at immutable pushed revision
-`5eeb79f17559b7c395690304fa5b4a91cb36d45c`. Cargo.lock records the same revision;
-the Nix build consumes that lockfile.
+`capsule_from_issued_hash` is the kind-fixed Ethos pass-through into
+`protos::Capsule<protos::Ethos, Pin>`. The caller supplies both the
+`ContentAddressedHash` and opaque complete NameTree pin. `core-ethos` does not
+derive or verify their correspondence to an `EncodedEthos`, inspect or compose
+the pin, or claim that its current flat `Identifier`/`NameTable` state is the
+future nested-table chain.
+
+Existing `EncodedEthos::content_identity` behavior remains the established
+per-value API; the Capsule pass-through does not reinterpret or replace it.
+
+## Dependency pins
+
+The Capsule surface consumes immutable published revisions
+`content-identity@f1f9c6efc828acaefd0f751550cd40389d312bf5` and
+`protos@1435c9aeb7f24e811aca670101e355ff26818ae2`. The legacy flat name-table and
+structural parsing graph, including its established per-value identity revision,
+stays pinned to its existing revisions until the encodedID-chain migration.
+Cargo names the new revision `capsule-content-identity` so its types cannot be
+confused with that legacy graph; Cargo.lock records both exactly.
 
 ## Build and test
 

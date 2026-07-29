@@ -33,6 +33,7 @@
 //!
 //! [`ScopedEncodedTypeId`]: structural_codec::ids::ScopedEncodedTypeId
 
+pub mod capsule;
 pub mod declaration;
 pub mod document;
 pub mod error;
@@ -42,6 +43,7 @@ pub mod rules;
 pub mod textual;
 pub mod universe;
 
+pub use capsule::capsule_from_issued_hash;
 pub use declaration::{
     DeclarationRole, EncodedDeclaration, EncodedEnum, EncodedEthos, EncodedEthosDomain,
     EncodedField, EncodedNewtype, EncodedStruct, EncodedType, EncodedVariant, StreamingRelation,

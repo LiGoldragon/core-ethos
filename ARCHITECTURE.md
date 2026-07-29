@@ -23,6 +23,23 @@ the PoC").
 **real** Textual form. It depends on all four foundation crates by pinned git rev
 and closes the deferred deviation.
 
+## Capsule carrier boundary
+
+`capsule_from_issued_hash` fixes only the outer kind to `protos::Ethos`. It
+passes a caller-issued `ContentAddressedHash` and caller-supplied opaque complete
+NameTree pin into `protos::Capsule`; it does not wrap `EncodedEthos`, derive a
+whole-content hash, inspect the pin, compose module tables, or verify any
+correspondence between those values. Complete-pin verification and the
+module-table-to-Capsule relationship remain unwired.
+
+The existing `EncodedEthos::content_identity` API and its archive layout are
+unchanged. Its flat `Identifier` fields and legacy `NameTable` dependency remain
+implementation facts awaiting the encodedID-chain migration, not evidence that
+the final nested-table model has landed here. The new identity producer is
+dependency-renamed `capsule-content-identity`; the original dependency remains
+the established per-value/archive type in the legacy structural graph, preventing
+the two revisions from crossing one typed error boundary.
+
 ## The stringless Encoded layer
 
 `EncodedType { Newtype | Struct | Enumeration }` is modelled one-for-one on
@@ -80,7 +97,7 @@ identity keystone (`primary-56d1.11`, design v2):
   different orders assign different name indices and declaration orders, so their Encoded
   values — hence content identities — diverge. That is exactly the "same thing,
   re-ID'ed" defect the keystone forbids.
-- **Authority-provided mode** — `EncodedUniverse::from_assignment(universe, members,
+- **Legacy authority-assignment mode** — `EncodedUniverse::from_assignment(universe, members,
   names)` takes a central-authority-minted universe id, a set of `AssignedMember`s
   (each a declared name, its authority-assigned local, and its kind), and its complete
   composed Schema `NameTable`. It registers members in ascending assigned-local order
@@ -88,9 +105,9 @@ identity keystone (`primary-56d1.11`, design v2):
   `from_assignment` nor `build` resolves and re-interns, re-stamps, or converts an
   identifier: the seal instead validates Schema ownership, table resolution, assigned
   declaration identity, and registered reference targets (`tests/authority_assignment.rs`).
-  This is the Ethos-side plumbing the sema-storage identity authority feeds: the
-  authority (one logical seat per deployment, in sema — settled, not a lean) binds the
-  same declared Ethos document to the same identities across ingestions and processes.
+  This is preserved behavior over the old flat identifiers. It is not the approved
+  nested module-owned encodedID-chain authority model; migrating the builder and parser
+  assignment surfaces belongs to the coordinated encodedID-chain work.
 
 ### The Encoded/text granularity split
 
