@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "core-ethos"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "content-identity 0.3.0",
  "content-identity 0.4.0",
@@ -398,9 +398,10 @@ dependencies = [
 
 [[package]]
 name = "signal-sema-translator"
-version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/signal-sema-translator.git?rev=dd8e7b5656833f640e49c099ab3be6f09881f9c5#dd8e7b5656833f640e49c099ab3be6f09881f9c5"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/signal-sema-translator.git?rev=51c02c4a7b6f67d9dad095f11986085d7d65785b#51c02c4a7b6f67d9dad095f11986085d7d65785b"
 dependencies = [
+ "blake3",
  "name-table 0.3.0",
  "protos",
  "rkyv",
@@ -422,8 +423,8 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "structural-codec"
-version = "0.17.0"
-source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=6769015f5a040dd158f0a76b3962f31ee8e4f16e#6769015f5a040dd158f0a76b3962f31ee8e4f16e"
+version = "0.18.0"
+source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=1485c1f8edcb9c988492c6eb0378c10a3599d665#1485c1f8edcb9c988492c6eb0378c10a3599d665"
 dependencies = [
  "content-identity 0.3.0",
  "name-table 0.3.0",
