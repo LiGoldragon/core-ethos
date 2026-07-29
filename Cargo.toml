@@ -14,19 +14,19 @@ path = "src/lib.rs"
 
 [dependencies]
 content-identity         = { git = "https://github.com/LiGoldragon/content-identity.git", rev = "24b43bae5d9748b0e7f679c6ec9f85a643c4d36a" }
-capsule-content-identity = { package = "content-identity", git = "https://github.com/LiGoldragon/content-identity.git", rev = "f1f9c6efc828acaefd0f751550cd40389d312bf5" }
+capsule-content-identity = { package = "content-identity", git = "https://github.com/LiGoldragon/content-identity.git", rev = "fdf2db1d5a9e8ea52d24d39a03833c3e6885c355" }
 name-table               = { git = "https://github.com/LiGoldragon/name-table.git", rev = "196610e2907687dcb8dbd0d2dfaafe4aefd9fa27" }
-protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1435c9aeb7f24e811aca670101e355ff26818ae2" }
+protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1343d0c405cdb6929552ea6b12c48739e73f35ab" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2ac78f621980fa02daa3b31e90cc5c73570eed6e" }
 structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "23497c43f81b619158e5cfbd83a012eb63c4186f" }
-signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "8ff7d0db033c756a0cd7999e72e564ca1c32b4aa" }
+signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "8c504ba7aa8dbdc5edf7daadbb862bbdaa5613be" }
 slice-raw-discovery      = { package = "raw-discovery", git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "d979778aa9d79199785f7b683f1029534aea3604" }
-slice-structural-codec   = { package = "structural-codec", git = "https://github.com/LiGoldragon/structural-codec.git", rev = "e47bec61c81fba80deb44c5920f6a15420bbf962" }
+slice-structural-codec   = { package = "structural-codec", git = "https://github.com/LiGoldragon/structural-codec.git", rev = "3cecb832e4209698038e64c537b66af8afcb66b2" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
 
 [dev-dependencies]
-encoded-name-table = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "1f558eac44bd03034e51ad98e3a65ec16d8b8411" }
+encoded-name-table = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "50cb4bb53ae2dc4f2516f6912be328ef98ae49f8" }
 
 [lints.rust]
 unsafe_code = "forbid"
