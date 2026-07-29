@@ -36,6 +36,25 @@ future nested-table chain.
 Existing `EncodedEthos::content_identity` behavior remains the established
 per-value API; the Capsule pass-through does not reinterpret or replace it.
 
+## Typed Slice One path
+
+`slice_one` is a separate production-chain path over the current naming
+authority contract. `SixSlotNewtypeCodec` seals one typed structural table and
+decodes the complete six-position Ethos document through the shared evaluator.
+Its result preserves the exact absolute source bound of every slot and reifies
+the type declaration as the positional shape
+`{ item identity, Public, empty attributes, { Private, Integer identity } }`.
+
+The caller supplies all grammar identities, every declaration assignment, and
+the exact Universal `Integer` builtin prior as complete
+`VocabularyEncodedId` chains. References only resolve; this crate allocates no
+name or identity. A resolved `Integer` spelling whose chain differs from the
+registered prior fails typed.
+
+`WholeEthos` is the stringless, archivable carrier for this slice. It has no
+complete composed NameTree pin and is therefore not a Capsule. The legacy
+flat-identifier API remains separate while consumers migrate.
+
 ## Dependency pins
 
 The Capsule surface consumes immutable published revisions
@@ -45,6 +64,11 @@ structural parsing graph, including its established per-value identity revision,
 stays pinned to its existing revisions until the encodedID-chain migration.
 Cargo names the new revision `capsule-content-identity` so its types cannot be
 confused with that legacy graph; Cargo.lock records both exactly.
+
+The typed Slice One path consumes
+`signal-sema-translator@8ff7d0db033c756a0cd7999e72e564ca1c32b4aa`,
+`raw-discovery@d979778aa9d79199785f7b683f1029534aea3604`, and
+`structural-codec@e47bec61c81fba80deb44c5920f6a15420bbf962`.
 
 ## Build and test
 

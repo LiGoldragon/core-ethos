@@ -40,6 +40,34 @@ dependency-renamed `capsule-content-identity`; the original dependency remains
 the established per-value/archive type in the legacy structural graph, preventing
 the two revisions from crossing one typed error boundary.
 
+## Typed six-slot production-chain path
+
+The `slice_one` module is intentionally independent of the legacy flat-ID
+universe bridge. It defines the authored document as one heterogeneous
+`OrderedProduct` with six distinct typed roles: imports, input, output, types,
+generics, and implementations. Each slot delegates to its own expected shape,
+and the complete source is decoded in one call to the shared structural
+evaluator. There is no positional root indexing and no literal
+empty-document check. The bounded result exposes the exact absolute
+`SourceBound` for every slot.
+
+The one supported type item is reified into a positional `WholeEthosNewtype`:
+translator-issued declaration `VocabularyEncodedId`, item visibility, typed
+empty attributes, and a wrapped field containing visibility plus referenced
+`VocabularyEncodedId`. The wrapped-field visibility is `Private`. Fields carry
+no names.
+
+Naming stays outside this component. The codec receives its structural type
+identities, declaration assignments, and exact Universal `Integer` builtin
+prior from callers using the naming-authority contract. Declaration positions
+consume assignments; reference positions perform lookup only. A missing,
+non-Universal, or different builtin identity is a typed failure. No
+`NameInterner`, local ID mint, or flat-identifier adapter exists on this path.
+
+`WholeEthos` is an archive-validated content carrier, not a Capsule: it carries
+neither a composed NameTree pin nor a content-addressed Capsule identity. The
+module-to-Capsule relation and pin composition remain separate design work.
+
 ## The stringless Encoded layer
 
 `EncodedType { Newtype | Struct | Enumeration }` is modelled one-for-one on

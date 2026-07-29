@@ -1,11 +1,11 @@
 [package]
 name         = "core-ethos"
-version      = "0.10.0"
+version      = "0.11.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/LiGoldragon/core-ethos"
-description  = "The stringless EncodedEthos layer and TextualEthos form: sliced identifiers, universe signatures, and bidirectional Ethos text."
+description  = "The stringless EncodedEthos layer and typed six-slot Ethos decoding over translator-issued identity chains."
 publish      = false
 
 [lib]
@@ -19,8 +19,14 @@ name-table               = { git = "https://github.com/LiGoldragon/name-table.gi
 protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1435c9aeb7f24e811aca670101e355ff26818ae2" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2ac78f621980fa02daa3b31e90cc5c73570eed6e" }
 structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "23497c43f81b619158e5cfbd83a012eb63c4186f" }
+signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "8ff7d0db033c756a0cd7999e72e564ca1c32b4aa" }
+slice-raw-discovery      = { package = "raw-discovery", git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "d979778aa9d79199785f7b683f1029534aea3604" }
+slice-structural-codec   = { package = "structural-codec", git = "https://github.com/LiGoldragon/structural-codec.git", rev = "e47bec61c81fba80deb44c5920f6a15420bbf962" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
+
+[dev-dependencies]
+encoded-name-table = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "1f558eac44bd03034e51ad98e3a65ec16d8b8411" }
 
 [lints.rust]
 unsafe_code = "forbid"

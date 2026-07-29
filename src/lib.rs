@@ -40,6 +40,7 @@ pub mod error;
 pub mod fixture;
 pub mod reference;
 pub mod rules;
+pub mod slice_one;
 pub mod textual;
 pub mod universe;
 
@@ -60,6 +61,13 @@ pub use fixture::FixtureFamily;
 pub use reference::{
     BuiltinReference, EncodedReference, MultiTypeReferenceProjection,
     SingleTypeReferenceProjection, ValueReferenceProjection,
+};
+pub use slice_one::{
+    DecodedEncodedIdPosition, DecodedSixSlotEthos, NewtypeEncodedIdPosition,
+    SixSlotCodecBuildError, SixSlotDecodeError, SixSlotGrammarError, SixSlotGrammarIdPosition,
+    SixSlotGrammarIds, SixSlotNewtypeCodec, SixSlotSourceBounds, SliceOneBuiltinPriorError,
+    SliceOneBuiltinPriors, WholeEthos, WholeEthosArchiveError, WholeEthosAttributes,
+    WholeEthosItem, WholeEthosNewtype, WholeEthosVisibility, WholeEthosWrappedField,
 };
 pub use textual::{EthosLanguage, TextualEthos};
 pub use universe::{

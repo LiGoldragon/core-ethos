@@ -107,15 +107,19 @@ dependencies = [
 
 [[package]]
 name = "core-ethos"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "content-identity 0.3.0",
  "content-identity 0.4.0",
- "name-table",
- "protos",
- "raw-discovery",
+ "name-table 0.1.0",
+ "name-table 0.3.0",
+ "protos 0.3.0",
+ "raw-discovery 0.2.0",
+ "raw-discovery 0.3.0",
  "rkyv",
- "structural-codec",
+ "signal-sema-translator",
+ "structural-codec 0.6.0",
+ "structural-codec 0.7.0",
  "thiserror",
 ]
 
@@ -228,6 +232,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "name-table"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/name-table.git?rev=1f558eac44bd03034e51ad98e3a65ec16d8b8411#1f558eac44bd03034e51ad98e3a65ec16d8b8411"
+dependencies = [
+ "content-identity 0.4.0",
+ "rkyv",
+ "thiserror",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -252,6 +266,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "protos"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/protos.git?rev=0b4b17471053e8b40472225b5992cd3252e76d85#0b4b17471053e8b40472225b5992cd3252e76d85"
+dependencies = [
+ "content-identity 0.3.0",
+ "name-table 0.1.0",
+ "signal-frame",
+ "structural-codec 0.6.0",
 ]
 
 [[package]]
@@ -306,6 +331,16 @@ dependencies = [
 name = "raw-discovery"
 version = "0.2.0"
 source = "git+https://github.com/LiGoldragon/raw-discovery.git?rev=2ac78f621980fa02daa3b31e90cc5c73570eed6e#2ac78f621980fa02daa3b31e90cc5c73570eed6e"
+dependencies = [
+ "content-identity 0.3.0",
+ "rkyv",
+ "thiserror",
+]
+
+[[package]]
+name = "raw-discovery"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/raw-discovery.git?rev=d979778aa9d79199785f7b683f1029534aea3604#d979778aa9d79199785f7b683f1029534aea3604"
 dependencies = [
  "content-identity 0.3.0",
  "rkyv",
@@ -385,6 +420,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-sema-translator"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/signal-sema-translator.git?rev=8ff7d0db033c756a0cd7999e72e564ca1c32b4aa#8ff7d0db033c756a0cd7999e72e564ca1c32b4aa"
+dependencies = [
+ "name-table 0.3.0",
+ "protos 0.2.0",
+ "rkyv",
+ "signal-frame",
+ "thiserror",
+]
+
+[[package]]
 name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -402,8 +449,20 @@ version = "0.6.0"
 source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=23497c43f81b619158e5cfbd83a012eb63c4186f#23497c43f81b619158e5cfbd83a012eb63c4186f"
 dependencies = [
  "content-identity 0.3.0",
- "name-table",
- "raw-discovery",
+ "name-table 0.1.0",
+ "raw-discovery 0.2.0",
+ "rkyv",
+ "thiserror",
+]
+
+[[package]]
+name = "structural-codec"
+version = "0.7.0"
+source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=e47bec61c81fba80deb44c5920f6a15420bbf962#e47bec61c81fba80deb44c5920f6a15420bbf962"
+dependencies = [
+ "content-identity 0.3.0",
+ "name-table 0.3.0",
+ "raw-discovery 0.3.0",
  "rkyv",
  "thiserror",
 ]
