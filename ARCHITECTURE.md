@@ -3,14 +3,18 @@
 ## One full-chain structural universe
 
 `core-ethos` has one canonical `raw-discovery` dependency and one canonical
-`structural-codec` dependency. The `whole` module defines the typed six-slot
-document grammar with `OrderedProduct`, delegated item/reference rules, and
+`structural-codec` dependency. The `whole` module defines a types-only file root
+as a one-member `OrderedProduct`, with delegated item/reference rules and
 translator-issued `VocabularyEncodedId` chains.
 
-The decoder accepts `DecodeNameBindings<VocabularyRoot>` as read-only authority
+The codec accepts `DecodeNameBindings<VocabularyRoot>` as read-only authority
 state. Declaration positions require `declaration_assignment`; references
 require `reference_resolution`. The component never receives an allocation
 capability.
+
+The decode result retains the evaluator-produced structural mirror at runtime.
+Encoding sends that same mirror back through the same sealed table and expected
+root, proving the shared textual/encoded route without a per-file-kind parser.
 
 The decoded value is `WholeEthos`, an ordered, positional carrier:
 

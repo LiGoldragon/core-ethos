@@ -455,43 +455,37 @@ pub enum WholeEthosArchiveError {
     },
 }
 
-/// Translator-issued structural type identities needed by the six-slot codec.
+/// Translator-issued structural type identities needed by the Ethos codec.
 ///
-/// These identify the document record and its expected positional shapes. The
+/// These identify the types-only root and its expected positional shapes. The
 /// codec never manufactures them and never turns their spellings into IDs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SixSlotGrammarIds {
-    document: EncodedTypeId<VocabularyRoot>,
-    empty_braces: EncodedTypeId<VocabularyRoot>,
-    empty_square: EncodedTypeId<VocabularyRoot>,
+pub struct EthosGrammarIds {
+    root: EncodedTypeId<VocabularyRoot>,
     types_block: EncodedTypeId<VocabularyRoot>,
     item: EncodedTypeId<VocabularyRoot>,
     variant: EncodedTypeId<VocabularyRoot>,
     type_reference: EncodedTypeId<VocabularyRoot>,
 }
 
-impl SixSlotGrammarIds {
-    /// Bind the grammar to seven complete Universal encoded-ID chains.
+// Trait exception — too trivial: this implementation only validates and stores
+// the caller-issued grammar identities.
+impl EthosGrammarIds {
+    /// Bind the grammar to five complete Universal encoded-ID chains.
     pub fn new(
-        document: VocabularyEncodedId,
-        empty_braces: VocabularyEncodedId,
-        empty_square: VocabularyEncodedId,
+        root: VocabularyEncodedId,
         types_block: VocabularyEncodedId,
         item: VocabularyEncodedId,
         variant: VocabularyEncodedId,
         type_reference: VocabularyEncodedId,
-    ) -> Result<Self, SixSlotGrammarError> {
-        validate_grammar_id(SixSlotGrammarIdPosition::Document, &document)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::EmptyBraces, &empty_braces)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::EmptySquare, &empty_square)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::TypesBlock, &types_block)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::Item, &item)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::Variant, &variant)?;
-        validate_grammar_id(SixSlotGrammarIdPosition::TypeReference, &type_reference)?;
+    ) -> Result<Self, EthosGrammarError> {
+        validate_grammar_id(EthosGrammarIdPosition::Root, &root)?;
+        validate_grammar_id(EthosGrammarIdPosition::TypesBlock, &types_block)?;
+        validate_grammar_id(EthosGrammarIdPosition::Item, &item)?;
+        validate_grammar_id(EthosGrammarIdPosition::Variant, &variant)?;
+        validate_grammar_id(EthosGrammarIdPosition::TypeReference, &type_reference)?;
         Ok(Self {
-            document: EncodedTypeId::new(document),
-            empty_braces: EncodedTypeId::new(empty_braces),
-            empty_square: EncodedTypeId::new(empty_square),
+            root: EncodedTypeId::new(root),
             types_block: EncodedTypeId::new(types_block),
             item: EncodedTypeId::new(item),
             variant: EncodedTypeId::new(variant),
@@ -501,13 +495,13 @@ impl SixSlotGrammarIds {
 }
 
 fn validate_grammar_id(
-    position: SixSlotGrammarIdPosition,
+    position: EthosGrammarIdPosition,
     encoded_id: &VocabularyEncodedId,
-) -> Result<(), SixSlotGrammarError> {
+) -> Result<(), EthosGrammarError> {
     if encoded_id.root_variant() == &VocabularyRoot::Universal {
         Ok(())
     } else {
-        Err(SixSlotGrammarError::NonUniversal {
+        Err(EthosGrammarError::NonUniversal {
             position,
             root: *encoded_id.root_variant(),
         })
@@ -516,13 +510,9 @@ fn validate_grammar_id(
 
 /// Structural identity position rejected while assembling the grammar.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SixSlotGrammarIdPosition {
-    /// Whole document record.
-    Document,
-    /// Empty brace slot shape.
-    EmptyBraces,
-    /// Empty square slot shape.
-    EmptySquare,
+pub enum EthosGrammarIdPosition {
+    /// Types-only file root.
+    Root,
     /// Types block.
     TypesBlock,
     /// Type item.
@@ -533,14 +523,14 @@ pub enum SixSlotGrammarIdPosition {
     TypeReference,
 }
 
-/// Failure before a six-slot structuretree can be sealed.
+/// Failure before the Ethos structuretree can be sealed.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum SixSlotGrammarError {
+pub enum EthosGrammarError {
     /// Ethos grammar identities are shared Universal vocabulary.
-    #[error("six-slot grammar identity {position:?} uses non-Universal root {root:?}")]
+    #[error("Ethos grammar identity {position:?} uses non-Universal root {root:?}")]
     NonUniversal {
         /// Grammar identity position.
-        position: SixSlotGrammarIdPosition,
+        position: EthosGrammarIdPosition,
         /// Unexpected root.
         root: VocabularyRoot,
     },
@@ -569,76 +559,57 @@ macro_rules! whole_role {
     };
 }
 
-whole_role!(DocumentRootRole, 2001);
-whole_role!(ImportsRole, 2002);
-whole_role!(InputRole, 2003);
-whole_role!(OutputRole, 2004);
+whole_role!(TypesOnlyRootRole, 2001);
 whole_role!(TypesRole, 2005);
-whole_role!(GenericsRole, 2006);
-whole_role!(ImplsRole, 2007);
 whole_role!(DelimitedRootRole, 2010);
 whole_role!(DelimitedItemsRole, 2011);
 
+/// `[assumption primary-pjm-A1 — types-only root shape]`: the first Ethos
+/// file kind is a one-member ordered product whose sole `TypesRole` delegates
+/// to the existing non-empty brace-delimited item list. The expected root
+/// identity, rather than an authored tag or parser branch, selects this kind.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-struct SixSlotDocumentRecord {
-    document: Position<DocumentRootRole, VocabularyRoot>,
-    imports: Position<ImportsRole, VocabularyRoot>,
-    input: Position<InputRole, VocabularyRoot>,
-    output: Position<OutputRole, VocabularyRoot>,
+struct TypesOnlyRootRecord {
+    root: Position<TypesOnlyRootRole, VocabularyRoot>,
     types: Position<TypesRole, VocabularyRoot>,
-    generics: Position<GenericsRole, VocabularyRoot>,
-    impls: Position<ImplsRole, VocabularyRoot>,
 }
 
-impl SixSlotDocumentRecord {
-    fn new(ids: &SixSlotGrammarIds) -> Result<Self, structural_codec::AuthoringError> {
-        let product = OrderedProduct::try_new::<ImportsRole>()?
-            .then::<InputRole>()?
-            .then::<OutputRole>()?
-            .then::<TypesRole>()?
-            .then::<GenericsRole>()?
-            .then::<ImplsRole>()?;
+// Trait exception — too trivial: construction only binds the ruled root shape
+// to caller-issued type identities; traversal is contracted by StructureRecord.
+impl TypesOnlyRootRecord {
+    fn new(ids: &EthosGrammarIds) -> Result<Self, structural_codec::AuthoringError> {
+        let product = OrderedProduct::try_new::<TypesRole>()?;
         let delegate = |target: &EncodedTypeId<VocabularyRoot>| SharedDescriptor::Delegate {
             target: target.clone(),
             payload: None,
         };
         Ok(Self {
-            document: Position::try_new(SharedDescriptor::OrderedProduct(product))?,
-            imports: Position::try_new(delegate(&ids.empty_braces))?,
-            input: Position::try_new(delegate(&ids.empty_square))?,
-            output: Position::try_new(delegate(&ids.empty_square))?,
+            root: Position::try_new(SharedDescriptor::OrderedProduct(product))?,
             types: Position::try_new(delegate(&ids.types_block))?,
-            generics: Position::try_new(delegate(&ids.empty_braces))?,
-            impls: Position::try_new(delegate(&ids.empty_braces))?,
         })
     }
 }
 
-struct SixSlotDocumentView<'record> {
-    record: &'record SixSlotDocumentRecord,
+struct TypesOnlyRootView<'record> {
+    record: &'record TypesOnlyRootRecord,
 }
 
-impl BorrowedFieldView<VocabularyRoot> for SixSlotDocumentView<'_> {
+impl BorrowedFieldView<VocabularyRoot> for TypesOnlyRootView<'_> {
     fn expose<Visitor: FieldVisitor<VocabularyRoot>>(&self, visitor: &mut Visitor) {
-        visitor.field(&self.record.document);
-        visitor.field(&self.record.imports);
-        visitor.field(&self.record.input);
-        visitor.field(&self.record.output);
+        visitor.field(&self.record.root);
         visitor.field(&self.record.types);
-        visitor.field(&self.record.generics);
-        visitor.field(&self.record.impls);
     }
 }
 
-impl StructureRecord<VocabularyRoot> for SixSlotDocumentRecord {
-    type View<'record> = SixSlotDocumentView<'record>;
+impl StructureRecord<VocabularyRoot> for TypesOnlyRootRecord {
+    type View<'record> = TypesOnlyRootView<'record>;
 
     fn root_role(&self) -> StableRoleId {
-        self.document.role()
+        self.root.role()
     }
 
     fn fields(&self) -> Self::View<'_> {
-        SixSlotDocumentView { record: self }
+        TypesOnlyRootView { record: self }
     }
 }
 
@@ -697,31 +668,31 @@ impl StructureRecord<VocabularyRoot> for DelimitedItemsRecord {
 }
 
 type WholeEthosRule = RuleCoproduct<
-    SixSlotDocumentRecord,
+    TypesOnlyRootRecord,
     RuleCoproduct<DelimitedItemsRecord, StructuralRule<VocabularyRoot>>,
 >;
 
-/// The one table-driven decoder for the bounded six-slot Ethos fixture breadth.
+/// The one table-driven codec for the bounded Whole-Ethos fixture breadth.
+///
+/// `[assumption primary-pjm-A3 — neutral API naming]`: `EthosCodec` names the
+/// shared codec capability rather than the current root's arity or file-kind
+/// spelling. No file-kind enum or parallel parser abstraction is introduced.
 #[derive(Clone, Debug)]
-pub struct SixSlotEthosCodec {
-    ids: SixSlotGrammarIds,
+pub struct EthosCodec {
+    ids: EthosGrammarIds,
     priors: WholeEthosBuiltinPriors,
     table: AddressedStructuralTable<VocabularyRoot, WholeEthosRule>,
 }
 
-impl SixSlotEthosCodec {
+// Trait exception — the proper trait cannot be determined: a shared public
+// build/decode/encode codec contract has not yet been named across languages.
+impl EthosCodec {
     /// Seal the typed structuretree against caller-supplied grammar identities.
     pub fn build(
-        ids: SixSlotGrammarIds,
+        ids: EthosGrammarIds,
         priors: WholeEthosBuiltinPriors,
-    ) -> Result<Self, SixSlotCodecBuildError> {
-        let document_rule = WholeEthosRule::Left(SixSlotDocumentRecord::new(&ids)?);
-        let empty_braces_rule = WholeEthosRule::Right(RuleCoproduct::Left(
-            DelimitedItemsRecord::new(BRACE_BOUNDARY, &ids.item, 0, Some(0))?,
-        ));
-        let empty_square_rule = WholeEthosRule::Right(RuleCoproduct::Left(
-            DelimitedItemsRecord::new(SQUARE_BOUNDARY, &ids.item, 0, Some(0))?,
-        ));
+    ) -> Result<Self, EthosCodecBuildError> {
+        let root_rule = WholeEthosRule::Left(TypesOnlyRootRecord::new(&ids)?);
         let types_rule = WholeEthosRule::Right(RuleCoproduct::Left(DelimitedItemsRecord::new(
             BRACE_BOUNDARY,
             &ids.item,
@@ -809,18 +780,16 @@ impl SixSlotEthosCodec {
         let table = AddressedStructuralTable::seal(
             TableIdentityPayload::new(
                 TargetLayoutIdentity::derive(
-                    b"core-ethos six-slot enum and unary-application fixture layout v2",
+                    b"core-ethos types-only enum and unary-application fixture layout v1",
                 ),
                 profile.identity(),
                 StructuralVocabularyIdentity::language(
-                    b"core-ethos six-slot enum and unary-application typed vocabulary v2",
+                    b"core-ethos types-only enum and unary-application typed vocabulary v1",
                 ),
-                six_slot_discovery(),
-                six_slot_rendering(),
+                ethos_discovery(),
+                ethos_rendering(),
                 vec![
-                    typed_entry(ids.document.clone(), document_rule),
-                    typed_entry(ids.empty_braces.clone(), empty_braces_rule),
-                    typed_entry(ids.empty_square.clone(), empty_square_rule),
+                    typed_entry(ids.root.clone(), root_rule),
                     typed_entry(ids.types_block.clone(), types_rule),
                     typed_entry_with_rules(
                         ids.item.clone(),
@@ -849,11 +818,11 @@ impl SixSlotEthosCodec {
             ),
             &profile,
         )
-        .map_err(|error| SixSlotCodecBuildError::Table(Box::new(error)))?;
+        .map_err(|error| EthosCodecBuildError::Table(Box::new(error)))?;
         Ok(Self { ids, priors, table })
     }
 
-    /// Decode all six heterogeneous roots through one full-source evaluator.
+    /// Decode the types-only root through the shared full-source evaluator.
     ///
     /// Name bindings are read-only: declaration positions require an assignment
     /// already issued by the translator, and reference positions require an
@@ -862,44 +831,49 @@ impl SixSlotEthosCodec {
         &self,
         source: &str,
         bindings: &Bindings,
-    ) -> Result<DecodedSixSlotEthos, SixSlotDecodeError> {
+    ) -> Result<DecodedEthos, EthosDecodeError> {
         let decoded = StructuralEvaluator::new(&self.table)?.decode_text_bounded(
-            &self.ids.document,
+            &self.ids.root,
             source,
             bindings,
         )?;
-        let value = decoded.value();
-        ensure_delegated::<ImportsRole>(value, "imports")?;
-        ensure_delegated::<InputRole>(value, "input")?;
-        ensure_delegated::<OutputRole>(value, "output")?;
-        ensure_delegated::<GenericsRole>(value, "generics")?;
-        ensure_delegated::<ImplsRole>(value, "impls")?;
-        let types = delegated::<TypesRole>(value, "types")?;
+        let types_source_bound = field_bound::<TypesRole>(&decoded, "types")?;
+        let mirror = decoded.into_value();
+        let types = delegated::<TypesRole>(&mirror, "types")?;
         let declarations = repeated::<DelimitedItemsRole>(types, "types declarations")?;
         let mut items = Vec::with_capacity(declarations.len());
         for declaration in declarations {
             let FieldValue::Delegated(declaration) = declaration else {
-                return Err(SixSlotDecodeError::Shape("type declaration"));
+                return Err(EthosDecodeError::Shape("type declaration"));
             };
             items.push(self.reify_item(declaration)?);
         }
 
-        let bounds = SixSlotSourceBounds(
-            field_bound::<ImportsRole>(&decoded, "imports")?,
-            field_bound::<InputRole>(&decoded, "input")?,
-            field_bound::<OutputRole>(&decoded, "output")?,
-            field_bound::<TypesRole>(&decoded, "types")?,
-            field_bound::<GenericsRole>(&decoded, "generics")?,
-            field_bound::<ImplsRole>(&decoded, "impls")?,
-        );
         let ethos = WholeEthos::new(items);
-        Ok(DecodedSixSlotEthos(ethos, bounds))
+        Ok(DecodedEthos {
+            ethos,
+            mirror,
+            types_source_bound,
+        })
+    }
+
+    /// Render one decoded value through the same table and expected root.
+    pub fn encode<Resolver: structural_codec::EncodedNameResolver<VocabularyRoot> + ?Sized>(
+        &self,
+        decoded: &DecodedEthos,
+        resolver: &Resolver,
+    ) -> Result<String, EthosEncodeError> {
+        Ok(StructuralEvaluator::new(&self.table)?.encode_text(
+            &self.ids.root,
+            &decoded.mirror,
+            resolver,
+        )?)
     }
 
     fn reify_item(
         &self,
         declaration: &structural_codec::StructuralValue<VocabularyRoot>,
-    ) -> Result<WholeEthosItem, SixSlotDecodeError> {
+    ) -> Result<WholeEthosItem, EthosDecodeError> {
         if declaration.constructor() == &EncodedConstructorId::under(&self.ids.item, 0) {
             let name = declaration_id::<ApplicationHead>(declaration, "newtype identity")?;
             let wrapped = delegated::<ApplicationPayload>(declaration, "newtype reference")?;
@@ -923,7 +897,7 @@ impl SixSlotEthosCodec {
             let mut variants = Vec::with_capacity(encoded_variants.len());
             for variant in encoded_variants {
                 let FieldValue::Delegated(variant) = variant else {
-                    return Err(SixSlotDecodeError::Shape("enumeration variant"));
+                    return Err(EthosDecodeError::Shape("enumeration variant"));
                 };
                 variants.push(self.reify_variant(variant)?);
             }
@@ -934,13 +908,13 @@ impl SixSlotEthosCodec {
                 variants,
             )));
         }
-        Err(SixSlotDecodeError::Shape("type-item constructor"))
+        Err(EthosDecodeError::Shape("type-item constructor"))
     }
 
     fn reify_variant(
         &self,
         variant: &structural_codec::StructuralValue<VocabularyRoot>,
-    ) -> Result<WholeEthosVariant, SixSlotDecodeError> {
+    ) -> Result<WholeEthosVariant, EthosDecodeError> {
         if variant.constructor() == &EncodedConstructorId::under(&self.ids.variant, 0) {
             return Ok(WholeEthosVariant::new(
                 declaration_id::<UnaryRoot>(variant, "unit variant identity")?,
@@ -956,7 +930,7 @@ impl SixSlotEthosCodec {
             let mut fields = Vec::with_capacity(encoded_fields.len());
             for field in encoded_fields {
                 let FieldValue::Delegated(field) = field else {
-                    return Err(SixSlotDecodeError::Shape("tuple variant field"));
+                    return Err(EthosDecodeError::Shape("tuple variant field"));
                 };
                 fields.push(self.reify_reference(field)?);
             }
@@ -965,7 +939,7 @@ impl SixSlotEthosCodec {
                 WholeEthosAttributes::empty(),
                 WholeEthosVariantPayload::Tuple(
                     WholeEthosTupleFields::new(fields)
-                        .map_err(|_| SixSlotDecodeError::Shape("non-empty tuple variant"))?,
+                        .map_err(|_| EthosDecodeError::Shape("non-empty tuple variant"))?,
                 ),
             ));
         }
@@ -977,21 +951,21 @@ impl SixSlotEthosCodec {
                 WholeEthosAttributes::empty(),
                 WholeEthosVariantPayload::Tuple(
                     WholeEthosTupleFields::new(vec![self.reify_reference(encoded_field)?])
-                        .map_err(|_| SixSlotDecodeError::Shape("payload variant field"))?,
+                        .map_err(|_| EthosDecodeError::Shape("payload variant field"))?,
                 ),
             ));
         }
-        Err(SixSlotDecodeError::Shape("variant constructor"))
+        Err(EthosDecodeError::Shape("variant constructor"))
     }
 
     fn reify_reference(
         &self,
         reference: &structural_codec::StructuralValue<VocabularyRoot>,
-    ) -> Result<WholeEthosTypeReference, SixSlotDecodeError> {
+    ) -> Result<WholeEthosTypeReference, EthosDecodeError> {
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 0) {
             let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
             if !self.priors.accepts_identity(&identity) {
-                return Err(SixSlotDecodeError::UnregisteredReferencePrior {
+                return Err(EthosDecodeError::UnregisteredReferencePrior {
                     position: WholeEthosReferencePriorPosition::Identity,
                     found: identity,
                 });
@@ -1001,7 +975,7 @@ impl SixSlotEthosCodec {
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 1) {
             let head = reference_id::<ApplicationHead>(reference, "application reference head")?;
             if !self.priors.accepts_application_head(&head) {
-                return Err(SixSlotDecodeError::UnregisteredReferencePrior {
+                return Err(EthosDecodeError::UnregisteredReferencePrior {
                     position: WholeEthosReferencePriorPosition::ApplicationHead,
                     found: head,
                 });
@@ -1012,7 +986,7 @@ impl SixSlotEthosCodec {
                 WholeEthosTypeApplication::new(head, self.reify_reference(payload)?),
             ));
         }
-        Err(SixSlotDecodeError::Shape("type-reference constructor"))
+        Err(EthosDecodeError::Shape("type-reference constructor"))
     }
 }
 
@@ -1146,7 +1120,7 @@ fn typed_entry_with_rules(
     StructuralEntry::new(type_id, constructors)
 }
 
-fn six_slot_discovery() -> BlockTreeDiscoveryConfiguration {
+fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
     let active = TriggerSet::new(vec![SQUARE_BOUNDARY, BRACE_BOUNDARY, WHITESPACE_TRIVIA]);
     BlockTreeDiscoveryConfiguration::new(
         BoundaryDiscoveryConfiguration::new(
@@ -1166,152 +1140,113 @@ fn six_slot_discovery() -> BlockTreeDiscoveryConfiguration {
     )
 }
 
-fn six_slot_rendering() -> TextualRenderingPolicy {
+fn ethos_rendering() -> TextualRenderingPolicy {
     TextualRenderingPolicy::new(vec![
         ContextualTextualPolicy::new(ROOT_CONTEXT, Some(WHITESPACE_TRIVIA), None),
         ContextualTextualPolicy::new(CHILD_CONTEXT, Some(WHITESPACE_TRIVIA), None),
     ])
 }
 
-fn ensure_delegated<Role: FieldRole>(
-    value: &structural_codec::StructuralValue<VocabularyRoot>,
-    what: &'static str,
-) -> Result<(), SixSlotDecodeError> {
-    delegated::<Role>(value, what).map(|_| ())
-}
-
 fn delegated<'value, Role: FieldRole>(
     value: &'value structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<&'value structural_codec::StructuralValue<VocabularyRoot>, SixSlotDecodeError> {
+) -> Result<&'value structural_codec::StructuralValue<VocabularyRoot>, EthosDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Delegated(inner)) => Ok(inner),
-        _ => Err(SixSlotDecodeError::Shape(what)),
+        _ => Err(EthosDecodeError::Shape(what)),
     }
 }
 
 fn repeated<'value, Role: FieldRole>(
     value: &'value structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<&'value [FieldValue<VocabularyRoot>], SixSlotDecodeError> {
+) -> Result<&'value [FieldValue<VocabularyRoot>], EthosDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Repeated(items)) => Ok(items),
-        _ => Err(SixSlotDecodeError::Shape(what)),
+        _ => Err(EthosDecodeError::Shape(what)),
     }
 }
 
 fn declaration_id<Role: FieldRole>(
     value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
+) -> Result<VocabularyEncodedId, EthosDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Declaration(assignment)) => {
             let encoded_id = assignment.encoded_id().clone();
             validate_decoded_id(DecodedEncodedIdPosition::Declaration, &encoded_id)?;
             Ok(encoded_id)
         }
-        _ => Err(SixSlotDecodeError::Shape(what)),
+        _ => Err(EthosDecodeError::Shape(what)),
     }
 }
 
 fn reference_id<Role: FieldRole>(
     value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<VocabularyEncodedId, SixSlotDecodeError> {
+) -> Result<VocabularyEncodedId, EthosDecodeError> {
     match value.field::<Role>() {
         Some(FieldValue::Reference(reference)) => {
             let encoded_id = reference.encoded_id().clone();
             validate_decoded_id(DecodedEncodedIdPosition::Reference, &encoded_id)?;
             Ok(encoded_id)
         }
-        _ => Err(SixSlotDecodeError::Shape(what)),
+        _ => Err(EthosDecodeError::Shape(what)),
     }
 }
 
 fn field_bound<Role: FieldRole>(
     value: &structural_codec::SourceBoundedStructuralValue<VocabularyRoot>,
     what: &'static str,
-) -> Result<SourceBound, SixSlotDecodeError> {
+) -> Result<SourceBound, EthosDecodeError> {
     value
         .field_bound::<Role>()
-        .ok_or(SixSlotDecodeError::MissingSourceBound(what))
+        .ok_or(EthosDecodeError::MissingSourceBound(what))
 }
 
 fn validate_decoded_id(
     position: DecodedEncodedIdPosition,
     encoded_id: &VocabularyEncodedId,
-) -> Result<(), SixSlotDecodeError> {
+) -> Result<(), EthosDecodeError> {
     if encoded_id.root_variant() == &VocabularyRoot::Universal {
         Ok(())
     } else {
-        Err(SixSlotDecodeError::NonUniversalEncodedId {
+        Err(EthosDecodeError::NonUniversalEncodedId {
             position,
             root: *encoded_id.root_variant(),
         })
     }
 }
 
-/// Result of decoding the first complete six-slot document.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DecodedSixSlotEthos(WholeEthos, SixSlotSourceBounds);
-
-impl DecodedSixSlotEthos {
-    /// Stringless positional Ethos content.
-    pub const fn ethos(&self) -> &WholeEthos {
-        &self.0
-    }
-
-    /// Exact full-source bounds of the six document slots.
-    pub const fn source_bounds(&self) -> &SixSlotSourceBounds {
-        &self.1
-    }
-
-    /// Consume the decode result.
-    pub fn into_parts(self) -> (WholeEthos, SixSlotSourceBounds) {
-        (self.0, self.1)
-    }
+/// Result of decoding one types-only Ethos file.
+///
+/// `[assumption primary-pjm-A2 — decoded-mirror round trip]`: the exact
+/// evaluator-produced structural mirror is retained at runtime so decoded
+/// encoded values can be rendered through the same table without adding an
+/// independently-authored reverse projection in this slice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedEthos {
+    ethos: WholeEthos,
+    mirror: structural_codec::StructuralValue<VocabularyRoot>,
+    types_source_bound: SourceBound,
 }
 
-/// Exact full-source bounds in document order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SixSlotSourceBounds(
-    SourceBound,
-    SourceBound,
-    SourceBound,
-    SourceBound,
-    SourceBound,
-    SourceBound,
-);
-
-impl SixSlotSourceBounds {
-    /// Imports slot.
-    pub const fn imports(&self) -> SourceBound {
-        self.0
+// Trait exception — too trivial: these methods only expose or consume the
+// named fields of an already-validated decode result.
+impl DecodedEthos {
+    /// Stringless positional Ethos content.
+    pub const fn ethos(&self) -> &WholeEthos {
+        &self.ethos
     }
 
-    /// Input-interface slot.
-    pub const fn input(&self) -> SourceBound {
-        self.1
+    /// Exact source bound of the sole types position.
+    pub const fn types_source_bound(&self) -> SourceBound {
+        self.types_source_bound
     }
 
-    /// Output-interface slot.
-    pub const fn output(&self) -> SourceBound {
-        self.2
-    }
-
-    /// Type-declaration slot.
-    pub const fn types(&self) -> SourceBound {
-        self.3
-    }
-
-    /// Generics slot.
-    pub const fn generics(&self) -> SourceBound {
-        self.4
-    }
-
-    /// Implementation slot.
-    pub const fn impls(&self) -> SourceBound {
-        self.5
+    /// Consume the runtime decode wrapper and retain only durable Ethos data.
+    pub fn into_ethos(self) -> WholeEthos {
+        self.ethos
     }
 }
 
@@ -1326,7 +1261,7 @@ pub enum DecodedEncodedIdPosition {
 
 /// Failure while sealing the Whole-Ethos structuretree.
 #[derive(Clone, Debug, thiserror::Error)]
-pub enum SixSlotCodecBuildError {
+pub enum EthosCodecBuildError {
     /// A typed record could not be authored.
     #[error(transparent)]
     Authoring(#[from] structural_codec::AuthoringError),
@@ -1336,19 +1271,31 @@ pub enum SixSlotCodecBuildError {
     Table(Box<structural_codec::TableError<VocabularyRoot>>),
 }
 
-/// Failure while decoding or reifying the first six-slot document.
+/// Failure while rendering a decoded Ethos value through the shared evaluator.
 #[derive(Clone, Debug, thiserror::Error)]
-pub enum SixSlotDecodeError {
+pub enum EthosEncodeError {
+    /// The sealed table could not construct its evaluator.
+    #[error(transparent)]
+    Evaluator(#[from] structural_codec::DecodeError<VocabularyRoot>),
+
+    /// The retained mirror could not be rendered under the expected root.
+    #[error(transparent)]
+    Structural(#[from] structural_codec::EncodeError<VocabularyRoot>),
+}
+
+/// Failure while decoding or reifying a types-only Ethos file.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum EthosDecodeError {
     /// Shared structural evaluation refused the source.
     #[error(transparent)]
     Structural(#[from] structural_codec::DecodeError<VocabularyRoot>),
 
     /// The selected structural mirror did not contain its typed role value.
-    #[error("the six-slot structural value did not fit {0}")]
+    #[error("the Ethos structural value did not fit {0}")]
     Shape(&'static str),
 
     /// A source-bound role was unexpectedly absent.
-    #[error("the six-slot structural value omitted the source bound for {0}")]
+    #[error("the Ethos structural value omitted the source bound for {0}")]
     MissingSourceBound(&'static str),
 
     /// This Whole-Ethos vocabulary only carries universally shared declarations.

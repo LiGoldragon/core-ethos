@@ -39,20 +39,19 @@ impl HashDomain for EncodedEthosDomain {
 /// their [`DeclarationRole`]. Names live in the accompanying `NameTable` produced
 /// by the same decode.
 ///
-/// The six-slot document layout (imports, input, output, types, generics, impls)
-/// lands its `types` block and both interface brackets in the SAME
-/// [`declarations`](Self::declarations) list: an `input` / `output` bracket becomes
+/// This retained declaration algebra predates the canonical types-only file
+/// surface. Its historical interface inputs and outputs remain in the SAME
+/// [`declarations`](Self::declarations) list: an input or output binding becomes
 /// a public enumeration declaration whose variants are the bracket's `Name.Payload`
 /// bindings, tagged [`DeclarationRole::InterfaceInput`] /
 /// [`DeclarationRole::InterfaceOutput`]; every `types` declaration is tagged
 /// [`DeclarationRole::DataType`]. This is the SINGLE
-/// representation of interface-root-ness shared by the native document decode and
-/// legacy ingestion, and the marker downstream Nomos lowering reads to gate
+/// representation of interface-root-ness shared by retained native data and legacy
+/// ingestion, and the marker downstream Nomos lowering reads to gate
 /// interface-specific generation — the per-declaration lowering walk never sees the
 /// interface roots unless they are declarations, so a marker on the declaration is
-/// the only principled home. The imports, generics, and impls slots are not yet
-/// modelled here; a document that carries content in them is rejected at decode
-/// rather than silently dropped.
+/// the only principled home. The canonical `whole` codec does not project
+/// additional file positions into this retained carrier.
 ///
 /// LEAN `interface-root-as-role`: interface roots are role-tagged declarations
 /// rather than a separate interface-slot type. Trigger to revisit: the accepted

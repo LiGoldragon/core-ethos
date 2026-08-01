@@ -1,5 +1,5 @@
 {
-  description = "core-ethos — full-chain whole-Ethos decoding and retained sealed execution data";
+  description = "core-ethos — types-only whole-Ethos round trips and retained sealed execution data";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

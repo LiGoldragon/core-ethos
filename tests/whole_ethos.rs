@@ -1,11 +1,11 @@
-//! The first complete six-slot Ethos decode over translator-issued identities.
+//! Types-only Ethos round trips over translator-issued identities.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use core_ethos::{
-    DecodedEncodedIdPosition, SixSlotDecodeError, SixSlotEthosCodec, SixSlotGrammarError,
-    SixSlotGrammarIdPosition, SixSlotGrammarIds, WholeEthos, WholeEthosBuiltinPriorError,
+    DecodedEncodedIdPosition, EthosCodec, EthosDecodeError, EthosGrammarError,
+    EthosGrammarIdPosition, EthosGrammarIds, WholeEthos, WholeEthosBuiltinPriorError,
     WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosItem,
     WholeEthosReferencePriorPosition, WholeEthosTypeReference, WholeEthosVariantPayload,
     WholeEthosVisibility,
@@ -17,10 +17,14 @@ use structural_codec::{
     NameOccurrence, ResolvedReference,
 };
 
-const SOURCE: &str = "  {}\n []  []\n {CommitSequence.Integer}\n {}\t{}  ";
-const BREADTH_SOURCE: &str = "{} [] [] {Identifiers.Vector.Integer Status.{Pending Ready.{Integer} Batch.{Vector.Integer Integer}}} {} {}";
+// `[assumption primary-pjm-A1 — types-only root shape]`: every authored
+// fixture is only the sole brace-delimited types position; the expected root
+// identity selects the file kind without an authored tag or repeated empty slots.
+const SOURCE: &str = "{CommitSequence.Integer}";
+const BREADTH_SOURCE: &str =
+    "{Identifiers.Vector.Integer Status.{Pending Ready.{Integer} Batch.{Vector.Integer Integer}}}";
 const DOMAIN_FORMS_SOURCE: &str =
-    "{} [] [] {Root.[All Leaf.LeafKind] LeafKind.[One Two] Collection.Vector.Root} {} {}";
+    "{Root.[All Leaf.LeafKind] LeafKind.[One Two] Collection.Vector.Root}";
 
 fn encoded(root: VocabularyRoot, chain: &[u16]) -> VocabularyEncodedId {
     VocabularyEncodedId::new(
@@ -30,15 +34,13 @@ fn encoded(root: VocabularyRoot, chain: &[u16]) -> VocabularyEncodedId {
     .expect("test IDs are complete")
 }
 
-fn grammar_ids() -> SixSlotGrammarIds {
-    SixSlotGrammarIds::new(
+fn grammar_ids() -> EthosGrammarIds {
+    EthosGrammarIds::new(
         encoded(VocabularyRoot::Universal, &[200]),
         encoded(VocabularyRoot::Universal, &[201]),
         encoded(VocabularyRoot::Universal, &[202]),
         encoded(VocabularyRoot::Universal, &[203]),
         encoded(VocabularyRoot::Universal, &[204]),
-        encoded(VocabularyRoot::Universal, &[205]),
-        encoded(VocabularyRoot::Universal, &[206]),
     )
     .expect("Universal grammar IDs")
 }
@@ -51,8 +53,8 @@ fn builtin_priors() -> WholeEthosBuiltinPriors {
     .expect("Universal builtin priors")
 }
 
-fn codec() -> SixSlotEthosCodec {
-    SixSlotEthosCodec::build(grammar_ids(), builtin_priors()).expect("typed six-slot table")
+fn codec() -> EthosCodec {
+    EthosCodec::build(grammar_ids(), builtin_priors()).expect("typed Ethos table")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,7 +152,7 @@ fn square_enums_payload_variants_and_declared_type_references_decode_structurall
         .expect("Universal declared reference")
         .with_identity(leaf_kind.clone())
         .expect("Universal declared reference");
-    let codec = SixSlotEthosCodec::build(grammar_ids(), priors).expect("typed six-slot table");
+    let codec = EthosCodec::build(grammar_ids(), priors).expect("typed Ethos table");
     let mut bindings = Bindings::empty();
     for (spelling, occurrence, identity) in [
         ("Root", 0, root.clone()),
@@ -342,7 +344,7 @@ fn complete_bindings(
 }
 
 #[test]
-fn six_typed_slots_decode_one_private_field_newtype_with_absolute_bounds() {
+fn types_only_root_round_trips_one_private_field_newtype() {
     let codec = codec();
     let (bindings, declaration, integer) =
         complete_bindings(VocabularyRoot::Universal, VocabularyRoot::Universal);
@@ -363,25 +365,11 @@ fn six_typed_slots_decode_one_private_field_newtype_with_absolute_bounds() {
         &WholeEthosTypeReference::Identity(integer)
     );
 
-    let bounds = decoded.source_bounds();
+    let types_source_bound = decoded.types_source_bound();
     assert_eq!(
-        &SOURCE[bounds.imports().start()..bounds.imports().end()],
-        "{}"
+        &SOURCE[types_source_bound.start()..types_source_bound.end()],
+        SOURCE
     );
-    assert_eq!(&SOURCE[bounds.input().start()..bounds.input().end()], "[]");
-    assert_eq!(
-        &SOURCE[bounds.output().start()..bounds.output().end()],
-        "[]"
-    );
-    assert_eq!(
-        &SOURCE[bounds.types().start()..bounds.types().end()],
-        "{CommitSequence.Integer}"
-    );
-    assert_eq!(
-        &SOURCE[bounds.generics().start()..bounds.generics().end()],
-        "{}"
-    );
-    assert_eq!(&SOURCE[bounds.impls().start()..bounds.impls().end()], "{}");
 
     let declaration_start = SOURCE.find("CommitSequence").unwrap();
     let reference_start = SOURCE.find("Integer").unwrap();
@@ -406,6 +394,20 @@ fn six_typed_slots_decode_one_private_field_newtype_with_absolute_bounds() {
         WholeEthos::from_archive_bytes(&bytes).expect("validated restore"),
         *decoded.ethos()
     );
+
+    // `[assumption primary-pjm-A2 — decoded-mirror round trip]`: the runtime
+    // structural mirror retained beside WholeEthos is the encoded witness used
+    // for canonical rendering in this slice.
+    // `[assumption primary-pjm-A3 — neutral API naming]`: this witness uses the
+    // arity-neutral EthosCodec API, not a parallel per-file-kind parser.
+    let canonical = codec
+        .encode(&decoded, &bindings)
+        .expect("render through the same structural evaluator");
+    assert_eq!(canonical, SOURCE);
+    let round_trip = codec
+        .decode(&canonical, &bindings)
+        .expect("decode the canonical types-only file again");
+    assert_eq!(round_trip, decoded);
 }
 
 #[test]
@@ -420,7 +422,7 @@ fn unresolved_integer_is_lookup_only_and_changes_no_binding_state() {
 
     assert!(matches!(
         codec.decode(SOURCE, &bindings),
-        Err(SixSlotDecodeError::Structural(
+        Err(EthosDecodeError::Structural(
             DecodeError::UnresolvedReference { bound }
         )) if bound.start() == reference_start
             && bound.end() == reference_start + "Integer".len()
@@ -439,27 +441,27 @@ fn unresolved_integer_is_lookup_only_and_changes_no_binding_state() {
 }
 
 #[test]
-fn arity_slot_and_empty_enumeration_shape_fail_structurally() {
+fn root_arity_position_and_empty_enumeration_shape_fail_structurally() {
     let codec = codec();
     let bindings = Bindings::empty();
 
     assert!(matches!(
-        codec.decode("{} [] [] {} {}", &bindings),
-        Err(SixSlotDecodeError::Structural(
+        codec.decode("{} {}", &bindings),
+        Err(EthosDecodeError::Structural(
             DecodeError::ProductArityMismatch {
-                expected: 6,
-                found: 5
+                expected: 1,
+                found: 2
             }
         ))
     ));
     assert!(matches!(
-        codec.decode("[] [] [] {} {} {}", &bindings),
-        Err(SixSlotDecodeError::Structural(
+        codec.decode("[]", &bindings),
+        Err(EthosDecodeError::Structural(
             DecodeError::ProductPositionMismatch { position: 0, .. }
         ))
     ));
 
-    let malformed = "{} [] [] {CommitSequence.[]} {} {}";
+    let malformed = "{CommitSequence.[]}";
     let mut malformed_bindings = Bindings::empty();
     malformed_bindings.bind_declaration(
         "CommitSequence",
@@ -468,7 +470,7 @@ fn arity_slot_and_empty_enumeration_shape_fail_structurally() {
     );
     assert!(matches!(
         codec.decode(malformed, &malformed_bindings),
-        Err(SixSlotDecodeError::Structural(_))
+        Err(EthosDecodeError::Structural(_))
     ));
 }
 
@@ -479,7 +481,7 @@ fn decoded_declaration_and_builtin_prior_must_both_be_universal() {
         complete_bindings(VocabularyRoot::Rust, VocabularyRoot::Universal);
     assert!(matches!(
         codec.decode(SOURCE, &foreign_declaration),
-        Err(SixSlotDecodeError::NonUniversalEncodedId {
+        Err(EthosDecodeError::NonUniversalEncodedId {
             position: DecodedEncodedIdPosition::Declaration,
             root: VocabularyRoot::Rust,
         })
@@ -489,7 +491,7 @@ fn decoded_declaration_and_builtin_prior_must_both_be_universal() {
         complete_bindings(VocabularyRoot::Universal, VocabularyRoot::Rust);
     assert!(matches!(
         codec.decode(SOURCE, &foreign_reference),
-        Err(SixSlotDecodeError::NonUniversalEncodedId {
+        Err(EthosDecodeError::NonUniversalEncodedId {
             position: DecodedEncodedIdPosition::Reference,
             root: VocabularyRoot::Rust,
         })
@@ -500,19 +502,19 @@ fn decoded_declaration_and_builtin_prior_must_both_be_universal() {
 fn identity_resolution_must_belong_to_the_registered_lookup_only_priors() {
     let integer = encoded(VocabularyRoot::Universal, &[3]);
     let found = encoded(VocabularyRoot::Universal, &[19, 4]);
-    let codec = SixSlotEthosCodec::build(
+    let codec = EthosCodec::build(
         grammar_ids(),
         WholeEthosBuiltinPriors::new(integer, encoded(VocabularyRoot::Universal, &[4]))
             .expect("Universal builtin priors"),
     )
-    .expect("typed six-slot table");
+    .expect("typed Ethos table");
     let declaration = encoded(VocabularyRoot::Universal, &[42, 7, 9]);
     let mut bindings = Bindings::empty();
     bindings.bind_declaration("CommitSequence", declaration, SOURCE);
     bindings.bind_reference("Integer", found.clone(), SOURCE);
 
     match codec.decode(SOURCE, &bindings) {
-        Err(SixSlotDecodeError::UnregisteredReferencePrior {
+        Err(EthosDecodeError::UnregisteredReferencePrior {
             position: WholeEthosReferencePriorPosition::Identity,
             found: rejected_found,
         }) => {
@@ -524,20 +526,18 @@ fn identity_resolution_must_belong_to_the_registered_lookup_only_priors() {
 
 #[test]
 fn grammar_identities_are_supplied_and_universal() {
-    let error = SixSlotGrammarIds::new(
+    let error = EthosGrammarIds::new(
         encoded(VocabularyRoot::Rust, &[200]),
         encoded(VocabularyRoot::Universal, &[201]),
         encoded(VocabularyRoot::Universal, &[202]),
         encoded(VocabularyRoot::Universal, &[203]),
         encoded(VocabularyRoot::Universal, &[204]),
-        encoded(VocabularyRoot::Universal, &[205]),
-        encoded(VocabularyRoot::Universal, &[206]),
     )
-    .expect_err("a Rust-root document grammar identity is refused");
+    .expect_err("a Rust-root grammar identity is refused");
     assert!(matches!(
         error,
-        SixSlotGrammarError::NonUniversal {
-            position: SixSlotGrammarIdPosition::Document,
+        EthosGrammarError::NonUniversal {
+            position: EthosGrammarIdPosition::Root,
             root: VocabularyRoot::Rust,
         }
     ));
