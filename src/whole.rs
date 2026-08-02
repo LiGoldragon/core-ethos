@@ -170,48 +170,49 @@ pub enum WholeEthosItem {
     Enumeration(WholeEthosEnumeration),
 }
 
-/// One positional newtype payload.
-///
-/// The positions are the declaration identity, item visibility, the typed empty
-/// attribute sequence, and the wrapped field. Field names do not enter the
-/// encoded value.
+/// One newtype payload.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosNewtype(
-    VocabularyEncodedId,
-    WholeEthosVisibility,
-    WholeEthosAttributes,
-    WholeEthosWrappedField,
-);
+pub struct WholeEthosNewtype {
+    name: VocabularyEncodedId,
+    visibility: WholeEthosVisibility,
+    attributes: WholeEthosAttributes,
+    wrapped_field: WholeEthosWrappedField,
+}
 
 impl WholeEthosNewtype {
-    /// Construct one positional newtype.
+    /// Construct one newtype.
     pub fn new(
         name: VocabularyEncodedId,
         visibility: WholeEthosVisibility,
         attributes: WholeEthosAttributes,
         wrapped_field: WholeEthosWrappedField,
     ) -> Self {
-        Self(name, visibility, attributes, wrapped_field)
+        Self {
+            name,
+            visibility,
+            attributes,
+            wrapped_field,
+        }
     }
 
     /// Complete translator-issued declaration identity.
     pub const fn name(&self) -> &VocabularyEncodedId {
-        &self.0
+        &self.name
     }
 
     /// Item visibility.
     pub const fn visibility(&self) -> &WholeEthosVisibility {
-        &self.1
+        &self.visibility
     }
 
     /// Typed attribute sequence, currently empty.
     pub const fn attributes(&self) -> &WholeEthosAttributes {
-        &self.2
+        &self.attributes
     }
 
-    /// Positional wrapped field.
+    /// Wrapped field.
     pub const fn wrapped_field(&self) -> &WholeEthosWrappedField {
-        &self.3
+        &self.wrapped_field
     }
 }
 
@@ -244,24 +245,30 @@ impl WholeEthosAttributes {
     }
 }
 
-/// A positional newtype field: visibility followed by referenced type identity.
+/// A newtype field with visibility and referenced type identity.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosWrappedField(WholeEthosVisibility, WholeEthosTypeReference);
+pub struct WholeEthosWrappedField {
+    visibility: WholeEthosVisibility,
+    reference: WholeEthosTypeReference,
+}
 
 impl WholeEthosWrappedField {
     /// Construct the wrapped field.
     pub fn new(visibility: WholeEthosVisibility, reference: WholeEthosTypeReference) -> Self {
-        Self(visibility, reference)
+        Self {
+            visibility,
+            reference,
+        }
     }
 
     /// Wrapped-field visibility.
     pub const fn visibility(&self) -> &WholeEthosVisibility {
-        &self.0
+        &self.visibility
     }
 
     /// Complete lookup-resolved type identity.
     pub const fn reference(&self) -> &WholeEthosTypeReference {
-        &self.1
+        &self.reference
     }
 }
 
@@ -274,43 +281,47 @@ pub enum WholeEthosTypeReference {
     Application(WholeEthosTypeApplication),
 }
 
-/// A positional unary type application such as `Vector.Integer`.
+/// A unary type application such as `Vector.Integer`.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 #[rkyv(
     serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
     deserialize_bounds(__D::Error: rkyv::rancor::Source),
     bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
 )]
-pub struct WholeEthosTypeApplication(
-    VocabularyEncodedId,
-    #[rkyv(omit_bounds)] Box<WholeEthosTypeReference>,
-);
+pub struct WholeEthosTypeApplication {
+    head: VocabularyEncodedId,
+    #[rkyv(omit_bounds)]
+    payload: Box<WholeEthosTypeReference>,
+}
 
 impl WholeEthosTypeApplication {
     /// Construct a unary application.
     pub fn new(head: VocabularyEncodedId, payload: WholeEthosTypeReference) -> Self {
-        Self(head, Box::new(payload))
+        Self {
+            head,
+            payload: Box::new(payload),
+        }
     }
 
     /// Lookup-resolved application head.
     pub const fn head(&self) -> &VocabularyEncodedId {
-        &self.0
+        &self.head
     }
 
-    /// Positional application payload.
+    /// Application payload.
     pub const fn payload(&self) -> &WholeEthosTypeReference {
-        &self.1
+        &self.payload
     }
 }
 
-/// One positional enumeration payload.
+/// One enumeration payload.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosEnumeration(
-    VocabularyEncodedId,
-    WholeEthosVisibility,
-    WholeEthosAttributes,
-    Vec<WholeEthosVariant>,
-);
+pub struct WholeEthosEnumeration {
+    name: VocabularyEncodedId,
+    visibility: WholeEthosVisibility,
+    attributes: WholeEthosAttributes,
+    variants: Vec<WholeEthosVariant>,
+}
 
 impl WholeEthosEnumeration {
     /// Construct an attribute-free enumeration.
@@ -320,37 +331,42 @@ impl WholeEthosEnumeration {
         attributes: WholeEthosAttributes,
         variants: Vec<WholeEthosVariant>,
     ) -> Self {
-        Self(name, visibility, attributes, variants)
+        Self {
+            name,
+            visibility,
+            attributes,
+            variants,
+        }
     }
 
     /// Complete declaration identity.
     pub const fn name(&self) -> &VocabularyEncodedId {
-        &self.0
+        &self.name
     }
 
     /// Item visibility.
     pub const fn visibility(&self) -> &WholeEthosVisibility {
-        &self.1
+        &self.visibility
     }
 
     /// Typed empty attribute sequence.
     pub const fn attributes(&self) -> &WholeEthosAttributes {
-        &self.2
+        &self.attributes
     }
 
     /// Variants in authored order.
     pub fn variants(&self) -> &[WholeEthosVariant] {
-        &self.3
+        &self.variants
     }
 }
 
-/// One enumeration variant with positional payload data.
+/// One enumeration variant with payload data.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosVariant(
-    VocabularyEncodedId,
-    WholeEthosAttributes,
-    WholeEthosVariantPayload,
-);
+pub struct WholeEthosVariant {
+    name: VocabularyEncodedId,
+    attributes: WholeEthosAttributes,
+    payload: WholeEthosVariantPayload,
+}
 
 impl WholeEthosVariant {
     /// Construct one variant.
@@ -359,22 +375,26 @@ impl WholeEthosVariant {
         attributes: WholeEthosAttributes,
         payload: WholeEthosVariantPayload,
     ) -> Self {
-        Self(name, attributes, payload)
+        Self {
+            name,
+            attributes,
+            payload,
+        }
     }
 
     /// Complete declaration identity.
     pub const fn name(&self) -> &VocabularyEncodedId {
-        &self.0
+        &self.name
     }
 
     /// Typed empty attribute sequence.
     pub const fn attributes(&self) -> &WholeEthosAttributes {
-        &self.1
+        &self.attributes
     }
 
     /// Unit or positional tuple payload.
     pub const fn payload(&self) -> &WholeEthosVariantPayload {
-        &self.2
+        &self.payload
     }
 }
 
