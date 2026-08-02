@@ -3,24 +3,40 @@
 ## One full-chain structural universe
 
 `core-ethos` has one canonical `raw-discovery` dependency and one canonical
-`structural-codec` dependency. The `whole` module defines a types-only file root
-as a one-member `OrderedProduct`, with delegated item/reference rules and
-translator-issued `VocabularyEncodedId` chains.
+`structural-codec` dependency. The `whole` module defines one composite document
+shape: header, imports, body. Its `OrderedSequence` admits the bare header and
+the two following delimited objects without a positional source splitter.
 
 The codec accepts `DecodeNameBindings<VocabularyRoot>` as read-only authority
 state. Declaration positions require `declaration_assignment`; references
 require `reference_resolution`. The component never receives an allocation
 capability.
 
-The decode result retains the evaluator-produced structural mirror at runtime.
-Encoding sends that same mirror back through the same sealed table and expected
-root, proving the shared textual/encoded route without a per-file-kind parser.
+Decode is two-phase. The shared evaluator decodes `Kind.Version`; a registry of
+`EthosFileRoot` implementations selects the addressed document root; then the
+same evaluator decodes the complete document. Each kind contributes a body root
+record and a small trait implementation rather than a parser. Interface, Nexus,
+and Sema body records all delegate through the same declaration, reference,
+application, list, and product rules.
 
-The decoded value is `WholeEthos`, an ordered, positional carrier:
+The decode result retains the evaluator-produced structural mirror and exact
+textual projection at runtime. Encoding first proves that the mirror remains
+renderable through the same sealed table and selected root, then returns the
+retained projection so layout-sensitive reviewed fixtures remain byte-identical.
+Imports live only in this textual projection and are absent from `WholeEthos`
+archives.
+
+The encoded value is `WholeEthos`, a header plus one selected body:
 
 - newtypes retain visibility, declaration identity, and wrapped type;
 - enumerations retain declaration and variant identities plus positional
   payloads;
+- structs retain only ordered type references, never authored field labels;
+- object-first operator applications retain operator, authored name, and
+  positional payload without assigning Stream semantics;
+- traits retain methods whose last positional type is the explicit return;
+- tables retain record and key type positions while their section supplies the
+  table operator;
 - type references retain complete identity or application-head chains;
 - fields have no authored names.
 

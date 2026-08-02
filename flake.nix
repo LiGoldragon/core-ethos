@@ -1,5 +1,5 @@
 {
-  description = "core-ethos — types-only whole-Ethos round trips and retained sealed execution data";
+  description = "core-ethos — composite whole-Ethos round trips and retained sealed execution data";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -16,7 +16,12 @@
         pkgs = import nixpkgs { inherit system; };
         rust = rust-build.lib.${system}.fromPkgs pkgs;
         inherit (rust) craneLib toolchain;
-        src = rust.cleanSource { root = ./.; };
+        ethosFilter = path: type:
+          type == "regular" && pkgs.lib.hasSuffix ".ethos" path;
+        src = rust.cleanSource {
+          root = ./.;
+          extraFilters = [ ethosFilter ];
+        };
         commonArguments = { inherit src; strictDeps = true; };
         cargoArtifacts = craneLib.buildDepsOnly (commonArguments // {
           postCheck = ''

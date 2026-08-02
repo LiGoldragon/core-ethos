@@ -30,10 +30,14 @@ pub use reference::{
 };
 pub use whole::{
     DecodedEncodedIdPosition, DecodedEthos, EmptyTupleFields, EthosCodec, EthosCodecBuildError,
-    EthosDecodeError, EthosEncodeError, EthosGrammarError, EthosGrammarIdPosition, EthosGrammarIds,
-    WholeEthos, WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBuiltinPriorError,
+    EthosDecodeError, EthosDocument, EthosDocumentCodec, EthosEncodeError, EthosGrammarError,
+    EthosGrammarIdPosition, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
+    WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriorError,
     WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosEncodedIdPosition,
-    WholeEthosEnumeration, WholeEthosItem, WholeEthosNewtype, WholeEthosReferencePriorPosition,
-    WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
+    WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosInterfaceBody,
+    WholeEthosItem, WholeEthosMethod, WholeEthosNewtype, WholeEthosNexusBody,
+    WholeEthosOperatorApplication, WholeEthosReferencePriorPosition, WholeEthosSemaBody,
+    WholeEthosStruct, WholeEthosTable, WholeEthosTrait, WholeEthosTupleFields,
+    WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
     WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
 };

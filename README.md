@@ -5,21 +5,26 @@
 ## Canonical textual and structural surface
 
 The `whole` module is the one production textual/structural path. Its
-`EthosCodec` decodes and encodes a types-only Ethos file through
-`raw-discovery` and `structural-codec` using complete
-`VocabularyEncodedId` chains:
+`EthosCodec` decodes Interface, Nexus, and Sema files through `raw-discovery`
+and `structural-codec` using complete `VocabularyEncodedId` chains:
 
 - declaration positions consume assignments already issued by the translator;
 - reference positions perform lookup only;
 - fields are positional;
-- the root is a one-position product delegating to the non-empty types block;
-- decoding retains the structural mirror needed for canonical rendering through
-  the same evaluator;
+- every document is a header, imports object, and kind-selected body;
+- the header is decoded first and its kind selects one addressed document root;
+- Interface bodies carry inputs, outputs, refusals, and shared types;
+- Nexus bodies carry operand types and trait method signatures;
+- Sema bodies carry record types and `table.{Record Key}` declarations;
+- imports are parsed but retained only with the textual projection;
+- the structural mirror is verified through the same evaluator before exact
+  source formatting is re-emitted;
 - no local name or identity allocation exists;
 - `WholeEthos` is archivable and validates every complete chain on restore.
 
-The grammar identities and builtin reference priors are caller-supplied typed
-data. The codec uses the Standard discovery profile and the canonical
+The grammar identities and builtin reference/operator priors are caller-supplied
+typed data. Unknown file kinds and unsupported versions refuse through typed
+errors. The codec uses the Standard discovery profile and the canonical
 `structural-codec` dependency only.
 
 ## Retained sealed declaration data

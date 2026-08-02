@@ -1,11 +1,11 @@
 [package]
 name         = "core-ethos"
-version      = "0.23.0"
+version      = "0.24.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/LiGoldragon/core-ethos"
-description  = "Stringless Ethos carriers and types-only structural round trips over translator-issued identity chains."
+description  = "Composite Interface, Nexus, and Sema Ethos documents over translator-issued identity chains."
 publish      = false
 
 [lib]
