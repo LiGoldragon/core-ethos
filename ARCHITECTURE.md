@@ -19,12 +19,13 @@ record and a small trait implementation rather than a parser. Interface, Nexus,
 and Sema body records all delegate through the same declaration, reference,
 application, list, and product rules.
 
-The decode result retains the evaluator-produced structural mirror and exact
-textual projection at runtime. Encoding first proves that the mirror remains
-renderable through the same sealed table and selected root, then returns the
-retained projection so layout-sensitive reviewed fixtures remain byte-identical.
-Imports live only in this textual projection and are absent from `WholeEthos`
-archives.
+The decode result retains the typed `WholeEthos` value and a typed source-only
+import representation. Encoding reflects those values into a fresh checked
+structural mirror and passes that mirror to the shared writer under the selected
+root. Presentation trivia is canonicalized; correctness is established by
+decoding the emission to the same typed value and archive bytes. Text carried as
+actual scalar content remains in the typed import representation and therefore
+survives reflection. Imports remain absent from `WholeEthos` archives.
 
 The encoded value is `WholeEthos`, a header plus one selected body:
 
@@ -40,8 +41,10 @@ The encoded value is `WholeEthos`, a header plus one selected body:
 - type references retain complete identity or application-head chains;
 - fields have no authored names.
 
-Archive restoration validates root and chain invariants before returning a
-value. `WholeEthos` does not carry a composed NameTree pin and is not itself a
+Public construction, serialization, and archive restoration validate the
+supported version, header/body kind agreement, grammar cardinalities,
+visibility forms, and encoded root/chain invariants before returning or writing
+a value. `WholeEthos` does not carry a composed NameTree pin and is not itself a
 Capsule.
 
 ## Retained execution data boundary

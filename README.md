@@ -16,11 +16,16 @@ and `structural-codec` using complete `VocabularyEncodedId` chains:
 - Interface bodies carry inputs, outputs, refusals, and shared types;
 - Nexus bodies carry operand types and trait method signatures;
 - Sema bodies carry record types and `table.{Record Key}` declarations;
-- imports are parsed but retained only with the textual projection;
-- the structural mirror is verified through the same evaluator before exact
-  source formatting is re-emitted;
+- imports are parsed into a typed source-only representation and remain absent
+  from the encoded archive;
+- encoding reflects `WholeEthos` plus those imports into a fresh checked mirror
+  and the shared writer emits canonical text;
+- decoding canonical emission reproduces the same encoded value and archive
+  bytes; presentation whitespace is not identity, while carried text remains
+  meaningful;
 - no local name or identity allocation exists;
-- `WholeEthos` is archivable and validates every complete chain on restore.
+- `WholeEthos` validates version, body kind, grammar cardinalities, visibility,
+  and every complete chain on construction, serialization, and restore.
 
 The grammar identities and builtin reference/operator priors are caller-supplied
 typed data. Unknown file kinds and unsupported versions refuse through typed

@@ -3,8 +3,12 @@
 use std::collections::BTreeMap;
 
 use core_ethos::{
+    EmptyEnumerationVariants, EmptyOperatorPayload, EmptyStructFields, EmptyTraitMethods,
     EthosCodec, EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
-    WholeEthosBody, WholeEthosBuiltinPriors, WholeEthosFileKind, WholeEthosItem,
+    WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors,
+    WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosItem,
+    WholeEthosNexusBody, WholeEthosOperatorApplication, WholeEthosStruct, WholeEthosTrait,
+    WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -213,28 +217,37 @@ fn codec(bindings: &FixtureBindings) -> EthosCodec {
 struct GoldenFixture {
     source: &'static str,
     kind: WholeEthosFileKind,
-    imports: &'static str,
+    imports: &'static [(&'static str, &'static [&'static str])],
 }
 
 #[test]
-fn all_three_spirit_goldens_decode_typed_and_reemit_byte_identically() {
+fn all_three_spirit_goldens_decode_emit_and_redecode_identical_encoded_meaning() {
     let bindings = FixtureBindings::new();
     let codec = codec(&bindings);
     let fixtures = [
         GoldenFixture {
             source: INTERFACE,
             kind: WholeEthosFileKind::Interface,
-            imports: "[]",
+            imports: &[],
         },
         GoldenFixture {
             source: NEXUS,
             kind: WholeEthosFileKind::Nexus,
-            imports: "[interface.{Entry Referent RecordSet GuardianReason}]",
+            imports: &[(
+                "interface",
+                &["Entry", "Referent", "RecordSet", "GuardianReason"],
+            )],
         },
         GoldenFixture {
             source: SEMA,
             kind: WholeEthosFileKind::Sema,
-            imports: "[interface.{Entry Referent Aliases RecordIdentifier} signal-domain.Domain]",
+            imports: &[
+                (
+                    "interface",
+                    &["Entry", "Referent", "Aliases", "RecordIdentifier"],
+                ),
+                ("signal-domain", &["Domain"]),
+            ],
         },
     ];
 
@@ -244,23 +257,126 @@ fn all_three_spirit_goldens_decode_typed_and_reemit_byte_identically() {
             .expect("psyche-reviewed fixture decodes");
         assert_eq!(decoded.ethos().header().kind(), fixture.kind);
         assert_eq!(decoded.ethos().header().version(), 1);
-        assert_eq!(decoded.imports_source(), fixture.imports);
-        let body_bound = decoded.body_source_bound();
-        let body_source = &fixture.source[body_bound.start()..body_bound.end()];
-        assert!(body_source.starts_with("{\n"));
-        assert!(body_source.trim_end().ends_with('}'));
+        assert_eq!(decoded.imports().entries().len(), fixture.imports.len());
+        for (actual, (source, names)) in decoded.imports().entries().iter().zip(fixture.imports) {
+            assert_eq!(actual.source(), *source);
+            assert_eq!(
+                actual
+                    .names()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                *names
+            );
+        }
 
-        let reemitted = codec
+        let emitted = codec
             .encode(&decoded, &bindings)
-            .expect("typed mirror remains renderable");
-        assert_eq!(reemitted.as_bytes(), fixture.source.as_bytes());
+            .expect("typed encoded meaning reflects through the shared writer");
+        assert_ne!(
+            emitted.as_bytes(),
+            fixture.source.as_bytes(),
+            "presentation layout is deliberately not retained"
+        );
+        let redecoded = codec
+            .decode(&emitted, &bindings)
+            .expect("canonical shared-writer output decodes");
+        assert_eq!(redecoded, decoded);
 
         let archive = decoded.ethos().to_archive_bytes().expect("archive fixture");
+        let redecoded_archive = redecoded
+            .ethos()
+            .to_archive_bytes()
+            .expect("archive redecoded fixture");
+        assert_eq!(redecoded_archive, archive);
         assert_eq!(
             WholeEthos::from_archive_bytes(&archive).expect("restore fixture"),
             *decoded.ethos()
         );
     }
+}
+
+#[test]
+fn presentation_variants_decode_to_the_same_typed_document_and_imports() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let reviewed = codec.decode(NEXUS, &bindings).expect("reviewed Nexus");
+    let canonical = codec
+        .encode(&reviewed, &bindings)
+        .expect("canonical Nexus text");
+    assert_ne!(canonical, NEXUS);
+    assert_eq!(
+        codec
+            .decode(&canonical, &bindings)
+            .expect("canonical Nexus"),
+        reviewed
+    );
+}
+
+#[test]
+fn source_only_import_text_preserves_meaningful_whitespace_through_canonical_emission() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let source = "Interface.1\n[(|source module|).(|Imported Name|)]\n{[] [] [] []}\n";
+    let decoded = codec
+        .decode(source, &bindings)
+        .expect("carried import text");
+    assert_eq!(decoded.imports().entries()[0].source(), "source module");
+    assert_eq!(decoded.imports().entries()[0].names(), &["Imported Name"]);
+
+    let emitted = codec
+        .encode(&decoded, &bindings)
+        .expect("carried import text emits");
+    assert!(emitted.contains("(|source module|).(|Imported Name|)"));
+    assert_eq!(
+        codec.decode(&emitted, &bindings).expect("reemitted import"),
+        decoded
+    );
+}
+
+#[test]
+fn public_constructors_reject_unsupported_headers_mismatched_bodies_and_empty_grammar_forms() {
+    let name = encoded(900);
+    assert!(matches!(
+        WholeEthosHeader::new(WholeEthosFileKind::Interface, 2),
+        Err(WholeEthosArchiveError::UnsupportedVersion {
+            kind: WholeEthosFileKind::Interface,
+            found: 2,
+            supported: 1,
+        })
+    ));
+
+    let header = WholeEthosHeader::new(WholeEthosFileKind::Interface, 1)
+        .expect("supported Interface header");
+    assert!(matches!(
+        WholeEthos::new(
+            header,
+            WholeEthosBody::Nexus(WholeEthosNexusBody::new(vec![], vec![])),
+        ),
+        Err(WholeEthosArchiveError::HeaderBodyKindMismatch {
+            header: WholeEthosFileKind::Interface,
+            body: WholeEthosFileKind::Nexus,
+        })
+    ));
+
+    assert_eq!(
+        WholeEthosStruct::new(name.clone(), vec![]),
+        Err(EmptyStructFields)
+    );
+    assert_eq!(
+        WholeEthosEnumeration::new(
+            name.clone(),
+            WholeEthosVisibility::Public,
+            WholeEthosAttributes::empty(),
+            vec![],
+        ),
+        Err(EmptyEnumerationVariants)
+    );
+    assert_eq!(
+        WholeEthosOperatorApplication::new(name.clone(), name.clone(), vec![]),
+        Err(EmptyOperatorPayload)
+    );
+    assert_eq!(WholeEthosTrait::new(name, vec![]), Err(EmptyTraitMethods));
 }
 
 #[test]

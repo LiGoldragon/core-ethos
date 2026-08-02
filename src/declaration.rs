@@ -39,7 +39,7 @@ impl HashDomain for EncodedEthosDomain {
 /// their [`DeclarationRole`]. Names live in the accompanying `NameTable` produced
 /// by the same decode.
 ///
-/// This retained declaration algebra predates the canonical types-only file
+/// This retained declaration algebra predates the canonical composite-document
 /// surface. Its historical interface inputs and outputs remain in the SAME
 /// [`declarations`](Self::declarations) list: an input or output binding becomes
 /// a public enumeration declaration whose variants are the bracket's `Name.Payload`

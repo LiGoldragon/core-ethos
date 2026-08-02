@@ -206,7 +206,8 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
             WholeEthosVisibility::Private,
             WholeEthosAttributes::empty(),
             variants.clone(),
-        ),
+        )
+        .expect("non-empty archive-layout enumeration"),
         NamedWholeEthosEnumeration {
             name: enumeration_name,
             visibility: WholeEthosVisibility::Private,

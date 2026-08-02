@@ -2,11 +2,12 @@
 //!
 //! The stringless encoded Ethos carriers for the protos language family.
 //!
-//! [`whole`] is the sole textual and structural surface. It round-trips types-only
-//! Ethos files through the canonical full-chain `structural-codec` contract,
-//! receiving declaration assignments and lookup-only references from the naming
-//! authority. The older flat declaration algebra remains available only as sealed
-//! execution data while its consumers migrate; it is not a textual authoring path.
+//! [`whole`] is the sole textual and structural surface. It decodes composite
+//! Interface, Nexus, and Sema documents and emits their encoded meaning through
+//! the canonical full-chain `structural-codec` contract, receiving declaration
+//! assignments and lookup-only references from the naming authority. The older
+//! flat declaration algebra remains available only as sealed execution data while
+//! its consumers migrate; it is not a textual authoring path.
 
 pub mod capsule;
 pub mod declaration;
@@ -29,15 +30,16 @@ pub use reference::{
     SingleTypeReferenceProjection, ValueReferenceProjection,
 };
 pub use whole::{
-    DecodedEncodedIdPosition, DecodedEthos, EmptyTupleFields, EthosCodec, EthosCodecBuildError,
+    DecodedEncodedIdPosition, DecodedEthos, EmptyEnumerationVariants, EmptyOperatorPayload,
+    EmptyStructFields, EmptyTraitMethods, EmptyTupleFields, EthosCodec, EthosCodecBuildError,
     EthosDecodeError, EthosDocument, EthosDocumentCodec, EthosEncodeError, EthosGrammarError,
     EthosGrammarIdPosition, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
     WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriorError,
     WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosEncodedIdPosition,
-    WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosInterfaceBody,
-    WholeEthosItem, WholeEthosMethod, WholeEthosNewtype, WholeEthosNexusBody,
-    WholeEthosOperatorApplication, WholeEthosReferencePriorPosition, WholeEthosSemaBody,
-    WholeEthosStruct, WholeEthosTable, WholeEthosTrait, WholeEthosTupleFields,
-    WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
-    WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
+    WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosImport,
+    WholeEthosImports, WholeEthosInterfaceBody, WholeEthosItem, WholeEthosMethod,
+    WholeEthosNewtype, WholeEthosNexusBody, WholeEthosOperatorApplication,
+    WholeEthosReferencePriorPosition, WholeEthosSemaBody, WholeEthosStruct, WholeEthosTable,
+    WholeEthosTrait, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference,
+    WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
 };

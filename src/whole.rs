@@ -9,23 +9,26 @@ use content_identity::{ArchiveError, PortableArchive};
 use raw_discovery::{
     BlockTree, BlockTreeDiscoveryConfiguration, BoundaryDiscoveryConfiguration,
     BoundaryDiscoveryContext, BoundaryDiscoveryContextIdentifier, BoundaryDiscoveryTransition,
-    DiscoveredBlockTree, SealedTokenProfile, SourceBound, TriggerIdentifier, TriggerSet,
+    DiscoveredBlockTree, SealedTokenProfile, TriggerIdentifier, TriggerSet,
 };
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 use structural_codec::{
-    AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedHead,
-    ApplicationDelimitedItems, ApplicationDelimitedRule, ApplicationHead, ApplicationPayload,
+    AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedBody,
+    ApplicationDelimitedHead, ApplicationDelimitedItems, ApplicationDelimitedRoot,
+    ApplicationDelimitedRule, ApplicationHead, ApplicationPayload, ApplicationRoot,
     ApplicationRule, AtomCase, AtomDescriptor, BorrowedFieldView, ConstructorCodec,
-    ContextualTextualPolicy, DecodeFormId, DecodeNameBindings, EncodedConstructorId, EncodedTypeId,
-    FieldRole, FieldValue, FieldVisitor, LeafCodec, OrderedProduct, OrderedSequence, Position,
-    RuleCoproduct, ScalarValue, SharedDescriptor, StableRoleId, StructuralEntry,
-    StructuralEvaluator, StructuralRule, StructuralVocabularyIdentity, StructureRecord,
-    TableIdentityPayload, TargetLayoutIdentity, TextualRenderingPolicy, UnaryRoot, UnaryRule,
+    ContextualTextualPolicy, DeclarationAssignment, DecodeFormId, DecodeNameBindings,
+    EncodedConstructorId, EncodedTypeId, FieldRole, FieldValue, FieldVisitor, LeafCodec,
+    OrderedProduct, OrderedSequence, Position, ResolvedReference, RuleCoproduct, ScalarValue,
+    SharedDescriptor, StableRoleId, StructuralEntry, StructuralEvaluator, StructuralRule,
+    StructuralValue, StructuralVocabularyIdentity, StructureRecord, TableIdentityPayload,
+    TargetLayoutIdentity, TextualRenderingPolicy, UnaryRoot, UnaryRule,
 };
 
 const SQUARE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(1);
 const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
 const APPLICATION_OPERATOR: TriggerIdentifier = TriggerIdentifier::new(3);
+const TEXT_CARRIER: TriggerIdentifier = TriggerIdentifier::new(4);
 const WHITESPACE_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(5);
 const ROOT_CONTEXT: BoundaryDiscoveryContextIdentifier = BoundaryDiscoveryContextIdentifier::new(1);
 const CHILD_CONTEXT: BoundaryDiscoveryContextIdentifier =
@@ -88,8 +91,19 @@ pub struct WholeEthosHeader {
 
 impl WholeEthosHeader {
     /// Construct a supported header.
-    pub const fn new(kind: WholeEthosFileKind, version: u64) -> Self {
-        Self { kind, version }
+    pub const fn new(
+        kind: WholeEthosFileKind,
+        version: u64,
+    ) -> Result<Self, WholeEthosArchiveError> {
+        if version == SUPPORTED_VERSION {
+            Ok(Self { kind, version })
+        } else {
+            Err(WholeEthosArchiveError::UnsupportedVersion {
+                kind,
+                found: version,
+                supported: SUPPORTED_VERSION,
+            })
+        }
     }
 
     /// Specialized file kind.
@@ -105,8 +119,8 @@ impl WholeEthosHeader {
 
 /// Encoded Whole-Ethos document: header plus the selected body.
 ///
-/// Imports do not appear here because they are source-only. They remain on
-/// [`DecodedEthos`] beside the textual projection.
+/// Imports do not appear here because they are source-only. Their typed source
+/// representation remains on [`DecodedEthos`].
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthos {
     header: WholeEthosHeader,
@@ -139,9 +153,14 @@ impl EthosDocument for WholeEthos {
 // Trait exception — too trivial: these methods provide constructor and archive
 // ergonomics around the EthosDocument contract.
 impl WholeEthos {
-    /// Construct a typed document.
-    pub fn new(header: WholeEthosHeader, body: WholeEthosBody) -> Self {
-        Self { header, body }
+    /// Construct a typed document after enforcing all carrier invariants.
+    pub fn new(
+        header: WholeEthosHeader,
+        body: WholeEthosBody,
+    ) -> Result<Self, WholeEthosArchiveError> {
+        let ethos = Self { header, body };
+        ethos.validate()?;
+        Ok(ethos)
     }
 
     /// Typed header.
@@ -156,6 +175,7 @@ impl WholeEthos {
 
     /// Serialize the complete encoded carrier. Source-only imports are absent.
     pub fn to_archive_bytes(&self) -> Result<Vec<u8>, WholeEthosArchiveError> {
+        self.validate()?;
         Ok(<Self as PortableArchive>::to_archive_bytes(self)?
             .as_ref()
             .to_vec())
@@ -213,6 +233,49 @@ impl WholeEthosBody {
             Self::Nexus(body) => body.validate(),
             Self::Sema(body) => body.validate(),
         }
+    }
+}
+
+/// Typed source-only imports retained beside an encoded document.
+///
+/// These entries participate in textual reconstruction but are deliberately
+/// absent from [`WholeEthos`] archives.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WholeEthosImports {
+    entries: Vec<WholeEthosImport>,
+}
+
+impl WholeEthosImports {
+    fn new(entries: Vec<WholeEthosImport>) -> Self {
+        Self { entries }
+    }
+
+    /// Imports in authored order.
+    pub fn entries(&self) -> &[WholeEthosImport] {
+        &self.entries
+    }
+}
+
+/// One source module and its imported names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WholeEthosImport {
+    source: String,
+    names: Vec<String>,
+}
+
+impl WholeEthosImport {
+    fn new(source: String, names: Vec<String>) -> Self {
+        Self { source, names }
+    }
+
+    /// Source module spelling retained as source-only text.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Imported name spellings in authored order.
+    pub fn names(&self) -> &[String] {
+        &self.names
     }
 }
 
@@ -404,8 +467,15 @@ pub struct WholeEthosStruct {
 
 impl WholeEthosStruct {
     /// Construct a positional product. Empty products are not admitted by this slice.
-    pub fn new(name: VocabularyEncodedId, fields: Vec<WholeEthosTypeReference>) -> Self {
-        Self { name, fields }
+    pub fn new(
+        name: VocabularyEncodedId,
+        fields: Vec<WholeEthosTypeReference>,
+    ) -> Result<Self, EmptyStructFields> {
+        if fields.is_empty() {
+            Err(EmptyStructFields)
+        } else {
+            Ok(Self { name, fields })
+        }
     }
 
     /// Declaration identity.
@@ -435,12 +505,16 @@ impl WholeEthosEnumeration {
         visibility: WholeEthosVisibility,
         attributes: WholeEthosAttributes,
         variants: Vec<WholeEthosVariant>,
-    ) -> Self {
-        Self {
-            name,
-            visibility,
-            attributes,
-            variants,
+    ) -> Result<Self, EmptyEnumerationVariants> {
+        if variants.is_empty() {
+            Err(EmptyEnumerationVariants)
+        } else {
+            Ok(Self {
+                name,
+                visibility,
+                attributes,
+                variants,
+            })
         }
     }
 
@@ -537,6 +611,16 @@ impl WholeEthosTupleFields {
 #[error("tuple variant payload requires at least one positional field")]
 pub struct EmptyTupleFields;
 
+/// A struct construction attempted to encode no positional fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("struct declaration requires at least one positional field")]
+pub struct EmptyStructFields;
+
+/// An enumeration construction attempted to encode no variants.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("enumeration declaration requires at least one variant")]
+pub struct EmptyEnumerationVariants;
+
 /// Object-first operator application with an authored name and positional payload.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthosOperatorApplication {
@@ -551,11 +635,15 @@ impl WholeEthosOperatorApplication {
         operator: VocabularyEncodedId,
         name: VocabularyEncodedId,
         fields: Vec<WholeEthosTypeReference>,
-    ) -> Self {
-        Self {
-            operator,
-            name,
-            fields,
+    ) -> Result<Self, EmptyOperatorPayload> {
+        if fields.is_empty() {
+            Err(EmptyOperatorPayload)
+        } else {
+            Ok(Self {
+                operator,
+                name,
+                fields,
+            })
         }
     }
 
@@ -584,8 +672,15 @@ pub struct WholeEthosTrait {
 
 impl WholeEthosTrait {
     /// Construct a trait with one or more methods.
-    pub fn new(name: VocabularyEncodedId, methods: Vec<WholeEthosMethod>) -> Self {
-        Self { name, methods }
+    pub fn new(
+        name: VocabularyEncodedId,
+        methods: Vec<WholeEthosMethod>,
+    ) -> Result<Self, EmptyTraitMethods> {
+        if methods.is_empty() {
+            Err(EmptyTraitMethods)
+        } else {
+            Ok(Self { name, methods })
+        }
     }
 
     /// Trait declaration identity.
@@ -599,6 +694,9 @@ impl WholeEthosTrait {
     }
 
     fn validate(&self) -> Result<(), WholeEthosArchiveError> {
+        if self.methods.is_empty() {
+            return Err(WholeEthosArchiveError::EmptyTraitMethods);
+        }
         validate_identity(&self.name, WholeEthosEncodedIdPosition::TraitName)?;
         for method in &self.methods {
             method.validate()?;
@@ -606,6 +704,16 @@ impl WholeEthosTrait {
         Ok(())
     }
 }
+
+/// An operator application attempted to encode no payload fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("operator application requires at least one payload field")]
+pub struct EmptyOperatorPayload;
+
+/// A trait construction attempted to encode no methods.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("trait declaration requires at least one method")]
+pub struct EmptyTraitMethods;
 
 /// One method signature. The receiver is implied by trait membership.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -794,6 +902,9 @@ fn validate_items(items: &[WholeEthosItem]) -> Result<(), WholeEthosArchiveError
             WholeEthosItem::Enumeration(enumeration) => validate_enumeration(enumeration)?,
             WholeEthosItem::Struct(product) => validate_struct(product)?,
             WholeEthosItem::OperatorApplication(application) => {
+                if application.fields.is_empty() {
+                    return Err(WholeEthosArchiveError::EmptyOperatorPayload);
+                }
                 validate_identity(
                     &application.operator,
                     WholeEthosEncodedIdPosition::ApplicationHead,
@@ -817,6 +928,12 @@ fn validate_newtypes(newtypes: &[WholeEthosNewtype]) -> Result<(), WholeEthosArc
 }
 
 fn validate_newtype(newtype: &WholeEthosNewtype) -> Result<(), WholeEthosArchiveError> {
+    if newtype.visibility != WholeEthosVisibility::Public {
+        return Err(WholeEthosArchiveError::InvalidItemVisibility);
+    }
+    if newtype.wrapped_field.visibility != WholeEthosVisibility::Private {
+        return Err(WholeEthosArchiveError::InvalidWrappedFieldVisibility);
+    }
     validate_identity(&newtype.name, WholeEthosEncodedIdPosition::ItemName)?;
     validate_reference(&newtype.wrapped_field.reference)
 }
@@ -829,15 +946,27 @@ fn validate_structs(products: &[WholeEthosStruct]) -> Result<(), WholeEthosArchi
 }
 
 fn validate_struct(product: &WholeEthosStruct) -> Result<(), WholeEthosArchiveError> {
+    if product.fields.is_empty() {
+        return Err(WholeEthosArchiveError::EmptyStructFields);
+    }
     validate_identity(&product.name, WholeEthosEncodedIdPosition::ItemName)?;
     validate_references(&product.fields)
 }
 
 fn validate_enumeration(enumeration: &WholeEthosEnumeration) -> Result<(), WholeEthosArchiveError> {
+    if enumeration.variants.is_empty() {
+        return Err(WholeEthosArchiveError::EmptyEnumerationVariants);
+    }
+    if enumeration.visibility != WholeEthosVisibility::Public {
+        return Err(WholeEthosArchiveError::InvalidItemVisibility);
+    }
     validate_identity(&enumeration.name, WholeEthosEncodedIdPosition::ItemName)?;
     for variant in &enumeration.variants {
         validate_identity(&variant.name, WholeEthosEncodedIdPosition::VariantName)?;
         if let WholeEthosVariantPayload::Tuple(fields) = &variant.payload {
+            if fields.fields().is_empty() {
+                return Err(WholeEthosArchiveError::EmptyTupleFields);
+            }
             validate_references(fields.fields())?;
         }
     }
@@ -905,7 +1034,7 @@ pub enum WholeEthosEncodedIdPosition {
     TableName,
 }
 
-/// Failure at the encoded Whole-Ethos archive boundary.
+/// Failure at an encoded Whole-Ethos construction, serialization, or archive boundary.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum WholeEthosArchiveError {
     /// Canonical archive serialization or validated reconstruction failed.
@@ -931,6 +1060,34 @@ pub enum WholeEthosArchiveError {
         /// Accepted generation.
         supported: u64,
     },
+
+    /// A struct cannot be represented by the grammar without fields.
+    #[error("Whole-Ethos struct declaration has no positional fields")]
+    EmptyStructFields,
+
+    /// An enumeration cannot be represented by the grammar without variants.
+    #[error("Whole-Ethos enumeration declaration has no variants")]
+    EmptyEnumerationVariants,
+
+    /// A tuple payload cannot be represented by the grammar without fields.
+    #[error("Whole-Ethos tuple variant payload has no positional fields")]
+    EmptyTupleFields,
+
+    /// An operator application cannot be represented without payload fields.
+    #[error("Whole-Ethos operator application has no payload fields")]
+    EmptyOperatorPayload,
+
+    /// A trait cannot be represented by the grammar without methods.
+    #[error("Whole-Ethos trait declaration has no methods")]
+    EmptyTraitMethods,
+
+    /// Authored declarations in this grammar are always public.
+    #[error("Whole-Ethos declaration has visibility not admitted by the grammar")]
+    InvalidItemVisibility,
+
+    /// The wrapped newtype field in this grammar is always private.
+    #[error("Whole-Ethos wrapped newtype field has visibility not admitted by the grammar")]
+    InvalidWrappedFieldVisibility,
 
     /// A stored name contains the empty chain reserved for table addresses.
     #[error("Whole-Ethos contains an empty encoded-ID chain at {position:?}")]
@@ -1731,8 +1888,8 @@ pub trait EthosDocumentCodec {
         bindings: &Bindings,
     ) -> Result<DecodedEthos, EthosDecodeError>;
 
-    /// Verify the retained structural value remains renderable and re-emit its
-    /// exact textual projection.
+    /// Reflect encoded meaning plus source-only imports and emit canonical text
+    /// through the shared structural writer.
     fn encode<Resolver: structural_codec::EncodedNameResolver<VocabularyRoot> + ?Sized>(
         &self,
         decoded: &DecodedEthos,
@@ -2035,7 +2192,7 @@ impl EthosCodec {
         }
         let body_value = delegated::<BodyRole>(root, "document body")?;
         let body = (registration.reify_body)(self, body_value)?;
-        Ok(WholeEthos::new(header, body))
+        WholeEthos::new(header, body).map_err(EthosDecodeError::InvalidDocument)
     }
 
     fn reify_header(
@@ -2061,7 +2218,45 @@ impl EthosCodec {
                 supported: SUPPORTED_VERSION,
             });
         }
-        Ok(WholeEthosHeader::new(kind, version))
+        WholeEthosHeader::new(kind, version).map_err(EthosDecodeError::InvalidDocument)
+    }
+
+    fn reify_imports(
+        &self,
+        imports: &StructuralValue<VocabularyRoot>,
+    ) -> Result<WholeEthosImports, EthosDecodeError> {
+        let entries = repeated_delegates(imports, "imports")?
+            .into_iter()
+            .map(|entry| self.reify_import(entry))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(WholeEthosImports::new(entries))
+    }
+
+    fn reify_import(
+        &self,
+        import: &StructuralValue<VocabularyRoot>,
+    ) -> Result<WholeEthosImport, EthosDecodeError> {
+        let source = scalar_text::<ImportSourceRole>(import, "import source")?.to_owned();
+        let names = match import.field::<ImportPayloadRole>() {
+            Some(FieldValue::Scalar(ScalarValue::Text(name))) => vec![name.clone()],
+            Some(FieldValue::Delimited(_)) => {
+                let Some(FieldValue::Repeated(names)) = import.field::<ImportNamesRole>() else {
+                    return Err(EthosDecodeError::Shape("grouped import names"));
+                };
+                names
+                    .iter()
+                    .map(|name| match name {
+                        FieldValue::Scalar(ScalarValue::Text(name)) => Ok(name.clone()),
+                        _ => Err(EthosDecodeError::Shape("import name")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            _ => return Err(EthosDecodeError::Shape("import payload")),
+        };
+        if names.is_empty() {
+            return Err(EthosDecodeError::Shape("non-empty import names"));
+        }
+        Ok(WholeEthosImport::new(source, names))
     }
 
     fn reify_interface_body(
@@ -2174,9 +2369,9 @@ impl EthosCodec {
                     payload,
                     "operator application fields",
                 )?)?;
-                return Ok(WholeEthosItem::OperatorApplication(
-                    WholeEthosOperatorApplication::new(operator.clone(), name, fields),
-                ));
+                return WholeEthosOperatorApplication::new(operator.clone(), name, fields)
+                    .map(WholeEthosItem::OperatorApplication)
+                    .map_err(|_| EthosDecodeError::Shape("non-empty operator payload"));
             }
             object_constructor = object_constructor
                 .checked_add(1)
@@ -2216,10 +2411,11 @@ impl EthosCodec {
         if !owner_matches {
             return Err(EthosDecodeError::Shape("struct constructor"));
         }
-        Ok(WholeEthosStruct::new(
+        WholeEthosStruct::new(
             declaration_id::<ApplicationDelimitedHead>(value, "struct name")?,
             self.reify_references(repeated_delegates(value, "struct fields")?)?,
-        ))
+        )
+        .map_err(|_| EthosDecodeError::Shape("non-empty struct fields"))
     }
 
     fn reify_enumeration(
@@ -2230,12 +2426,13 @@ impl EthosCodec {
         for variant in repeated_delegates(value, "enumeration variants")? {
             variants.push(self.reify_variant(variant)?);
         }
-        Ok(WholeEthosEnumeration::new(
+        WholeEthosEnumeration::new(
             declaration_id::<ApplicationDelimitedHead>(value, "enumeration name")?,
             WholeEthosVisibility::Public,
             WholeEthosAttributes::empty(),
             variants,
-        ))
+        )
+        .map_err(|_| EthosDecodeError::Shape("non-empty enumeration variants"))
     }
 
     fn reify_variant(
@@ -2287,10 +2484,11 @@ impl EthosCodec {
         for method in repeated_delegates(value, "trait methods")? {
             methods.push(self.reify_method(method)?);
         }
-        Ok(WholeEthosTrait::new(
+        WholeEthosTrait::new(
             declaration_id::<ApplicationDelimitedHead>(value, "trait name")?,
             methods,
-        ))
+        )
+        .map_err(|_| EthosDecodeError::Shape("non-empty trait methods"))
     }
 
     fn reify_method(
@@ -2374,6 +2572,511 @@ impl EthosCodec {
         }
         Err(EthosDecodeError::Shape("type reference constructor"))
     }
+
+    fn reflect_document(
+        &self,
+        ethos: &WholeEthos,
+        imports: &WholeEthosImports,
+    ) -> Result<
+        (
+            EncodedTypeId<VocabularyRoot>,
+            StructuralValue<VocabularyRoot>,
+        ),
+        EthosEncodeError,
+    > {
+        ethos.validate()?;
+        let registration = self
+            .file_kinds
+            .iter()
+            .find(|registration| registration.kind == ethos.header.kind)
+            .ok_or(EthosEncodeError::UnregisteredFileKind {
+                kind: ethos.header.kind,
+            })?;
+        let header = self.reflect_header(&ethos.header)?;
+        let imports = self.reflect_imports(imports)?;
+        let body = self.reflect_body(&ethos.body)?;
+
+        let mut record =
+            StructuralValue::record(EncodedConstructorId::under(&registration.document, 0));
+        record.insert::<DocumentRootRole>(FieldValue::OrderedProduct)?;
+        record.insert::<HeaderRole>(FieldValue::Delegated(Box::new(header)))?;
+        record.insert::<ImportsRole>(FieldValue::Delegated(Box::new(imports)))?;
+        record.insert::<BodyRole>(FieldValue::Delegated(Box::new(body)))?;
+        Ok((registration.document.clone(), record.finish()))
+    }
+
+    fn reflect_header(
+        &self,
+        header: &WholeEthosHeader,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        Self::reflect_application(
+            &self.ids.header,
+            0,
+            FieldValue::Scalar(ScalarValue::Text(header.kind.spelling().to_owned())),
+            FieldValue::Scalar(ScalarValue::Integer(
+                i64::try_from(header.version).expect("the supported Ethos version fits i64"),
+            )),
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_imports(
+        &self,
+        imports: &WholeEthosImports,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let entries = imports
+            .entries
+            .iter()
+            .map(|entry| self.reflect_import(entry))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|entry| FieldValue::Delegated(Box::new(entry)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.imports, entries).map_err(Into::into)
+    }
+
+    fn reflect_import(
+        &self,
+        import: &WholeEthosImport,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        if import.names.is_empty() {
+            return Err(EthosEncodeError::EmptyImportNames);
+        }
+        let source = FieldValue::Scalar(ScalarValue::Text(import.source.clone()));
+        let (payload, names) = if let [name] = import.names.as_slice() {
+            (FieldValue::Scalar(ScalarValue::Text(name.clone())), None)
+        } else {
+            let names = FieldValue::Repeated(
+                import
+                    .names
+                    .iter()
+                    .cloned()
+                    .map(ScalarValue::Text)
+                    .map(FieldValue::Scalar)
+                    .collect(),
+            );
+            (FieldValue::Delimited(Box::new(names.clone())), Some(names))
+        };
+        let mut record =
+            StructuralValue::record(EncodedConstructorId::under(&self.ids.import_entry, 0));
+        record.insert::<ImportApplicationRole>(FieldValue::Application {
+            head: Box::new(source.clone()),
+            payload: Box::new(payload.clone()),
+        })?;
+        record.insert::<ImportSourceRole>(source)?;
+        record.insert::<ImportPayloadRole>(payload)?;
+        if let Some(names) = names {
+            record.insert::<ImportNamesRole>(names)?;
+        }
+        Ok(record.finish())
+    }
+
+    fn reflect_body(
+        &self,
+        body: &WholeEthosBody,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        match body {
+            WholeEthosBody::Interface(body) => {
+                let inputs = self.reflect_newtype_list(&body.inputs)?;
+                let outputs = self.reflect_newtype_list(&body.outputs)?;
+                let refusals = self.reflect_struct_list(&body.refusals)?;
+                let types = self.reflect_item_list(&body.types)?;
+                let mut record = StructuralValue::record(EncodedConstructorId::under(
+                    &self.ids.interface_body,
+                    0,
+                ));
+                record.insert::<DelimitedRootRole>(FieldValue::Delimited(Box::new(
+                    FieldValue::OrderedProduct,
+                )))?;
+                record.insert::<BodyProductRole>(FieldValue::OrderedProduct)?;
+                record.insert::<InputsRole>(FieldValue::Delegated(Box::new(inputs)))?;
+                record.insert::<OutputsRole>(FieldValue::Delegated(Box::new(outputs)))?;
+                record.insert::<RefusalsRole>(FieldValue::Delegated(Box::new(refusals)))?;
+                record.insert::<TypesRole>(FieldValue::Delegated(Box::new(types)))?;
+                Ok(record.finish())
+            }
+            WholeEthosBody::Nexus(body) => {
+                let types = self.reflect_item_list(&body.types)?;
+                let traits = self.reflect_trait_list(&body.traits)?;
+                let mut record =
+                    StructuralValue::record(EncodedConstructorId::under(&self.ids.nexus_body, 0));
+                record.insert::<DelimitedRootRole>(FieldValue::Delimited(Box::new(
+                    FieldValue::OrderedProduct,
+                )))?;
+                record.insert::<BodyProductRole>(FieldValue::OrderedProduct)?;
+                record.insert::<TypesRole>(FieldValue::Delegated(Box::new(types)))?;
+                record.insert::<TraitsRole>(FieldValue::Delegated(Box::new(traits)))?;
+                Ok(record.finish())
+            }
+            WholeEthosBody::Sema(body) => {
+                let record_types = self.reflect_item_list(&body.record_types)?;
+                let tables = self.reflect_table_list(&body.tables)?;
+                let mut record =
+                    StructuralValue::record(EncodedConstructorId::under(&self.ids.sema_body, 0));
+                record.insert::<DelimitedRootRole>(FieldValue::Delimited(Box::new(
+                    FieldValue::OrderedProduct,
+                )))?;
+                record.insert::<BodyProductRole>(FieldValue::OrderedProduct)?;
+                record.insert::<RecordTypesRole>(FieldValue::Delegated(Box::new(record_types)))?;
+                record.insert::<TablesRole>(FieldValue::Delegated(Box::new(tables)))?;
+                Ok(record.finish())
+            }
+        }
+    }
+
+    fn reflect_newtype_list(
+        &self,
+        values: &[WholeEthosNewtype],
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let values = values
+            .iter()
+            .map(|value| self.reflect_newtype(value, &self.ids.newtype_declaration, 0))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| FieldValue::Delegated(Box::new(value)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.newtype_list, values).map_err(Into::into)
+    }
+
+    fn reflect_struct_list(
+        &self,
+        values: &[WholeEthosStruct],
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let values = values
+            .iter()
+            .map(|value| self.reflect_struct(value, &self.ids.struct_declaration, 0))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| FieldValue::Delegated(Box::new(value)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.struct_list, values).map_err(Into::into)
+    }
+
+    fn reflect_item_list(
+        &self,
+        values: &[WholeEthosItem],
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let values = values
+            .iter()
+            .map(|value| self.reflect_item(value))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| FieldValue::Delegated(Box::new(value)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.item_list, values).map_err(Into::into)
+    }
+
+    fn reflect_trait_list(
+        &self,
+        values: &[WholeEthosTrait],
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let values = values
+            .iter()
+            .map(|value| self.reflect_trait(value))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| FieldValue::Delegated(Box::new(value)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.trait_list, values).map_err(Into::into)
+    }
+
+    fn reflect_table_list(
+        &self,
+        values: &[WholeEthosTable],
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let values = values
+            .iter()
+            .map(|value| self.reflect_table(value))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|value| FieldValue::Delegated(Box::new(value)))
+            .collect();
+        Self::reflect_delimited_list(&self.ids.table_list, values).map_err(Into::into)
+    }
+
+    fn reflect_item(
+        &self,
+        item: &WholeEthosItem,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        match item {
+            WholeEthosItem::Newtype(value) => self.reflect_newtype(value, &self.ids.item, 0),
+            WholeEthosItem::Enumeration(value) => self.reflect_enumeration(value),
+            WholeEthosItem::Struct(value) => self.reflect_struct(value, &self.ids.item, 2),
+            WholeEthosItem::OperatorApplication(value) => self.reflect_operator(value),
+        }
+    }
+
+    fn reflect_newtype(
+        &self,
+        value: &WholeEthosNewtype,
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        Self::reflect_application(
+            type_id,
+            local,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            FieldValue::Delegated(Box::new(
+                self.reflect_reference(&value.wrapped_field.reference)?,
+            )),
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_struct(
+        &self,
+        value: &WholeEthosStruct,
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let fields = value
+            .fields
+            .iter()
+            .map(|field| self.reflect_reference(field))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|field| FieldValue::Delegated(Box::new(field)))
+            .collect();
+        Self::reflect_application_delimited(
+            type_id,
+            local,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            fields,
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_enumeration(
+        &self,
+        value: &WholeEthosEnumeration,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let variants = value
+            .variants
+            .iter()
+            .map(|variant| self.reflect_variant(variant))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|variant| FieldValue::Delegated(Box::new(variant)))
+            .collect();
+        Self::reflect_application_delimited(
+            &self.ids.item,
+            1,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            variants,
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_variant(
+        &self,
+        value: &WholeEthosVariant,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let name = FieldValue::Declaration(DeclarationAssignment::new(value.name.clone()));
+        match &value.payload {
+            WholeEthosVariantPayload::Unit => {
+                Self::reflect_unary(&self.ids.variant, 0, name).map_err(Into::into)
+            }
+            WholeEthosVariantPayload::Tuple(fields) if fields.0.len() == 1 => {
+                Self::reflect_application(
+                    &self.ids.variant,
+                    2,
+                    name,
+                    FieldValue::Delegated(Box::new(self.reflect_reference(&fields.0[0])?)),
+                )
+                .map_err(Into::into)
+            }
+            WholeEthosVariantPayload::Tuple(fields) => {
+                let fields = fields
+                    .0
+                    .iter()
+                    .map(|field| self.reflect_reference(field))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|field| FieldValue::Delegated(Box::new(field)))
+                    .collect();
+                Self::reflect_application_delimited(&self.ids.variant, 1, name, fields)
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    fn reflect_operator(
+        &self,
+        value: &WholeEthosOperatorApplication,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let position = self
+            .priors
+            .object_application_heads
+            .iter()
+            .position(|operator| operator == &value.operator)
+            .ok_or_else(|| EthosEncodeError::UnregisteredObjectApplicationHead {
+                found: value.operator.clone(),
+            })?;
+        let position = u16::try_from(position)
+            .expect("sealed object-application seating fits constructor-local space");
+        let local = 3_u16
+            .checked_add(position)
+            .expect("sealed object-application seating fits constructor-local space");
+        let fields = value
+            .fields
+            .iter()
+            .map(|field| self.reflect_reference(field))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|field| FieldValue::Delegated(Box::new(field)))
+            .collect();
+        let payload = Self::reflect_application_delimited(
+            &self.ids.operator_payload,
+            0,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            fields,
+        )?;
+        Self::reflect_application(
+            &self.ids.item,
+            local,
+            FieldValue::Literal(value.operator.clone()),
+            FieldValue::Delegated(Box::new(payload)),
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_trait(
+        &self,
+        value: &WholeEthosTrait,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let methods = value
+            .methods
+            .iter()
+            .map(|method| self.reflect_method(method))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|method| FieldValue::Delegated(Box::new(method)))
+            .collect();
+        Self::reflect_application_delimited(
+            &self.ids.trait_declaration,
+            0,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            methods,
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_method(
+        &self,
+        value: &WholeEthosMethod,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let mut signature = value
+            .parameters
+            .iter()
+            .map(|parameter| self.reflect_reference(parameter))
+            .collect::<Result<Vec<_>, _>>()?;
+        signature.push(self.reflect_reference(&value.return_type)?);
+        let signature = signature
+            .into_iter()
+            .map(|reference| FieldValue::Delegated(Box::new(reference)))
+            .collect();
+        Self::reflect_application_delimited(
+            &self.ids.method,
+            0,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            signature,
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_table(
+        &self,
+        value: &WholeEthosTable,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        let fields = vec![
+            FieldValue::Delegated(Box::new(self.reflect_reference(&value.record)?)),
+            FieldValue::Delegated(Box::new(self.reflect_reference(&value.key)?)),
+        ];
+        Self::reflect_application_delimited(
+            &self.ids.table,
+            0,
+            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
+            fields,
+        )
+        .map_err(Into::into)
+    }
+
+    fn reflect_reference(
+        &self,
+        value: &WholeEthosTypeReference,
+    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
+        match value {
+            WholeEthosTypeReference::Identity(identity) => Self::reflect_unary(
+                &self.ids.type_reference,
+                0,
+                FieldValue::Reference(ResolvedReference::new(identity.clone())),
+            )
+            .map_err(Into::into),
+            WholeEthosTypeReference::Application(application) => Self::reflect_application(
+                &self.ids.type_reference,
+                1,
+                FieldValue::Reference(ResolvedReference::new(application.head.clone())),
+                FieldValue::Delegated(Box::new(self.reflect_reference(&application.payload)?)),
+            )
+            .map_err(Into::into),
+        }
+    }
+
+    fn reflect_unary(
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+        root: FieldValue<VocabularyRoot>,
+    ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
+        let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, local));
+        record.insert::<UnaryRoot>(root)?;
+        Ok(record.finish())
+    }
+
+    fn reflect_application(
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+        head: FieldValue<VocabularyRoot>,
+        payload: FieldValue<VocabularyRoot>,
+    ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
+        let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, local));
+        record.insert::<ApplicationRoot>(FieldValue::Application {
+            head: Box::new(head.clone()),
+            payload: Box::new(payload.clone()),
+        })?;
+        record.insert::<ApplicationHead>(head)?;
+        record.insert::<ApplicationPayload>(payload)?;
+        Ok(record.finish())
+    }
+
+    fn reflect_application_delimited(
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+        head: FieldValue<VocabularyRoot>,
+        items: Vec<FieldValue<VocabularyRoot>>,
+    ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
+        let items = FieldValue::Repeated(items);
+        let body = FieldValue::Delimited(Box::new(items.clone()));
+        let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, local));
+        record.insert::<ApplicationDelimitedRoot>(FieldValue::Application {
+            head: Box::new(head.clone()),
+            payload: Box::new(body.clone()),
+        })?;
+        record.insert::<ApplicationDelimitedHead>(head)?;
+        record.insert::<ApplicationDelimitedBody>(body)?;
+        record.insert::<ApplicationDelimitedItems>(items)?;
+        Ok(record.finish())
+    }
+
+    fn reflect_delimited_list(
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        items: Vec<FieldValue<VocabularyRoot>>,
+    ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
+        let items = FieldValue::Repeated(items);
+        let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, 0));
+        record.insert::<DelimitedRootRole>(FieldValue::Delimited(Box::new(items.clone())))?;
+        record.insert::<DelimitedItemsRole>(items)?;
+        Ok(record.finish())
+    }
 }
 
 impl EthosDocumentCodec for EthosCodec {
@@ -2408,21 +3111,11 @@ impl EthosDocumentCodec for EthosCodec {
             .iter()
             .find(|registration| registration.kind == header.kind)
             .ok_or(EthosDecodeError::UnregisteredFileKind { kind: header.kind })?;
-        let selected_root = registration.document.clone();
-        let decoded = evaluator.decode_text_bounded(&selected_root, source, bindings)?;
-        let imports_source_bound = field_bound::<ImportsRole>(&decoded, "imports")?;
-        let body_source_bound = field_bound::<BodyRole>(&decoded, "body")?;
-        let mirror = decoded.into_value();
+        let mirror = evaluator.decode_text(&registration.document, source, bindings)?;
+        let imports = self.reify_imports(delegated::<ImportsRole>(&mirror, "imports")?)?;
         let ethos = self.reify_document(registration, &mirror)?;
 
-        Ok(DecodedEthos {
-            ethos,
-            mirror,
-            selected_root,
-            source: source.to_owned(),
-            imports_source_bound,
-            body_source_bound,
-        })
+        Ok(DecodedEthos { ethos, imports })
     }
 
     fn encode<Resolver: structural_codec::EncodedNameResolver<VocabularyRoot> + ?Sized>(
@@ -2430,29 +3123,20 @@ impl EthosDocumentCodec for EthosCodec {
         decoded: &DecodedEthos,
         resolver: &Resolver,
     ) -> Result<String, EthosEncodeError> {
-        // `[assumption primary-vq6.1-A2 — formatting-preserving projection]`:
-        // the structural mirror intentionally excludes trivia. We still encode
-        // it here to prove that the typed value is renderable, then return the
-        // retained source projection so psyche-reviewed formatting round-trips
-        // byte-for-byte rather than being collapsed to canonical one-line text.
-        let _canonical = StructuralEvaluator::new(&self.table)?.encode_text(
-            &decoded.selected_root,
-            &decoded.mirror,
+        let (selected_root, reflected) = self.reflect_document(&decoded.ethos, &decoded.imports)?;
+        Ok(StructuralEvaluator::new(&self.table)?.encode_text(
+            &selected_root,
+            &reflected,
             resolver,
-        )?;
-        Ok(decoded.source.clone())
+        )?)
     }
 }
 
-/// A decoded encoded document plus its source-only imports and projection.
-#[derive(Clone, Debug, PartialEq)]
+/// A decoded encoded document plus its typed, source-only imports.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecodedEthos {
     ethos: WholeEthos,
-    mirror: structural_codec::StructuralValue<VocabularyRoot>,
-    selected_root: EncodedTypeId<VocabularyRoot>,
-    source: String,
-    imports_source_bound: SourceBound,
-    body_source_bound: SourceBound,
+    imports: WholeEthosImports,
 }
 
 // Trait exception — too trivial: read-only projections of validated state.
@@ -2462,14 +3146,9 @@ impl DecodedEthos {
         &self.ethos
     }
 
-    /// Exact textual-only imports object.
-    pub fn imports_source(&self) -> &str {
-        &self.source[self.imports_source_bound.start()..self.imports_source_bound.end()]
-    }
-
-    /// Exact source bound of the selected body.
-    pub const fn body_source_bound(&self) -> SourceBound {
-        self.body_source_bound
+    /// Typed source-only imports used when reflecting the document to text.
+    pub const fn imports(&self) -> &WholeEthosImports {
+        &self.imports
     }
 
     /// Consume the runtime wrapper and retain encoded data only.
@@ -2529,7 +3208,12 @@ fn typed_entry_with_rules(
 }
 
 fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
-    let active = TriggerSet::new(vec![SQUARE_BOUNDARY, BRACE_BOUNDARY, WHITESPACE_TRIVIA]);
+    let active = TriggerSet::new(vec![
+        SQUARE_BOUNDARY,
+        BRACE_BOUNDARY,
+        TEXT_CARRIER,
+        WHITESPACE_TRIVIA,
+    ]);
     BlockTreeDiscoveryConfiguration::new(
         BoundaryDiscoveryConfiguration::new(
             ROOT_CONTEXT,
@@ -2550,8 +3234,8 @@ fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
 
 fn ethos_rendering() -> TextualRenderingPolicy {
     TextualRenderingPolicy::new(vec![
-        ContextualTextualPolicy::new(ROOT_CONTEXT, Some(WHITESPACE_TRIVIA), None),
-        ContextualTextualPolicy::new(CHILD_CONTEXT, Some(WHITESPACE_TRIVIA), None),
+        ContextualTextualPolicy::new(ROOT_CONTEXT, Some(WHITESPACE_TRIVIA), Some(TEXT_CARRIER)),
+        ContextualTextualPolicy::new(CHILD_CONTEXT, Some(WHITESPACE_TRIVIA), Some(TEXT_CARRIER)),
     ])
 }
 
@@ -2632,15 +3316,6 @@ fn scalar_integer<Role: FieldRole>(
     }
 }
 
-fn field_bound<Role: FieldRole>(
-    value: &structural_codec::SourceBoundedStructuralValue<VocabularyRoot>,
-    what: &'static str,
-) -> Result<SourceBound, EthosDecodeError> {
-    value
-        .field_bound::<Role>()
-        .ok_or(EthosDecodeError::MissingSourceBound(what))
-}
-
 fn validate_decoded_id(
     position: DecodedEncodedIdPosition,
     encoded_id: &VocabularyEncodedId,
@@ -2683,18 +3358,48 @@ pub enum EthosCodecBuildError {
 /// Failure while rendering a decoded Ethos document.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EthosEncodeError {
+    /// The typed encoded carrier violates a public invariant.
+    #[error(transparent)]
+    InvalidDocument(#[from] WholeEthosArchiveError),
+
+    /// Reflection could not construct a checked typed-role mirror.
+    #[error(transparent)]
+    Authoring(#[from] structural_codec::AuthoringError),
+
     /// The sealed table could not construct its evaluator.
     #[error(transparent)]
     Evaluator(#[from] structural_codec::DecodeError<VocabularyRoot>),
 
-    /// The retained mirror could not be rendered under its selected root.
+    /// The reflected encoded value could not be rendered under its selected root.
     #[error(transparent)]
     Structural(#[from] structural_codec::EncodeError<VocabularyRoot>),
+
+    /// A supported kind was not seated in the codec registry.
+    #[error("Ethos file kind {kind:?} has no registered document root")]
+    UnregisteredFileKind {
+        /// Missing runtime registration.
+        kind: WholeEthosFileKind,
+    },
+
+    /// A source-only import must name at least one imported item.
+    #[error("Ethos import has no imported names")]
+    EmptyImportNames,
+
+    /// An encoded operator application is absent from this codec's priors.
+    #[error("Ethos operator application uses unregistered head {found:?}")]
+    UnregisteredObjectApplicationHead {
+        /// Rejected operator identity.
+        found: VocabularyEncodedId,
+    },
 }
 
 /// Failure while decoding or reifying a Whole-Ethos document.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EthosDecodeError {
+    /// Reified data violated an encoded carrier invariant.
+    #[error(transparent)]
+    InvalidDocument(#[from] WholeEthosArchiveError),
+
     /// Shared structural evaluation refused the source.
     #[error(transparent)]
     Structural(#[from] structural_codec::DecodeError<VocabularyRoot>),
@@ -2752,10 +3457,6 @@ pub enum EthosDecodeError {
     #[error("the Ethos structural value did not fit {0}")]
     Shape(&'static str),
 
-    /// A source-bound role was unexpectedly absent.
-    #[error("the Ethos structural value omitted the source bound for {0}")]
-    MissingSourceBound(&'static str),
-
     /// Whole-Ethos vocabulary uses Universal identities only.
     #[error("decoded {position:?} uses non-Universal root {root:?}")]
     NonUniversalEncodedId {
@@ -2783,3 +3484,7 @@ pub enum WholeEthosReferencePriorPosition {
     /// Unary application head.
     ApplicationHead,
 }
+
+#[cfg(test)]
+#[path = "whole_invariant_tests.rs"]
+mod invariant_tests;
