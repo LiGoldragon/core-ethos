@@ -1012,8 +1012,14 @@ impl EthosCodec {
 
 /// Lookup-only identities admitted at Whole-Ethos reference positions.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WholeEthosBuiltinPriors(Vec<VocabularyEncodedId>, Vec<VocabularyEncodedId>);
+pub struct WholeEthosBuiltinPriors {
+    identities: Vec<VocabularyEncodedId>,
+    application_heads: Vec<VocabularyEncodedId>,
+}
 
+// Trait exception — the proper trait cannot be determined: this compatibility
+// surface preserves its existing constructor and lookup contract while its
+// storage positions acquire semantic field names.
 impl WholeEthosBuiltinPriors {
     /// Register exact Universal identities already assigned to Integer and Vector.
     pub fn new(
@@ -1022,17 +1028,20 @@ impl WholeEthosBuiltinPriors {
     ) -> Result<Self, WholeEthosBuiltinPriorError> {
         validate_builtin_prior(WholeEthosBuiltinPriorPosition::Integer, &integer)?;
         validate_builtin_prior(WholeEthosBuiltinPriorPosition::Vector, &vector)?;
-        Ok(Self(vec![integer], vec![vector]))
+        Ok(Self {
+            identities: vec![integer],
+            application_heads: vec![vector],
+        })
     }
 
     /// Builtin Integer's complete translator-issued identity.
     pub fn integer(&self) -> &VocabularyEncodedId {
-        &self.0[0]
+        &self.identities[0]
     }
 
     /// Builtin Vector's complete translator-issued identity.
     pub fn vector(&self) -> &VocabularyEncodedId {
-        &self.1[0]
+        &self.application_heads[0]
     }
 
     /// Admit another exact Universal identity at lookup-only type positions.
@@ -1041,8 +1050,8 @@ impl WholeEthosBuiltinPriors {
         identity: VocabularyEncodedId,
     ) -> Result<Self, WholeEthosBuiltinPriorError> {
         validate_builtin_prior(WholeEthosBuiltinPriorPosition::Identity, &identity)?;
-        if !self.0.contains(&identity) {
-            self.0.push(identity);
+        if !self.identities.contains(&identity) {
+            self.identities.push(identity);
         }
         Ok(self)
     }
@@ -1053,18 +1062,18 @@ impl WholeEthosBuiltinPriors {
         head: VocabularyEncodedId,
     ) -> Result<Self, WholeEthosBuiltinPriorError> {
         validate_builtin_prior(WholeEthosBuiltinPriorPosition::ApplicationHead, &head)?;
-        if !self.1.contains(&head) {
-            self.1.push(head);
+        if !self.application_heads.contains(&head) {
+            self.application_heads.push(head);
         }
         Ok(self)
     }
 
     fn accepts_identity(&self, identity: &VocabularyEncodedId) -> bool {
-        self.0.contains(identity)
+        self.identities.contains(identity)
     }
 
     fn accepts_application_head(&self, head: &VocabularyEncodedId) -> bool {
-        self.1.contains(head)
+        self.application_heads.contains(head)
     }
 }
 
