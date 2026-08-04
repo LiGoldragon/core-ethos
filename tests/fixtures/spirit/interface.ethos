@@ -23,10 +23,10 @@ Interface.1
     ObserverFilter.{Topics}
     ObserverSubscription.{SubscriptionToken}
     ObservationEvent.{Topic RecordIdentifier}
-    Stream.Observer.{ObserverFilter ObserverSubscription ObservationEvent}
+    Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)
     IntentFilter.{Query}
     IntentSubscription.{SubscriptionToken}
     IntentEvent.{Entry}
-    Stream.Intent.{IntentFilter IntentSubscription IntentEvent}
+    Intent.Stream.(IntentFilter IntentSubscription IntentEvent)
   ]
 }

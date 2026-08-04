@@ -6,6 +6,7 @@
 //! differ only by that root type and body record.
 
 use content_identity::{ArchiveError, PortableArchive};
+use nomos_types::StreamInitiation;
 use raw_discovery::{
     BlockTree, BlockTreeDiscoveryConfiguration, BoundaryDiscoveryConfiguration,
     BoundaryDiscoveryContext, BoundaryDiscoveryContextIdentifier, BoundaryDiscoveryTransition,
@@ -412,9 +413,22 @@ pub enum WholeEthosItem {
     Enumeration(WholeEthosEnumeration),
     /// One positional struct declaration.
     Struct(WholeEthosStruct),
-    /// One object-first Nomos application, such as `Stream.Observer.{...}`.
-    OperatorApplication(WholeEthosOperatorApplication),
+    /// One standalone stream-initiation transformer, such as
+    /// `Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)`.
+    StreamInitiation(WholeEthosStreamInitiation),
 }
+
+/// Stream-initiation source schema over Whole-Ethos identities and references.
+///
+/// The stream identity is declared by the outer name; the three positional
+/// references retain their distinct Nomos roles without admitting a universal
+/// operator-payload carrier.
+pub type WholeEthosStreamInitiation = StreamInitiation<
+    VocabularyEncodedId,
+    WholeEthosTypeReference,
+    WholeEthosTypeReference,
+    WholeEthosTypeReference,
+>;
 
 /// A newtype declaration.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -625,48 +639,6 @@ pub struct EmptyStructFields;
 #[error("enumeration declaration requires at least one variant")]
 pub struct EmptyEnumerationVariants;
 
-/// Object-first operator application with an authored name and positional payload.
-#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosOperatorApplication {
-    operator: VocabularyEncodedId,
-    name: VocabularyEncodedId,
-    fields: Vec<WholeEthosTypeReference>,
-}
-
-impl WholeEthosOperatorApplication {
-    /// Construct one syntactic Nomos application. This slice assigns no semantics.
-    pub fn new(
-        operator: VocabularyEncodedId,
-        name: VocabularyEncodedId,
-        fields: Vec<WholeEthosTypeReference>,
-    ) -> Result<Self, EmptyOperatorPayload> {
-        if fields.is_empty() {
-            Err(EmptyOperatorPayload)
-        } else {
-            Ok(Self {
-                operator,
-                name,
-                fields,
-            })
-        }
-    }
-
-    /// Resolved operator identity, such as Stream.
-    pub const fn operator(&self) -> &VocabularyEncodedId {
-        &self.operator
-    }
-
-    /// Authored application name.
-    pub const fn name(&self) -> &VocabularyEncodedId {
-        &self.name
-    }
-
-    /// Positional application payload.
-    pub fn fields(&self) -> &[WholeEthosTypeReference] {
-        &self.fields
-    }
-}
-
 /// One behavior trait declaration.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthosTrait {
@@ -708,11 +680,6 @@ impl WholeEthosTrait {
         Ok(())
     }
 }
-
-/// An operator application attempted to encode no payload fields.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("operator application requires at least one payload field")]
-pub struct EmptyOperatorPayload;
 
 /// A trait construction attempted to encode no methods.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -914,19 +881,16 @@ fn validate_items(items: &[WholeEthosItem]) -> Result<(), WholeEthosArchiveError
             WholeEthosItem::Newtype(newtype) => validate_newtype(newtype)?,
             WholeEthosItem::Enumeration(enumeration) => validate_enumeration(enumeration)?,
             WholeEthosItem::Struct(product) => validate_struct(product)?,
-            WholeEthosItem::OperatorApplication(application) => {
-                if application.fields.is_empty() {
-                    return Err(WholeEthosArchiveError::EmptyOperatorPayload);
-                }
+            WholeEthosItem::StreamInitiation(initiation) => {
                 validate_identity(
-                    &application.operator,
-                    WholeEthosEncodedIdPosition::ApplicationHead,
-                )?;
-                validate_identity(
-                    &application.name,
+                    &initiation.stream,
                     WholeEthosEncodedIdPosition::ApplicationName,
                 )?;
-                validate_references(&application.fields)?;
+                validate_references(&[
+                    initiation.query.clone(),
+                    initiation.subscription.clone(),
+                    initiation.event.clone(),
+                ])?;
             }
         }
     }
@@ -1089,10 +1053,6 @@ pub enum WholeEthosArchiveError {
     #[error("Whole-Ethos tuple variant payload has no positional fields")]
     EmptyTupleFields,
 
-    /// An operator application cannot be represented without payload fields.
-    #[error("Whole-Ethos operator application has no payload fields")]
-    EmptyOperatorPayload,
-
     /// A type application cannot be represented without arguments.
     #[error("Whole-Ethos type application has no arguments")]
     EmptyTypeArguments,
@@ -1148,7 +1108,6 @@ pub struct EthosGrammarIdentities {
     pub item: VocabularyEncodedId,
     pub variant: VocabularyEncodedId,
     pub type_reference: VocabularyEncodedId,
-    pub operator_payload: VocabularyEncodedId,
     pub trait_declaration: VocabularyEncodedId,
     pub method: VocabularyEncodedId,
     pub table: VocabularyEncodedId,
@@ -1176,7 +1135,6 @@ pub struct EthosGrammarIds {
     item: EncodedTypeId<VocabularyRoot>,
     variant: EncodedTypeId<VocabularyRoot>,
     type_reference: EncodedTypeId<VocabularyRoot>,
-    operator_payload: EncodedTypeId<VocabularyRoot>,
     trait_declaration: EncodedTypeId<VocabularyRoot>,
     method: EncodedTypeId<VocabularyRoot>,
     table: EncodedTypeId<VocabularyRoot>,
@@ -1212,7 +1170,6 @@ impl EthosGrammarIds {
             item: grammar_id!(item, Item),
             variant: grammar_id!(variant, Variant),
             type_reference: grammar_id!(type_reference, TypeReference),
-            operator_payload: grammar_id!(operator_payload, OperatorPayload),
             trait_declaration: grammar_id!(trait_declaration, TraitDeclaration),
             method: grammar_id!(method, Method),
             table: grammar_id!(table, Table),
@@ -1256,7 +1213,6 @@ pub enum EthosGrammarIdPosition {
     Item,
     Variant,
     TypeReference,
-    OperatorPayload,
     TraitDeclaration,
     Method,
     Table,
@@ -1275,12 +1231,12 @@ pub enum EthosGrammarError {
     },
 }
 
-/// Lookup-only identities accepted at reference and object-operator positions.
+/// Lookup-only identities accepted at reference and transformer positions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WholeEthosBuiltinPriors {
     identities: Vec<VocabularyEncodedId>,
     application_heads: Vec<VocabularyEncodedId>,
-    object_application_heads: Vec<VocabularyEncodedId>,
+    stream_transformer: Option<VocabularyEncodedId>,
 }
 
 // Trait exception — the proper trait cannot be determined: this public lookup
@@ -1296,7 +1252,7 @@ impl WholeEthosBuiltinPriors {
         Ok(Self {
             identities: vec![integer],
             application_heads: vec![vector],
-            object_application_heads: Vec::new(),
+            stream_transformer: None,
         })
     }
 
@@ -1334,15 +1290,13 @@ impl WholeEthosBuiltinPriors {
         Ok(self)
     }
 
-    /// Admit a standalone object-first application head such as Stream.
-    pub fn with_object_application_head(
+    /// Admit the strict standalone stream transformer head, such as `Stream`.
+    pub fn with_stream_transformer(
         mut self,
         head: VocabularyEncodedId,
     ) -> Result<Self, WholeEthosBuiltinPriorError> {
-        validate_builtin_prior(WholeEthosBuiltinPriorPosition::ObjectApplicationHead, &head)?;
-        if !self.object_application_heads.contains(&head) {
-            self.object_application_heads.push(head);
-        }
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::StreamTransformer, &head)?;
+        self.stream_transformer = Some(head);
         Ok(self)
     }
 
@@ -1376,7 +1330,7 @@ pub enum WholeEthosBuiltinPriorPosition {
     Vector,
     Identity,
     ApplicationHead,
-    ObjectApplicationHead,
+    StreamTransformer,
 }
 
 /// Invalid lookup-only prior configuration.
@@ -1976,15 +1930,11 @@ impl EthosCodec {
         )?);
         entries.push(delimited_list_entry(&ids.table_list, &ids.table)?);
 
-        let excluded_object_heads = priors.object_application_heads.clone();
         let newtype = || -> Result<WholeEthosRule, structural_codec::AuthoringError> {
             Ok(structural_rule(StructuralRule::Application(
                 ApplicationRule::new(
                     APPLICATION_OPERATOR,
-                    SharedDescriptor::DeclarationExcluding {
-                        atom: AtomDescriptor::with_case(AtomCase::PascalCase),
-                        excluded: excluded_object_heads.clone(),
-                    },
+                    SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
                     delegate(&ids.type_reference),
                 )?,
             )))
@@ -1994,10 +1944,7 @@ impl EthosCodec {
                 ApplicationDelimitedRule::new(
                     APPLICATION_OPERATOR,
                     BRACE_BOUNDARY,
-                    SharedDescriptor::DeclarationExcluding {
-                        atom: AtomDescriptor::with_case(AtomCase::PascalCase),
-                        excluded: excluded_object_heads.clone(),
-                    },
+                    SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
                     delegate(&ids.type_reference),
                     1,
                     None,
@@ -2011,10 +1958,7 @@ impl EthosCodec {
             ApplicationDelimitedRule::new(
                 APPLICATION_OPERATOR,
                 SQUARE_BOUNDARY,
-                SharedDescriptor::DeclarationExcluding {
-                    atom: AtomDescriptor::with_case(AtomCase::PascalCase),
-                    excluded: excluded_object_heads.clone(),
-                },
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
                 delegate(&ids.variant),
                 1,
                 None,
@@ -2025,19 +1969,31 @@ impl EthosCodec {
             ConstructorRule::new(1, enumeration),
             ConstructorRule::new(2, product()?),
         ];
-        let mut object_constructor = 3_u16;
-        for operator in &priors.object_application_heads {
+        if priors.stream_transformer.is_some() {
             item_rules.push(ConstructorRule::new(
-                object_constructor,
-                structural_rule(StructuralRule::Application(ApplicationRule::new(
-                    APPLICATION_OPERATOR,
-                    SharedDescriptor::Literal(operator.clone()),
-                    delegate(&ids.operator_payload),
-                )?)),
+                3,
+                structural_rule(StructuralRule::ApplicationDelimited(
+                    ApplicationDelimitedRule::new(
+                        APPLICATION_OPERATOR,
+                        PARENTHESIS_BOUNDARY,
+                        SharedDescriptor::InlineApplication {
+                            operator: APPLICATION_OPERATOR,
+                            head: Box::new(SharedDescriptor::Declaration(
+                                AtomDescriptor::with_case(AtomCase::PascalCase),
+                            )),
+                            payload: Box::new(SharedDescriptor::Literal(
+                                priors
+                                    .stream_transformer
+                                    .clone()
+                                    .expect("stream transformer is required by its grammar rule"),
+                            )),
+                        },
+                        delegate(&ids.type_reference),
+                        3,
+                        Some(3),
+                    )?,
+                )),
             ));
-            object_constructor = object_constructor
-                .checked_add(1)
-                .ok_or(EthosCodecBuildError::TooManyObjectApplicationHeads)?;
         }
         entries.push(typed_entry_with_rules(ids.item.clone(), item_rules));
 
@@ -2108,19 +2064,6 @@ impl EthosCodec {
             ],
         ));
 
-        entries.push(typed_entry(
-            ids.operator_payload.clone(),
-            structural_rule(StructuralRule::ApplicationDelimited(
-                ApplicationDelimitedRule::new(
-                    APPLICATION_OPERATOR,
-                    BRACE_BOUNDARY,
-                    SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
-                    delegate(&ids.type_reference),
-                    1,
-                    None,
-                )?,
-            )),
-        ));
         entries.push(typed_entry(
             ids.trait_declaration.clone(),
             structural_rule(StructuralRule::ApplicationDelimited(
@@ -2381,25 +2324,24 @@ impl EthosCodec {
         if constructor == &EncodedConstructorId::under(&self.ids.item, 2) {
             return self.reify_struct(item).map(WholeEthosItem::Struct);
         }
-        let mut object_constructor = 3_u16;
-        for operator in &self.priors.object_application_heads {
-            if constructor == &EncodedConstructorId::under(&self.ids.item, object_constructor) {
-                let payload = delegated::<ApplicationPayload>(item, "operator payload")?;
-                let name = declaration_id::<ApplicationDelimitedHead>(
-                    payload,
-                    "operator application name",
-                )?;
-                let fields = self.reify_references(repeated_delegates(
-                    payload,
-                    "operator application fields",
-                )?)?;
-                return WholeEthosOperatorApplication::new(operator.clone(), name, fields)
-                    .map(WholeEthosItem::OperatorApplication)
-                    .map_err(|_| EthosDecodeError::Shape("non-empty operator payload"));
-            }
-            object_constructor = object_constructor
-                .checked_add(1)
-                .ok_or(EthosDecodeError::Shape("object application constructor"))?;
+        if self.priors.stream_transformer.is_some()
+            && constructor == &EncodedConstructorId::under(&self.ids.item, 3)
+        {
+            let stream = inline_application_declaration_head::<ApplicationDelimitedHead>(
+                item,
+                "stream initiation name",
+            )?;
+            let fields =
+                self.reify_references(repeated_delegates(item, "stream initiation fields")?)?;
+            let [query, subscription, event] = fields.as_slice() else {
+                return Err(EthosDecodeError::Shape("three stream initiation fields"));
+            };
+            return Ok(WholeEthosItem::StreamInitiation(StreamInitiation {
+                stream,
+                query: query.clone(),
+                subscription: subscription.clone(),
+                event: event.clone(),
+            }));
         }
         Err(EthosDecodeError::Shape("type item constructor"))
     }
@@ -2825,7 +2767,7 @@ impl EthosCodec {
             WholeEthosItem::Newtype(value) => self.reflect_newtype(value, &self.ids.item, 0),
             WholeEthosItem::Enumeration(value) => self.reflect_enumeration(value),
             WholeEthosItem::Struct(value) => self.reflect_struct(value, &self.ids.item, 2),
-            WholeEthosItem::OperatorApplication(value) => self.reflect_operator(value),
+            WholeEthosItem::StreamInitiation(value) => self.reflect_stream_initiation(value),
         }
     }
 
@@ -2923,42 +2865,32 @@ impl EthosCodec {
         }
     }
 
-    fn reflect_operator(
+    fn reflect_stream_initiation(
         &self,
-        value: &WholeEthosOperatorApplication,
+        value: &WholeEthosStreamInitiation,
     ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
-        let position = self
+        let transformer = self
             .priors
-            .object_application_heads
-            .iter()
-            .position(|operator| operator == &value.operator)
-            .ok_or_else(|| EthosEncodeError::UnregisteredObjectApplicationHead {
-                found: value.operator.clone(),
-            })?;
-        let position = u16::try_from(position)
-            .expect("sealed object-application seating fits constructor-local space");
-        let local = 3_u16
-            .checked_add(position)
-            .expect("sealed object-application seating fits constructor-local space");
-        let fields = value
-            .fields
-            .iter()
+            .stream_transformer
+            .as_ref()
+            .ok_or(EthosEncodeError::UnregisteredStreamTransformer)?;
+        let fields = [&value.query, &value.subscription, &value.event]
+            .into_iter()
             .map(|field| self.reflect_reference(field))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .map(|field| FieldValue::Delegated(Box::new(field)))
             .collect();
-        let payload = Self::reflect_application_delimited(
-            &self.ids.operator_payload,
-            0,
-            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
-            fields,
-        )?;
-        Self::reflect_application(
+        Self::reflect_application_delimited(
             &self.ids.item,
-            local,
-            FieldValue::Literal(value.operator.clone()),
-            FieldValue::Delegated(Box::new(payload)),
+            3,
+            FieldValue::Application {
+                head: Box::new(FieldValue::Declaration(DeclarationAssignment::new(
+                    value.stream.clone(),
+                ))),
+                payload: Box::new(FieldValue::Literal(transformer.clone())),
+            },
+            fields,
         )
         .map_err(Into::into)
     }
@@ -3341,6 +3273,23 @@ fn declaration_id<Role: FieldRole>(
     }
 }
 
+fn inline_application_declaration_head<Role: FieldRole>(
+    value: &structural_codec::StructuralValue<VocabularyRoot>,
+    what: &'static str,
+) -> Result<VocabularyEncodedId, EthosDecodeError> {
+    match value.field::<Role>() {
+        Some(FieldValue::Application { head, .. }) => match head.as_ref() {
+            FieldValue::Declaration(assignment) => {
+                let encoded_id = assignment.encoded_id().clone();
+                validate_decoded_id(DecodedEncodedIdPosition::Declaration, &encoded_id)?;
+                Ok(encoded_id)
+            }
+            _ => Err(EthosDecodeError::Shape(what)),
+        },
+        _ => Err(EthosDecodeError::Shape(what)),
+    }
+}
+
 fn reference_id<Role: FieldRole>(
     value: &structural_codec::StructuralValue<VocabularyRoot>,
     what: &'static str,
@@ -3408,10 +3357,6 @@ pub enum EthosCodecBuildError {
     /// The complete structural table refused to seal.
     #[error(transparent)]
     Table(Box<structural_codec::TableError<VocabularyRoot>>),
-
-    /// Constructor-local space cannot hold the configured operator heads.
-    #[error("too many object application heads for constructor-local identities")]
-    TooManyObjectApplicationHeads,
 }
 
 /// Failure while rendering a decoded Ethos document.
@@ -3444,12 +3389,9 @@ pub enum EthosEncodeError {
     #[error("Ethos import has no imported names")]
     EmptyImportNames,
 
-    /// An encoded operator application is absent from this codec's priors.
-    #[error("Ethos operator application uses unregistered head {found:?}")]
-    UnregisteredObjectApplicationHead {
-        /// Rejected operator identity.
-        found: VocabularyEncodedId,
-    },
+    /// The strict stream transformer is absent from this codec's priors.
+    #[error("Ethos stream initiation requires a registered Stream transformer")]
+    UnregisteredStreamTransformer,
 }
 
 /// Failure while decoding or reifying a Whole-Ethos document.

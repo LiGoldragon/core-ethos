@@ -3,12 +3,11 @@
 use std::collections::BTreeMap;
 
 use core_ethos::{
-    EmptyEnumerationVariants, EmptyOperatorPayload, EmptyStructFields, EmptyTraitMethods,
-    EmptyTypeArguments, EthosCodec, EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds,
-    WholeEthos, WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody,
-    WholeEthosBuiltinPriors, WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader,
-    WholeEthosItem, WholeEthosNexusBody, WholeEthosOperatorApplication, WholeEthosStruct,
-    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosVisibility,
+    EmptyEnumerationVariants, EmptyStructFields, EmptyTraitMethods, EmptyTypeArguments, EthosCodec,
+    EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds, WholeEthos, WholeEthosArchiveError,
+    WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors, WholeEthosEnumeration,
+    WholeEthosFileKind, WholeEthosHeader, WholeEthosItem, WholeEthosNexusBody, WholeEthosStruct,
+    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -134,7 +133,6 @@ fn grammar_ids() -> EthosGrammarIds {
         item: encoded(216),
         variant: encoded(217),
         type_reference: encoded(218),
-        operator_payload: encoded(219),
         trait_declaration: encoded(220),
         method: encoded(221),
         table: encoded(222),
@@ -177,8 +175,8 @@ impl FixtureBindings {
         let mut priors =
             WholeEthosBuiltinPriors::new(self.identity("Integer"), self.identity("Vector"))
                 .expect("Universal builtins")
-                .with_object_application_head(self.identity("Stream"))
-                .expect("Universal Stream operator")
+                .with_stream_transformer(self.identity("Stream"))
+                .expect("Universal Stream transformer")
                 .with_application_head(self.identity("Result"))
                 .expect("Universal Result type head");
         for spelling in FIXTURE_TRANSLATOR_VOCABULARY {
@@ -407,6 +405,54 @@ fn strict_method_schema_roundtrips_the_sectioned_name_parenthesis_form() {
 }
 
 #[test]
+fn strict_stream_initiation_schema_roundtrips_the_standalone_name_transformer_form() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let source = "Interface.1\n[]\n{[] [] [] [Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)]}\n";
+    let decoded = codec
+        .decode(source, &bindings)
+        .expect("standalone named Stream transformer");
+    let WholeEthosBody::Interface(body) = decoded.ethos().body() else {
+        panic!("Interface header selects Interface body")
+    };
+    let [WholeEthosItem::StreamInitiation(initiation)] = body.types() else {
+        panic!("strict stream initiation schema")
+    };
+    assert_eq!(initiation.stream, bindings.identity("Observer"));
+    assert_eq!(
+        initiation.query,
+        WholeEthosTypeReference::Identity(bindings.identity("ObserverFilter"))
+    );
+    assert_eq!(
+        initiation.subscription,
+        WholeEthosTypeReference::Identity(bindings.identity("ObserverSubscription"))
+    );
+    assert_eq!(
+        initiation.event,
+        WholeEthosTypeReference::Identity(bindings.identity("ObservationEvent"))
+    );
+
+    let emitted = codec
+        .encode(&decoded, &bindings)
+        .expect("standalone named Stream transformer emits");
+    assert!(
+        emitted.contains("Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)")
+    );
+    assert_eq!(
+        codec
+            .decode(&emitted, &bindings)
+            .expect("reemitted stream initiation"),
+        decoded
+    );
+    assert!(codec
+        .decode(
+            "Interface.1\n[]\n{[] [] [] [Stream.Observer.{ObserverFilter ObserverSubscription ObservationEvent}]}\n",
+            &bindings,
+        )
+        .is_err());
+}
+
+#[test]
 fn public_constructors_reject_unsupported_headers_mismatched_bodies_and_empty_grammar_forms() {
     let name = encoded(900);
     assert!(matches!(
@@ -444,10 +490,6 @@ fn public_constructors_reject_unsupported_headers_mismatched_bodies_and_empty_gr
         ),
         Err(EmptyEnumerationVariants)
     );
-    assert_eq!(
-        WholeEthosOperatorApplication::new(name.clone(), name.clone(), vec![]),
-        Err(EmptyOperatorPayload)
-    );
     assert_eq!(WholeEthosTrait::new(name, vec![]), Err(EmptyTraitMethods));
 }
 
@@ -467,7 +509,7 @@ fn fixtures_reify_every_kind_specific_body_position() {
     assert_eq!(
         body.types()
             .iter()
-            .filter(|item| matches!(item, WholeEthosItem::OperatorApplication(_)))
+            .filter(|item| matches!(item, WholeEthosItem::StreamInitiation(_)))
             .count(),
         2
     );

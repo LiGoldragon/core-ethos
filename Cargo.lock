@@ -113,6 +113,7 @@ dependencies = [
  "content-identity 0.4.0",
  "name-table 0.1.0",
  "name-table 0.3.0",
+ "nomos-types",
  "protos",
  "raw-discovery",
  "rkyv",
@@ -237,6 +238,14 @@ dependencies = [
  "content-identity 0.4.0",
  "rkyv",
  "thiserror",
+]
+
+[[package]]
+name = "nomos-types"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/nomos-types.git?rev=183f76c74270fa54cc0d0ad84e860c542240e957#183f76c74270fa54cc0d0ad84e860c542240e957"
+dependencies = [
+ "rkyv",
 ]
 
 [[package]]
