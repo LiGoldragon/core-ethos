@@ -43,6 +43,7 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "ReferentRejection",
     "Topic",
     "Text",
+    "String",
     "Topics",
     "Vector",
     "Description",
