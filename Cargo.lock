@@ -243,7 +243,7 @@ dependencies = [
 [[package]]
 name = "nomos-types"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/nomos-types.git?rev=183f76c74270fa54cc0d0ad84e860c542240e957#183f76c74270fa54cc0d0ad84e860c542240e957"
+source = "git+https://github.com/LiGoldragon/nomos-types.git?rev=a7b831e0540a8ad263cd07ed44ec4c95c56771fb#a7b831e0540a8ad263cd07ed44ec4c95c56771fb"
 dependencies = [
  "rkyv",
 ]

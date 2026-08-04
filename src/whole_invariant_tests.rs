@@ -115,19 +115,3 @@ fn serialization_and_restore_reject_all_empty_grammar_cardinalities() {
         WholeEthosArchiveError::EmptyTraitMethods
     );
 }
-
-#[test]
-fn strict_stream_termination_schema_archives_without_an_authored_codec_form() {
-    let document = interface_document(WholeEthosItem::StreamTermination(
-        WholeEthosStreamTermination {
-            stream: identity(8),
-        },
-    ));
-    let bytes = document
-        .to_archive_bytes()
-        .expect("strict stream termination archive");
-    assert_eq!(
-        WholeEthos::from_archive_bytes(bytes.as_ref()).expect("strict stream termination restore"),
-        document
-    );
-}

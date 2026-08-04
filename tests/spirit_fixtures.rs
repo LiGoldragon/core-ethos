@@ -434,7 +434,8 @@ fn strict_method_schema_roundtrips_the_sectioned_name_parenthesis_form() {
 fn strict_stream_initiation_schema_roundtrips_the_standalone_name_transformer_form() {
     let bindings = FixtureBindings::new();
     let codec = codec(&bindings);
-    let source = "Interface.1\n[]\n{[] [] [] [Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)]}\n";
+    let source =
+        "Interface.1\n[]\n{[] [] [] [Observer.Stream.(ObserverFilter ObservationEvent)]}\n";
     let decoded = codec
         .decode(source, &bindings)
         .expect("standalone named Stream transformer");
@@ -450,10 +451,6 @@ fn strict_stream_initiation_schema_roundtrips_the_standalone_name_transformer_fo
         WholeEthosTypeReference::Identity(bindings.identity("ObserverFilter"))
     );
     assert_eq!(
-        initiation.subscription,
-        WholeEthosTypeReference::Identity(bindings.identity("ObserverSubscription"))
-    );
-    assert_eq!(
         initiation.event,
         WholeEthosTypeReference::Identity(bindings.identity("ObservationEvent"))
     );
@@ -461,21 +458,30 @@ fn strict_stream_initiation_schema_roundtrips_the_standalone_name_transformer_fo
     let emitted = codec
         .encode(&decoded, &bindings)
         .expect("standalone named Stream transformer emits");
-    assert!(
-        emitted.contains("Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)")
-    );
+    assert!(emitted.contains("Observer.Stream.(ObserverFilter ObservationEvent)"));
     assert_eq!(
         codec
             .decode(&emitted, &bindings)
             .expect("reemitted stream initiation"),
         decoded
     );
-    assert!(codec
-        .decode(
-            "Interface.1\n[]\n{[] [] [] [Stream.Observer.{ObserverFilter ObserverSubscription ObservationEvent}]}\n",
-            &bindings,
-        )
-        .is_err());
+    assert!(
+        codec
+            .decode(
+                "Interface.1\n[]\n{[] [] [] [Stream.Observer.{ObserverFilter ObservationEvent}]}\n",
+                &bindings,
+            )
+            .is_err()
+    );
+    assert!(
+        codec
+            .decode(
+                "Interface.1\n[]\n{[] [] [] [Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)]}\n",
+                &bindings,
+            )
+            .is_err(),
+        "the retired subscription/grant role must not re-enter strict StreamInitiation"
+    );
 }
 
 #[test]

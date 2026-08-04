@@ -90,13 +90,16 @@ impl TryFrom<EncodedEthosArchive> for EncodedEthos {
     }
 }
 
-/// One reusable subscription protocol relation, entirely in encoded data.
+/// Legacy subscription protocol relation, entirely in encoded data.
 ///
 /// The relation links an input opener and output acknowledgement by their ordered
 /// interface-variant identifiers, then names the encoded references for its token,
 /// event, and close-token values. A downstream signal projection generates the
-/// existing streaming-frame topology from this relation; Spirit is not named here
-/// and no source spelling is implied by this data model.
+/// existing streaming-frame topology from this relation. It is quarantined from
+/// the strict Stream lifecycle: xqb.3 establishes `Stream<Event>` directly and
+/// terminates through a separate strict input, never through these token or
+/// acknowledgement fields. Spirit is not named here and no source spelling is
+/// implied by this legacy data model.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct StreamingRelation {
     opening_input_variant: Identifier,

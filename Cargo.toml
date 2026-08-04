@@ -16,7 +16,7 @@ path = "src/lib.rs"
 content-identity         = { git = "https://github.com/LiGoldragon/content-identity.git", rev = "24b43bae5d9748b0e7f679c6ec9f85a643c4d36a" }
 capsule-content-identity = { package = "content-identity", git = "https://github.com/LiGoldragon/content-identity.git", rev = "fdf2db1d5a9e8ea52d24d39a03833c3e6885c355" }
 name-table               = { git = "https://github.com/LiGoldragon/name-table.git", rev = "196610e2907687dcb8dbd0d2dfaafe4aefd9fa27" }
-nomos-types              = { git = "https://github.com/LiGoldragon/nomos-types.git", rev = "183f76c74270fa54cc0d0ad84e860c542240e957" }
+nomos-types              = { git = "https://github.com/LiGoldragon/nomos-types.git", rev = "a7b831e0540a8ad263cd07ed44ec4c95c56771fb" }
 protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1343d0c405cdb6929552ea6b12c48739e73f35ab" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2d4e2e00f2821c4e2893fa96028cef0ac76e9644" }
 structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "d3b7d2bacf8bb72db63d9a25f20d489bcfc8219c" }
