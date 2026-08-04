@@ -2160,6 +2160,18 @@ impl EthosCodec {
                         )?,
                     )),
                 ),
+                ConstructorRule::new(
+                    2,
+                    structural_rule(StructuralRule::Application(ApplicationRule::new(
+                        APPLICATION_OPERATOR,
+                        SharedDescriptor::Declaration(AtomDescriptor::with_case(
+                            AtomCase::PascalCase,
+                        )),
+                        SharedDescriptor::Reference(AtomDescriptor::with_case(
+                            AtomCase::PascalCase,
+                        )),
+                    )?)),
+                ),
             ],
         ));
 
@@ -2600,6 +2612,19 @@ impl EthosCodec {
                 .map_err(|_| EthosDecodeError::Shape("non-empty type application arguments"))?,
             ));
         }
+        if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 2) {
+            let name = declaration_id::<ApplicationHead>(reference, "parameter name")?;
+            let quality = reference_id::<ApplicationPayload>(reference, "parameter quality")?;
+            if !self.priors.accepts_trait_quality(&quality) {
+                return Err(EthosDecodeError::UnregisteredReferencePrior {
+                    position: WholeEthosReferencePriorPosition::TraitQuality,
+                    found: quality,
+                });
+            }
+            return Ok(WholeEthosTypeReference::Parameter(
+                WholeEthosTypeParameter::new(name, WholeEthosQuality::Trait(quality)),
+            ));
+        }
         Err(EthosDecodeError::Shape("type reference constructor"))
     }
 
@@ -3000,12 +3025,31 @@ impl EthosCodec {
                 FieldValue::Reference(ResolvedReference::new(identity.clone())),
             )
             .map_err(Into::into),
-            WholeEthosTypeReference::Parameter(parameter) => Self::reflect_unary(
-                &self.ids.type_reference,
-                0,
-                FieldValue::Reference(ResolvedReference::new(parameter.name.clone())),
-            )
-            .map_err(Into::into),
+            WholeEthosTypeReference::Parameter(parameter) => {
+                let WholeEthosQuality::Trait(quality) = parameter.quality() else {
+                    return Err(EthosEncodeError::InvalidDocument(
+                        WholeEthosArchiveError::TypeParameterQualityMustBeTrait {
+                            quality: parameter.quality().identity().clone(),
+                        },
+                    ));
+                };
+                if parameter.name() == quality {
+                    Self::reflect_unary(
+                        &self.ids.type_reference,
+                        0,
+                        FieldValue::Reference(ResolvedReference::new(parameter.name.clone())),
+                    )
+                    .map_err(Into::into)
+                } else {
+                    Self::reflect_application(
+                        &self.ids.type_reference,
+                        2,
+                        FieldValue::Declaration(DeclarationAssignment::new(parameter.name.clone())),
+                        FieldValue::Reference(ResolvedReference::new(quality.clone())),
+                    )
+                    .map_err(Into::into)
+                }
+            }
             WholeEthosTypeReference::Application(application) => {
                 Self::reflect_adjacent_application_delimited(
                     &self.ids.type_reference,
@@ -3525,6 +3569,8 @@ pub enum WholeEthosReferencePriorPosition {
     Identity,
     /// Unary application head.
     ApplicationHead,
+    /// Named type-parameter trait quality.
+    TraitQuality,
 }
 
 #[cfg(test)]

@@ -98,6 +98,9 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "Domain",
     "Result",
     "Ordered",
+    "Left",
+    "Right",
+    "Sortable",
     "Error",
     "Name",
 ];
@@ -175,6 +178,9 @@ impl FixtureBindings {
                 .expect("Universal Result type head")
                 .with_trait_quality(self.identity("Ordered"))
                 .expect("Universal Ordered trait quality");
+        priors = priors
+            .with_trait_quality(self.identity("Sortable"))
+            .expect("Universal Sortable trait quality");
         for spelling in FIXTURE_TRANSLATOR_VOCABULARY {
             priors = priors
                 .with_identity(self.identity(spelling))
@@ -340,7 +346,7 @@ fn source_only_import_text_preserves_meaningful_whitespace_through_canonical_emi
 fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
     let bindings = FixtureBindings::new();
     let codec = codec(&bindings);
-    let source = "Interface.1\n[]\n{[Name.Result<Vector<Ordered> Error>] [] [] []}\n";
+    let source = "Interface.1\n[]\n{[Name.Result<Vector<Ordered> Ordered>] [] [] []}\n";
     let decoded = codec
         .decode(source, &bindings)
         .expect("strict nested angle type reference");
@@ -370,7 +376,7 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
     let emitted = codec
         .encode(&decoded, &bindings)
         .expect("strict nested angle type reference emits");
-    assert!(emitted.contains("Name.Result<Vector<Ordered> Error>"));
+    assert!(emitted.contains("Name.Result<Vector<Ordered> Ordered>"));
     assert_eq!(
         codec.decode(&emitted, &bindings).expect("reemitted type"),
         decoded
@@ -398,6 +404,70 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
             vec![]
         ),
         Err(EmptyTypeArguments)
+    );
+}
+
+#[test]
+fn named_trait_parameters_diverge_while_bare_trait_uses_corefer() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let source = "Interface.1\n[]\n{[Name.Result<Left.Sortable Right.Sortable>] [] [] []}\n";
+    let decoded = codec
+        .decode(source, &bindings)
+        .expect("named trait parameters decode");
+    let WholeEthosBody::Interface(body) = decoded.ethos().body() else {
+        panic!("Interface fixture body")
+    };
+    let [newtype] = body.inputs() else {
+        panic!("one input newtype")
+    };
+    assert_eq!(
+        newtype.type_parameters(),
+        &[
+            WholeEthosTypeParameter::new(
+                bindings.identity("Left"),
+                WholeEthosQuality::Trait(bindings.identity("Sortable")),
+            ),
+            WholeEthosTypeParameter::new(
+                bindings.identity("Right"),
+                WholeEthosQuality::Trait(bindings.identity("Sortable")),
+            ),
+        ]
+    );
+    let WholeEthosTypeReference::Application(result) = newtype.wrapped_field().reference() else {
+        panic!("Result application")
+    };
+    assert_eq!(result.arguments().len(), 2);
+    assert!(matches!(
+        &result.arguments()[0],
+        WholeEthosTypeReference::Parameter(parameter)
+            if parameter.name() == &bindings.identity("Left")
+                && parameter.quality() == &WholeEthosQuality::Trait(bindings.identity("Sortable"))
+    ));
+    assert!(matches!(
+        &result.arguments()[1],
+        WholeEthosTypeReference::Parameter(parameter)
+            if parameter.name() == &bindings.identity("Right")
+                && parameter.quality() == &WholeEthosQuality::Trait(bindings.identity("Sortable"))
+    ));
+    let emitted = codec
+        .encode(&decoded, &bindings)
+        .expect("named parameters emit");
+    assert!(emitted.contains("Name.Result<Left.Sortable Right.Sortable>"));
+    assert_eq!(
+        codec
+            .decode(&emitted, &bindings)
+            .expect("reemitted named parameters"),
+        decoded
+    );
+    assert!(
+        codec
+            .decode(
+                "Interface.1\n[]\n{[Name.Result<Left.Result Right.Sortable>] [] [] []}\n",
+                &bindings,
+            )
+            .is_err(),
+        "named parameter RHS must be a registered trait quality"
     );
 }
 

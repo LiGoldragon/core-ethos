@@ -433,7 +433,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "structural-codec"
 version = "0.19.0"
-source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=d3b7d2bacf8bb72db63d9a25f20d489bcfc8219c#d3b7d2bacf8bb72db63d9a25f20d489bcfc8219c"
+source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=fc6807f4365cde1551bbfe120520aec68245abdb#fc6807f4365cde1551bbfe120520aec68245abdb"
 dependencies = [
  "content-identity 0.3.0",
  "name-table 0.3.0",

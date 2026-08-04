@@ -19,7 +19,7 @@ name-table               = { git = "https://github.com/LiGoldragon/name-table.gi
 nomos-types              = { git = "https://github.com/LiGoldragon/nomos-types.git", rev = "a7b831e0540a8ad263cd07ed44ec4c95c56771fb" }
 protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "1343d0c405cdb6929552ea6b12c48739e73f35ab" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2d4e2e00f2821c4e2893fa96028cef0ac76e9644" }
-structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "d3b7d2bacf8bb72db63d9a25f20d489bcfc8219c" }
+structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "fc6807f4365cde1551bbfe120520aec68245abdb" }
 signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "51c02c4a7b6f67d9dad095f11986085d7d65785b" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
