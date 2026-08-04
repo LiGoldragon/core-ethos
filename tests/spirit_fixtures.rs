@@ -7,7 +7,8 @@ use core_ethos::{
     EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds, WholeEthos, WholeEthosArchiveError,
     WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors, WholeEthosEnumeration,
     WholeEthosFileKind, WholeEthosHeader, WholeEthosItem, WholeEthosNexusBody, WholeEthosStruct,
-    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVisibility,
+    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeParameter, WholeEthosTypeReference,
+    WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -178,7 +179,9 @@ impl FixtureBindings {
                 .with_stream_transformer(self.identity("Stream"))
                 .expect("Universal Stream transformer")
                 .with_application_head(self.identity("Result"))
-                .expect("Universal Result type head");
+                .expect("Universal Result type head")
+                .with_trait_quality(self.identity("Ordered"))
+                .expect("Universal Ordered trait quality");
         for spelling in FIXTURE_TRANSLATOR_VOCABULARY {
             priors = priors
                 .with_identity(self.identity(spelling))
@@ -348,6 +351,29 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
     let decoded = codec
         .decode(source, &bindings)
         .expect("strict nested angle type reference");
+    let WholeEthosBody::Interface(body) = decoded.ethos().body() else {
+        panic!("Interface fixture body")
+    };
+    let [newtype] = body.inputs() else {
+        panic!("one input newtype")
+    };
+    assert_eq!(
+        newtype.type_parameters(),
+        &[WholeEthosTypeParameter::new(
+            bindings.identity("Ordered"),
+            bindings.identity("Ordered"),
+        )]
+    );
+    let WholeEthosTypeReference::Application(result) = newtype.wrapped_field().reference() else {
+        panic!("Result application")
+    };
+    let WholeEthosTypeReference::Application(vector) = &result.arguments()[0] else {
+        panic!("nested Vector application")
+    };
+    assert!(matches!(
+        vector.arguments()[0],
+        WholeEthosTypeReference::Parameter(_)
+    ));
     let emitted = codec
         .encode(&decoded, &bindings)
         .expect("strict nested angle type reference emits");

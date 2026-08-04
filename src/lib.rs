@@ -40,6 +40,7 @@ pub use whole::{
     WholeEthosImports, WholeEthosInterfaceBody, WholeEthosItem, WholeEthosMethod,
     WholeEthosNewtype, WholeEthosNexusBody, WholeEthosReferencePriorPosition, WholeEthosSemaBody,
     WholeEthosStreamInitiation, WholeEthosStreamTermination, WholeEthosStruct, WholeEthosTable,
-    WholeEthosTrait, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference,
-    WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
+    WholeEthosTrait, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeParameter,
+    WholeEthosTypeReference, WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility,
+    WholeEthosWrappedField,
 };

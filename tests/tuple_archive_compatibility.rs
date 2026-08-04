@@ -13,6 +13,7 @@ struct NamedWholeEthosNewtype {
     name: VocabularyEncodedId,
     visibility: WholeEthosVisibility,
     attributes: WholeEthosAttributes,
+    type_parameters: Vec<core_ethos::WholeEthosTypeParameter>,
     wrapped_field: WholeEthosWrappedField,
 }
 
@@ -163,6 +164,7 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
             name: newtype_name,
             visibility: WholeEthosVisibility::Public,
             attributes: WholeEthosAttributes::empty(),
+            type_parameters: Vec::new(),
             wrapped_field,
         }
     );

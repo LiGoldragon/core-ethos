@@ -445,6 +445,7 @@ pub struct WholeEthosNewtype {
     name: VocabularyEncodedId,
     visibility: WholeEthosVisibility,
     attributes: WholeEthosAttributes,
+    type_parameters: Vec<WholeEthosTypeParameter>,
     wrapped_field: WholeEthosWrappedField,
 }
 
@@ -460,6 +461,7 @@ impl WholeEthosNewtype {
             name,
             visibility,
             attributes,
+            type_parameters: type_parameters_for_reference(wrapped_field.reference()),
             wrapped_field,
         }
     }
@@ -477,6 +479,11 @@ impl WholeEthosNewtype {
     /// Typed attribute sequence, currently empty.
     pub const fn attributes(&self) -> &WholeEthosAttributes {
         &self.attributes
+    }
+
+    /// Trait-quality parameters picked up by uses in the wrapped field.
+    pub fn type_parameters(&self) -> &[WholeEthosTypeParameter] {
+        &self.type_parameters
     }
 
     /// Wrapped field.
@@ -784,8 +791,64 @@ impl WholeEthosTable {
 pub enum WholeEthosTypeReference {
     /// One complete lookup-resolved identity.
     Identity(VocabularyEncodedId),
+    /// A use of an item-local type parameter picked up from a trait quality.
+    Parameter(WholeEthosTypeParameter),
     /// A non-empty adjacent angle application such as `Vector<Topic>`.
     Application(WholeEthosTypeApplication),
+}
+
+/// One picked-up parameter and its authored trait-quality bound.
+///
+/// The parameter name and quality are both complete concept-layer identities.
+/// Rust-only spelling translation is deliberately outside this carrier.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct WholeEthosTypeParameter {
+    name: VocabularyEncodedId,
+    quality: VocabularyEncodedId,
+}
+
+impl WholeEthosTypeParameter {
+    /// Construct one parameter with an explicit trait-quality bound.
+    pub fn new(name: VocabularyEncodedId, quality: VocabularyEncodedId) -> Self {
+        Self { name, quality }
+    }
+
+    /// The retained proper parameter name.
+    pub const fn name(&self) -> &VocabularyEncodedId {
+        &self.name
+    }
+
+    /// The authored trait quality constraining this parameter.
+    pub const fn quality(&self) -> &VocabularyEncodedId {
+        &self.quality
+    }
+}
+
+fn type_parameters_for_reference(
+    reference: &WholeEthosTypeReference,
+) -> Vec<WholeEthosTypeParameter> {
+    let mut parameters = Vec::new();
+    collect_type_parameters(reference, &mut parameters);
+    parameters
+}
+
+fn collect_type_parameters(
+    reference: &WholeEthosTypeReference,
+    parameters: &mut Vec<WholeEthosTypeParameter>,
+) {
+    match reference {
+        WholeEthosTypeReference::Identity(_) => {}
+        WholeEthosTypeReference::Parameter(parameter) => {
+            if !parameters.contains(parameter) {
+                parameters.push(parameter.clone());
+            }
+        }
+        WholeEthosTypeReference::Application(application) => {
+            for argument in application.arguments() {
+                collect_type_parameters(argument, parameters);
+            }
+        }
+    }
 }
 
 /// One non-empty adjacent angle type application.
@@ -927,7 +990,36 @@ fn validate_newtype(newtype: &WholeEthosNewtype) -> Result<(), WholeEthosArchive
         return Err(WholeEthosArchiveError::InvalidWrappedFieldVisibility);
     }
     validate_identity(&newtype.name, WholeEthosEncodedIdPosition::ItemName)?;
-    validate_reference(&newtype.wrapped_field.reference)
+    validate_reference(&newtype.wrapped_field.reference)?;
+    validate_type_parameters(&newtype.type_parameters)?;
+    if newtype.type_parameters != type_parameters_for_reference(&newtype.wrapped_field.reference) {
+        return Err(WholeEthosArchiveError::TypeParameterPickupMismatch);
+    }
+    Ok(())
+}
+
+fn validate_type_parameters(
+    parameters: &[WholeEthosTypeParameter],
+) -> Result<(), WholeEthosArchiveError> {
+    for (index, parameter) in parameters.iter().enumerate() {
+        validate_identity(
+            parameter.name(),
+            WholeEthosEncodedIdPosition::TypeParameterName,
+        )?;
+        validate_identity(
+            parameter.quality(),
+            WholeEthosEncodedIdPosition::TypeParameterQuality,
+        )?;
+        if parameters[..index]
+            .iter()
+            .any(|prior| prior.name() == parameter.name())
+        {
+            return Err(WholeEthosArchiveError::DuplicateTypeParameterName {
+                name: parameter.name().clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_structs(products: &[WholeEthosStruct]) -> Result<(), WholeEthosArchiveError> {
@@ -979,6 +1071,9 @@ fn validate_reference(reference: &WholeEthosTypeReference) -> Result<(), WholeEt
         WholeEthosTypeReference::Identity(identity) => {
             validate_identity(identity, WholeEthosEncodedIdPosition::Reference)
         }
+        WholeEthosTypeReference::Parameter(parameter) => {
+            validate_type_parameters(std::slice::from_ref(parameter))
+        }
         WholeEthosTypeReference::Application(application) => {
             validate_identity(
                 &application.head,
@@ -1019,6 +1114,10 @@ pub enum WholeEthosEncodedIdPosition {
     Reference,
     /// Unary or object application head.
     ApplicationHead,
+    /// Picked-up parameter name.
+    TypeParameterName,
+    /// Trait quality attached to a picked-up parameter.
+    TypeParameterQuality,
     /// Authored object application name.
     ApplicationName,
     /// Trait declaration.
@@ -1071,6 +1170,17 @@ pub enum WholeEthosArchiveError {
     /// A type application cannot be represented without arguments.
     #[error("Whole-Ethos type application has no arguments")]
     EmptyTypeArguments,
+
+    /// Two picked-up parameters used the same retained name.
+    #[error("Whole-Ethos type parameter {name:?} appears more than once")]
+    DuplicateTypeParameterName {
+        /// Repeated parameter identity.
+        name: VocabularyEncodedId,
+    },
+
+    /// Archived parameter metadata did not equal the parameters in the type use.
+    #[error("Whole-Ethos type parameter metadata does not match picked-up references")]
+    TypeParameterPickupMismatch,
 
     /// A trait cannot be represented by the grammar without methods.
     #[error("Whole-Ethos trait declaration has no methods")]
@@ -1251,6 +1361,7 @@ pub enum EthosGrammarError {
 pub struct WholeEthosBuiltinPriors {
     identities: Vec<VocabularyEncodedId>,
     application_heads: Vec<VocabularyEncodedId>,
+    trait_qualities: Vec<VocabularyEncodedId>,
     stream_transformer: Option<VocabularyEncodedId>,
 }
 
@@ -1267,6 +1378,7 @@ impl WholeEthosBuiltinPriors {
         Ok(Self {
             identities: vec![integer],
             application_heads: vec![vector],
+            trait_qualities: Vec::new(),
             stream_transformer: None,
         })
     }
@@ -1293,7 +1405,7 @@ impl WholeEthosBuiltinPriors {
         Ok(self)
     }
 
-    /// Admit another unary application head.
+    /// Admit another adjacent angle application head.
     pub fn with_application_head(
         mut self,
         head: VocabularyEncodedId,
@@ -1301,6 +1413,18 @@ impl WholeEthosBuiltinPriors {
         validate_builtin_prior(WholeEthosBuiltinPriorPosition::ApplicationHead, &head)?;
         if !self.application_heads.contains(&head) {
             self.application_heads.push(head);
+        }
+        Ok(self)
+    }
+
+    /// Admit a trait quality whose bare use picks up an item-local parameter.
+    pub fn with_trait_quality(
+        mut self,
+        quality: VocabularyEncodedId,
+    ) -> Result<Self, WholeEthosBuiltinPriorError> {
+        validate_builtin_prior(WholeEthosBuiltinPriorPosition::TraitQuality, &quality)?;
+        if !self.trait_qualities.contains(&quality) {
+            self.trait_qualities.push(quality);
         }
         Ok(self)
     }
@@ -1321,6 +1445,10 @@ impl WholeEthosBuiltinPriors {
 
     fn accepts_application_head(&self, head: &VocabularyEncodedId) -> bool {
         self.application_heads.contains(head)
+    }
+
+    fn accepts_trait_quality(&self, quality: &VocabularyEncodedId) -> bool {
+        self.trait_qualities.contains(quality)
     }
 }
 
@@ -1345,6 +1473,7 @@ pub enum WholeEthosBuiltinPriorPosition {
     Vector,
     Identity,
     ApplicationHead,
+    TraitQuality,
     StreamTransformer,
 }
 
@@ -2525,6 +2654,11 @@ impl EthosCodec {
     ) -> Result<WholeEthosTypeReference, EthosDecodeError> {
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 0) {
             let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
+            if self.priors.accepts_trait_quality(&identity) {
+                return Ok(WholeEthosTypeReference::Parameter(
+                    WholeEthosTypeParameter::new(identity.clone(), identity),
+                ));
+            }
             if !self.priors.accepts_identity(&identity) {
                 return Err(EthosDecodeError::UnregisteredReferencePrior {
                     position: WholeEthosReferencePriorPosition::Identity,
@@ -2983,6 +3117,12 @@ impl EthosCodec {
                 &self.ids.type_reference,
                 0,
                 FieldValue::Reference(ResolvedReference::new(identity.clone())),
+            )
+            .map_err(Into::into),
+            WholeEthosTypeReference::Parameter(parameter) => Self::reflect_unary(
+                &self.ids.type_reference,
+                0,
+                FieldValue::Reference(ResolvedReference::new(parameter.name.clone())),
             )
             .map_err(Into::into),
             WholeEthosTypeReference::Application(application) => {
