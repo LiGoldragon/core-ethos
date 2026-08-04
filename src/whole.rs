@@ -13,7 +13,9 @@ use raw_discovery::{
 };
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 use structural_codec::{
-    AcceptedDecodeForm, AddressedStructuralTable, ApplicationDelimitedBody,
+    AcceptedDecodeForm, AddressedStructuralTable, AdjacentApplicationDelimitedBody,
+    AdjacentApplicationDelimitedHead, AdjacentApplicationDelimitedItems,
+    AdjacentApplicationDelimitedRoot, AdjacentApplicationDelimitedRule, ApplicationDelimitedBody,
     ApplicationDelimitedHead, ApplicationDelimitedItems, ApplicationDelimitedRoot,
     ApplicationDelimitedRule, ApplicationHead, ApplicationPayload, ApplicationRoot,
     ApplicationRule, AtomCase, AtomDescriptor, BorrowedFieldView, ConstructorCodec,
@@ -30,6 +32,7 @@ const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
 const APPLICATION_OPERATOR: TriggerIdentifier = TriggerIdentifier::new(3);
 const TEXT_CARRIER: TriggerIdentifier = TriggerIdentifier::new(4);
 const WHITESPACE_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(5);
+const ANGLE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(7);
 const ROOT_CONTEXT: BoundaryDiscoveryContextIdentifier = BoundaryDiscoveryContextIdentifier::new(1);
 const CHILD_CONTEXT: BoundaryDiscoveryContextIdentifier =
     BoundaryDiscoveryContextIdentifier::new(2);
@@ -804,11 +807,11 @@ impl WholeEthosTable {
 pub enum WholeEthosTypeReference {
     /// One complete lookup-resolved identity.
     Identity(VocabularyEncodedId),
-    /// A unary application such as `Vector.Topic`.
+    /// A non-empty adjacent angle application such as `Vector<Topic>`.
     Application(WholeEthosTypeApplication),
 }
 
-/// One unary type application.
+/// One non-empty adjacent angle type application.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 #[rkyv(
     serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
@@ -818,15 +821,19 @@ pub enum WholeEthosTypeReference {
 pub struct WholeEthosTypeApplication {
     head: VocabularyEncodedId,
     #[rkyv(omit_bounds)]
-    payload: Box<WholeEthosTypeReference>,
+    arguments: Vec<WholeEthosTypeReference>,
 }
 
 impl WholeEthosTypeApplication {
-    /// Construct one unary application.
-    pub fn new(head: VocabularyEncodedId, payload: WholeEthosTypeReference) -> Self {
-        Self {
-            head,
-            payload: Box::new(payload),
+    /// Construct a type application with one or more arguments.
+    pub fn new(
+        head: VocabularyEncodedId,
+        arguments: Vec<WholeEthosTypeReference>,
+    ) -> Result<Self, EmptyTypeArguments> {
+        if arguments.is_empty() {
+            Err(EmptyTypeArguments)
+        } else {
+            Ok(Self { head, arguments })
         }
     }
 
@@ -835,11 +842,16 @@ impl WholeEthosTypeApplication {
         &self.head
     }
 
-    /// Application payload.
-    pub const fn payload(&self) -> &WholeEthosTypeReference {
-        &self.payload
+    /// Application arguments in authored order.
+    pub fn arguments(&self) -> &[WholeEthosTypeReference] {
+        &self.arguments
     }
 }
+
+/// A type application construction attempted to encode no arguments.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("type application requires at least one argument")]
+pub struct EmptyTypeArguments;
 
 /// Visibility vocabulary retained by downstream Logos transformations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -992,7 +1004,10 @@ fn validate_reference(reference: &WholeEthosTypeReference) -> Result<(), WholeEt
                 &application.head,
                 WholeEthosEncodedIdPosition::ApplicationHead,
             )?;
-            validate_reference(&application.payload)
+            if application.arguments.is_empty() {
+                return Err(WholeEthosArchiveError::EmptyTypeArguments);
+            }
+            validate_references(&application.arguments)
         }
     }
 }
@@ -1076,6 +1091,10 @@ pub enum WholeEthosArchiveError {
     /// An operator application cannot be represented without payload fields.
     #[error("Whole-Ethos operator application has no payload fields")]
     EmptyOperatorPayload,
+
+    /// A type application cannot be represented without arguments.
+    #[error("Whole-Ethos type application has no arguments")]
+    EmptyTypeArguments,
 
     /// A trait cannot be represented by the grammar without methods.
     #[error("Whole-Ethos trait declaration has no methods")]
@@ -2073,13 +2092,17 @@ impl EthosCodec {
                 ),
                 ConstructorRule::new(
                     1,
-                    structural_rule(StructuralRule::Application(ApplicationRule::new(
-                        APPLICATION_OPERATOR,
-                        SharedDescriptor::Reference(AtomDescriptor::with_case(
-                            AtomCase::PascalCase,
-                        )),
-                        delegate(&ids.type_reference),
-                    )?)),
+                    structural_rule(StructuralRule::AdjacentApplicationDelimited(
+                        AdjacentApplicationDelimitedRule::new(
+                            ANGLE_BOUNDARY,
+                            SharedDescriptor::Reference(AtomDescriptor::with_case(
+                                AtomCase::PascalCase,
+                            )),
+                            delegate(&ids.type_reference),
+                            1,
+                            None,
+                        )?,
+                    )),
                 ),
             ],
         ));
@@ -2553,7 +2576,8 @@ impl EthosCodec {
             return Ok(WholeEthosTypeReference::Identity(identity));
         }
         if reference.constructor() == &EncodedConstructorId::under(&self.ids.type_reference, 1) {
-            let head = reference_id::<ApplicationHead>(reference, "application head")?;
+            let head =
+                reference_id::<AdjacentApplicationDelimitedHead>(reference, "application head")?;
             if !self.priors.accepts_application_head(&head) {
                 return Err(EthosDecodeError::UnregisteredReferencePrior {
                     position: WholeEthosReferencePriorPosition::ApplicationHead,
@@ -2563,11 +2587,9 @@ impl EthosCodec {
             return Ok(WholeEthosTypeReference::Application(
                 WholeEthosTypeApplication::new(
                     head,
-                    self.reify_reference(delegated::<ApplicationPayload>(
-                        reference,
-                        "application payload",
-                    )?)?,
-                ),
+                    self.reify_references(repeated_delegates(reference, "application arguments")?)?,
+                )
+                .map_err(|_| EthosDecodeError::Shape("non-empty type application arguments"))?,
             ));
         }
         Err(EthosDecodeError::Shape("type reference constructor"))
@@ -3012,13 +3034,22 @@ impl EthosCodec {
                 FieldValue::Reference(ResolvedReference::new(identity.clone())),
             )
             .map_err(Into::into),
-            WholeEthosTypeReference::Application(application) => Self::reflect_application(
-                &self.ids.type_reference,
-                1,
-                FieldValue::Reference(ResolvedReference::new(application.head.clone())),
-                FieldValue::Delegated(Box::new(self.reflect_reference(&application.payload)?)),
-            )
-            .map_err(Into::into),
+            WholeEthosTypeReference::Application(application) => {
+                Self::reflect_adjacent_application_delimited(
+                    &self.ids.type_reference,
+                    1,
+                    FieldValue::Reference(ResolvedReference::new(application.head.clone())),
+                    application
+                        .arguments
+                        .iter()
+                        .map(|argument| self.reflect_reference(argument))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .map(|argument| FieldValue::Delegated(Box::new(argument)))
+                        .collect(),
+                )
+                .map_err(Into::into)
+            }
         }
     }
 
@@ -3029,6 +3060,22 @@ impl EthosCodec {
     ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
         let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, local));
         record.insert::<UnaryRoot>(root)?;
+        Ok(record.finish())
+    }
+
+    fn reflect_adjacent_application_delimited(
+        type_id: &EncodedTypeId<VocabularyRoot>,
+        local: u16,
+        head: FieldValue<VocabularyRoot>,
+        items: Vec<FieldValue<VocabularyRoot>>,
+    ) -> Result<StructuralValue<VocabularyRoot>, structural_codec::AuthoringError> {
+        let items = FieldValue::Repeated(items);
+        let body = FieldValue::Delimited(Box::new(items.clone()));
+        let mut record = StructuralValue::record(EncodedConstructorId::under(type_id, local));
+        record.insert::<AdjacentApplicationDelimitedRoot>(FieldValue::OrderedProduct)?;
+        record.insert::<AdjacentApplicationDelimitedHead>(head)?;
+        record.insert::<AdjacentApplicationDelimitedBody>(body)?;
+        record.insert::<AdjacentApplicationDelimitedItems>(items)?;
         Ok(record.finish())
     }
 
@@ -3213,6 +3260,7 @@ fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
         BRACE_BOUNDARY,
         TEXT_CARRIER,
         WHITESPACE_TRIVIA,
+        ANGLE_BOUNDARY,
     ]);
     BlockTreeDiscoveryConfiguration::new(
         BoundaryDiscoveryConfiguration::new(
@@ -3224,8 +3272,10 @@ fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
             vec![
                 BoundaryDiscoveryTransition::new(ROOT_CONTEXT, SQUARE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(ROOT_CONTEXT, BRACE_BOUNDARY, CHILD_CONTEXT),
+                BoundaryDiscoveryTransition::new(ROOT_CONTEXT, ANGLE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(CHILD_CONTEXT, SQUARE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(CHILD_CONTEXT, BRACE_BOUNDARY, CHILD_CONTEXT),
+                BoundaryDiscoveryTransition::new(CHILD_CONTEXT, ANGLE_BOUNDARY, CHILD_CONTEXT),
             ],
         ),
         vec![],
@@ -3256,6 +3306,7 @@ fn repeated_delegates<'value>(
     let Some(FieldValue::Repeated(items)) = value
         .field::<DelimitedItemsRole>()
         .or_else(|| value.field::<ApplicationDelimitedItems>())
+        .or_else(|| value.field::<AdjacentApplicationDelimitedItems>())
     else {
         return Err(EthosDecodeError::Shape(what));
     };

@@ -6,7 +6,7 @@ Interface.1
   [GuardianRejection.{GuardianReason Explanation} ReferentRejection.{GuardianReason Explanation}]
   [
     Topic.Text
-    Topics.Vector.Topic
+    Topics.Vector<Topic>
     Description.Text
     Explanation.Text
     Kind.[Decision Principle Correction Clarification Constraint]
@@ -14,9 +14,9 @@ Interface.1
     Entry.{Topics Kind Description Magnitude}
     Query.{Topic Kind}
     RecordIdentifier.Integer
-    RecordSet.Vector.Entry
+    RecordSet.Vector<Entry>
     Referent.Text
-    Aliases.Vector.Text
+    Aliases.Vector<Text>
     ReferentRegistration.{Referent Aliases}
     ReferentIdentifier.Integer
     GuardianReason.[NotSpirit PrivateContent MeaningUnclear Duplicate]

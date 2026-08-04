@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 
 use core_ethos::{
     EmptyEnumerationVariants, EmptyOperatorPayload, EmptyStructFields, EmptyTraitMethods,
-    EthosCodec, EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
-    WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors,
-    WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosItem,
-    WholeEthosNexusBody, WholeEthosOperatorApplication, WholeEthosStruct, WholeEthosTrait,
-    WholeEthosVisibility,
+    EmptyTypeArguments, EthosCodec, EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds,
+    WholeEthos, WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody,
+    WholeEthosBuiltinPriors, WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader,
+    WholeEthosItem, WholeEthosNexusBody, WholeEthosOperatorApplication, WholeEthosStruct,
+    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -100,6 +100,11 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "referents",
     "migrations",
     "Domain",
+    "Result",
+    "Ordered",
+    "Error",
+    "Name",
+    "Transformer",
 ];
 
 fn encoded(local: u16) -> VocabularyEncodedId {
@@ -172,7 +177,9 @@ impl FixtureBindings {
             WholeEthosBuiltinPriors::new(self.identity("Integer"), self.identity("Vector"))
                 .expect("Universal builtins")
                 .with_object_application_head(self.identity("Stream"))
-                .expect("Universal Stream operator");
+                .expect("Universal Stream operator")
+                .with_application_head(self.identity("Result"))
+                .expect("Universal Result type head");
         for spelling in FIXTURE_TRANSLATOR_VOCABULARY {
             priors = priors
                 .with_identity(self.identity(spelling))
@@ -317,7 +324,7 @@ fn presentation_variants_decode_to_the_same_typed_document_and_imports() {
 fn source_only_import_text_preserves_meaningful_whitespace_through_canonical_emission() {
     let bindings = FixtureBindings::new();
     let codec = codec(&bindings);
-    let source = "Interface.1\n[(|source module|).(|Imported Name|)]\n{[] [] [] []}\n";
+    let source = "Interface.1\n[“source module”.“Imported Name”]\n{[] [] [] []}\n";
     let decoded = codec
         .decode(source, &bindings)
         .expect("carried import text");
@@ -327,10 +334,49 @@ fn source_only_import_text_preserves_meaningful_whitespace_through_canonical_emi
     let emitted = codec
         .encode(&decoded, &bindings)
         .expect("carried import text emits");
-    assert!(emitted.contains("(|source module|).(|Imported Name|)"));
+    assert!(emitted.contains("“source module”.“Imported Name”"));
     assert_eq!(
         codec.decode(&emitted, &bindings).expect("reemitted import"),
         decoded
+    );
+}
+
+#[test]
+fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let source = "Interface.1\n[]\n{[Name.Result<Vector<Ordered> Error>] [] [] []}\n";
+    let decoded = codec
+        .decode(source, &bindings)
+        .expect("strict nested angle type reference");
+    let emitted = codec
+        .encode(&decoded, &bindings)
+        .expect("strict nested angle type reference emits");
+    assert!(emitted.contains("Name.Result<Vector<Ordered> Error>"));
+    assert_eq!(
+        codec.decode(&emitted, &bindings).expect("reemitted type"),
+        decoded
+    );
+
+    assert!(
+        codec
+            .decode(
+                "Interface.1\n[]\n{[Name.Result.Vector.Ordered] [] [] []}\n",
+                &bindings,
+            )
+            .is_err()
+    );
+    assert!(
+        codec
+            .decode(
+                "Interface.1\n[]\n{[Name.Result<|Vector| Error>] [] [] []}\n",
+                &bindings,
+            )
+            .is_err()
+    );
+    assert_eq!(
+        WholeEthosTypeApplication::new(bindings.identity("Result"), vec![]),
+        Err(EmptyTypeArguments)
     );
 }
 

@@ -31,9 +31,9 @@ pub use reference::{
 };
 pub use whole::{
     DecodedEncodedIdPosition, DecodedEthos, EmptyEnumerationVariants, EmptyOperatorPayload,
-    EmptyStructFields, EmptyTraitMethods, EmptyTupleFields, EthosCodec, EthosCodecBuildError,
-    EthosDecodeError, EthosDocument, EthosDocumentCodec, EthosEncodeError, EthosGrammarError,
-    EthosGrammarIdPosition, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
+    EmptyStructFields, EmptyTraitMethods, EmptyTupleFields, EmptyTypeArguments, EthosCodec,
+    EthosCodecBuildError, EthosDecodeError, EthosDocument, EthosDocumentCodec, EthosEncodeError,
+    EthosGrammarError, EthosGrammarIdPosition, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
     WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriorError,
     WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosEncodedIdPosition,
     WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosImport,

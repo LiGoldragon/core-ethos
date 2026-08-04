@@ -31,7 +31,7 @@ struct NamedWholeEthosWrappedField {
 struct NamedWholeEthosTypeApplication {
     head: VocabularyEncodedId,
     #[rkyv(omit_bounds)]
-    payload: Box<WholeEthosTypeReference>,
+    arguments: Vec<WholeEthosTypeReference>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -118,21 +118,25 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
     };
 
     let application_head = encoded_id(&[41, 3]);
-    let application_payload = WholeEthosTypeReference::Identity(encoded_id(&[41, 5, 7]));
+    let application_arguments = vec![WholeEthosTypeReference::Identity(encoded_id(&[41, 5, 7]))];
     assert_archive_compatible!(
         WholeEthosTypeApplication,
         NamedWholeEthosTypeApplication,
-        WholeEthosTypeApplication::new(application_head.clone(), application_payload.clone()),
+        WholeEthosTypeApplication::new(application_head.clone(), application_arguments.clone())
+            .expect("non-empty type arguments"),
         NamedWholeEthosTypeApplication {
             head: application_head,
-            payload: Box::new(application_payload),
+            arguments: application_arguments,
         }
     );
 
-    let wrapped_reference = WholeEthosTypeReference::Application(WholeEthosTypeApplication::new(
-        encoded_id(&[43, 11]),
-        WholeEthosTypeReference::Identity(encoded_id(&[43, 13, 17])),
-    ));
+    let wrapped_reference = WholeEthosTypeReference::Application(
+        WholeEthosTypeApplication::new(
+            encoded_id(&[43, 11]),
+            vec![WholeEthosTypeReference::Identity(encoded_id(&[43, 13, 17]))],
+        )
+        .expect("non-empty type arguments"),
+    );
     assert_archive_compatible!(
         WholeEthosWrappedField,
         NamedWholeEthosWrappedField,
@@ -167,10 +171,13 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
     let variant_payload = WholeEthosVariantPayload::Tuple(
         WholeEthosTupleFields::new(vec![
             WholeEthosTypeReference::Identity(encoded_id(&[53, 31])),
-            WholeEthosTypeReference::Application(WholeEthosTypeApplication::new(
-                encoded_id(&[53, 37]),
-                WholeEthosTypeReference::Identity(encoded_id(&[53, 41, 43])),
-            )),
+            WholeEthosTypeReference::Application(
+                WholeEthosTypeApplication::new(
+                    encoded_id(&[53, 37]),
+                    vec![WholeEthosTypeReference::Identity(encoded_id(&[53, 41, 43]))],
+                )
+                .expect("non-empty type arguments"),
+            ),
         ])
         .expect("nonempty variant payload"),
     );
