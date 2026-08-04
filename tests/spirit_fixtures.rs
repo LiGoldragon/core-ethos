@@ -6,9 +6,9 @@ use core_ethos::{
     EmptyEnumerationVariants, EmptyStructFields, EmptyTypeArguments, EthosCodec, EthosDecodeError,
     EthosGrammarIdentities, EthosGrammarIds, WholeEthos, WholeEthosArchiveError,
     WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors, WholeEthosEnumeration,
-    WholeEthosFileKind, WholeEthosHeader, WholeEthosItem, WholeEthosNexusBody, WholeEthosStruct,
-    WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeParameter, WholeEthosTypeReference,
-    WholeEthosVisibility,
+    WholeEthosFileKind, WholeEthosHeader, WholeEthosItem, WholeEthosNexusBody, WholeEthosQuality,
+    WholeEthosStruct, WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeParameter,
+    WholeEthosTypeReference, WholeEthosVisibility,
 };
 use encoded_name_table::Name;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -354,7 +354,7 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
         newtype.type_parameters(),
         &[WholeEthosTypeParameter::new(
             bindings.identity("Ordered"),
-            bindings.identity("Ordered"),
+            WholeEthosQuality::Trait(bindings.identity("Ordered")),
         )]
     );
     let WholeEthosTypeReference::Application(result) = newtype.wrapped_field().reference() else {
@@ -393,7 +393,10 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
             .is_err()
     );
     assert_eq!(
-        WholeEthosTypeApplication::new(bindings.identity("Result"), vec![]),
+        WholeEthosTypeApplication::new(
+            WholeEthosQuality::Shape(bindings.identity("Result")),
+            vec![]
+        ),
         Err(EmptyTypeArguments)
     );
 }
@@ -404,9 +407,10 @@ fn sectioned_name_parenthesis_form_is_refused_in_nexus() {
     let codec = codec(&bindings);
     let source =
         "Nexus.1\n[]\n{[] [Transformer.{name.(Vector<Ordered> Result<Vector<Ordered> Error>)}]}\n";
-    assert!(codec
-        .decode(source, &bindings)
-        .is_err(), "sectioned transformer form is not an Ethos codec production");
+    assert!(
+        codec.decode(source, &bindings).is_err(),
+        "sectioned transformer form is not an Ethos codec production"
+    );
 }
 
 #[test]
@@ -531,7 +535,10 @@ fn fixtures_reify_every_kind_specific_body_position() {
     };
     assert_eq!(body.types().len(), 2);
     assert_eq!(body.traits().len(), 2);
-    assert_eq!(body.traits()[0].name(), &bindings.identity("SignalAdmission"));
+    assert_eq!(
+        body.traits()[0].name(),
+        &bindings.identity("SignalAdmission")
+    );
 
     let sema = codec.decode(SEMA, &bindings).expect("sema");
     let WholeEthosBody::Sema(body) = sema.ethos().body() else {

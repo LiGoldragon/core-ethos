@@ -720,6 +720,28 @@ pub enum WholeEthosTypeReference {
     Application(WholeEthosTypeApplication),
 }
 
+/// The semantic role carried by a type identity.
+///
+/// Shapes head type applications, while traits constrain item-local parameters.
+/// Keeping the distinction in the carrier prevents downstream transformations
+/// from inferring a role from an untyped identity.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub enum WholeEthosQuality {
+    /// An identity used as an applied type shape.
+    Shape(VocabularyEncodedId),
+    /// An identity used as a type-parameter trait bound.
+    Trait(VocabularyEncodedId),
+}
+
+impl WholeEthosQuality {
+    /// The complete identity retained with this quality role.
+    pub const fn identity(&self) -> &VocabularyEncodedId {
+        match self {
+            Self::Shape(identity) | Self::Trait(identity) => identity,
+        }
+    }
+}
+
 /// One picked-up parameter and its authored trait-quality bound.
 ///
 /// The parameter name and quality are both complete concept-layer identities.
@@ -727,12 +749,12 @@ pub enum WholeEthosTypeReference {
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthosTypeParameter {
     name: VocabularyEncodedId,
-    quality: VocabularyEncodedId,
+    quality: WholeEthosQuality,
 }
 
 impl WholeEthosTypeParameter {
     /// Construct one parameter with an explicit trait-quality bound.
-    pub fn new(name: VocabularyEncodedId, quality: VocabularyEncodedId) -> Self {
+    pub fn new(name: VocabularyEncodedId, quality: WholeEthosQuality) -> Self {
         Self { name, quality }
     }
 
@@ -742,7 +764,7 @@ impl WholeEthosTypeParameter {
     }
 
     /// The authored trait quality constraining this parameter.
-    pub const fn quality(&self) -> &VocabularyEncodedId {
+    pub const fn quality(&self) -> &WholeEthosQuality {
         &self.quality
     }
 }
@@ -782,7 +804,7 @@ fn collect_type_parameters(
     bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
 )]
 pub struct WholeEthosTypeApplication {
-    head: VocabularyEncodedId,
+    head: WholeEthosQuality,
     #[rkyv(omit_bounds)]
     arguments: Vec<WholeEthosTypeReference>,
 }
@@ -790,7 +812,7 @@ pub struct WholeEthosTypeApplication {
 impl WholeEthosTypeApplication {
     /// Construct a type application with one or more arguments.
     pub fn new(
-        head: VocabularyEncodedId,
+        head: WholeEthosQuality,
         arguments: Vec<WholeEthosTypeReference>,
     ) -> Result<Self, EmptyTypeArguments> {
         if arguments.is_empty() {
@@ -801,7 +823,7 @@ impl WholeEthosTypeApplication {
     }
 
     /// Lookup-resolved application head.
-    pub const fn head(&self) -> &VocabularyEncodedId {
+    pub const fn head(&self) -> &WholeEthosQuality {
         &self.head
     }
 
@@ -919,14 +941,21 @@ fn validate_type_parameters(
             parameter.name(),
             WholeEthosEncodedIdPosition::TypeParameterName,
         )?;
-        validate_identity(
-            parameter.quality(),
-            WholeEthosEncodedIdPosition::TypeParameterQuality,
-        )?;
-        if parameters[..index]
+        let WholeEthosQuality::Trait(quality) = parameter.quality() else {
+            return Err(WholeEthosArchiveError::TypeParameterQualityMustBeTrait {
+                quality: parameter.quality().identity().clone(),
+            });
+        };
+        validate_identity(quality, WholeEthosEncodedIdPosition::TypeParameterQuality)?;
+        if let Some(prior) = parameters[..index]
             .iter()
-            .any(|prior| prior.name() == parameter.name())
+            .find(|prior| prior.name() == parameter.name())
         {
+            if prior.quality() != parameter.quality() {
+                return Err(WholeEthosArchiveError::ConflictingTypeParameterQuality {
+                    name: parameter.name().clone(),
+                });
+            }
             return Err(WholeEthosArchiveError::DuplicateTypeParameterName {
                 name: parameter.name().clone(),
             });
@@ -988,10 +1017,12 @@ fn validate_reference(reference: &WholeEthosTypeReference) -> Result<(), WholeEt
             validate_type_parameters(std::slice::from_ref(parameter))
         }
         WholeEthosTypeReference::Application(application) => {
-            validate_identity(
-                &application.head,
-                WholeEthosEncodedIdPosition::ApplicationHead,
-            )?;
+            let WholeEthosQuality::Shape(head) = &application.head else {
+                return Err(WholeEthosArchiveError::TypeApplicationHeadMustBeShape {
+                    quality: application.head.identity().clone(),
+                });
+            };
+            validate_identity(head, WholeEthosEncodedIdPosition::ApplicationHead)?;
             if application.arguments.is_empty() {
                 return Err(WholeEthosArchiveError::EmptyTypeArguments);
             }
@@ -1089,10 +1120,30 @@ pub enum WholeEthosArchiveError {
         name: VocabularyEncodedId,
     },
 
+    /// One retained parameter name was assigned incompatible trait bounds.
+    #[error("Whole-Ethos type parameter {name:?} has conflicting trait qualities")]
+    ConflictingTypeParameterQuality {
+        /// Retained parameter identity.
+        name: VocabularyEncodedId,
+    },
+
+    /// Type parameters are constrained only by trait qualities.
+    #[error("Whole-Ethos type parameter quality {quality:?} must be a trait")]
+    TypeParameterQualityMustBeTrait {
+        /// Quality supplied in the wrong role.
+        quality: VocabularyEncodedId,
+    },
+
+    /// Type applications are headed only by shape qualities.
+    #[error("Whole-Ethos type application head {quality:?} must be a shape")]
+    TypeApplicationHeadMustBeShape {
+        /// Quality supplied in the wrong role.
+        quality: VocabularyEncodedId,
+    },
+
     /// Archived parameter metadata did not equal the parameters in the type use.
     #[error("Whole-Ethos type parameter metadata does not match picked-up references")]
     TypeParameterPickupMismatch,
-
 
     /// Authored declarations in this grammar are always public.
     #[error("Whole-Ethos declaration has visibility not admitted by the grammar")]
@@ -2518,7 +2569,10 @@ impl EthosCodec {
             let identity = reference_id::<UnaryRoot>(reference, "identity reference")?;
             if self.priors.accepts_trait_quality(&identity) {
                 return Ok(WholeEthosTypeReference::Parameter(
-                    WholeEthosTypeParameter::new(identity.clone(), identity),
+                    WholeEthosTypeParameter::new(
+                        identity.clone(),
+                        WholeEthosQuality::Trait(identity),
+                    ),
                 ));
             }
             if !self.priors.accepts_identity(&identity) {
@@ -2540,7 +2594,7 @@ impl EthosCodec {
             }
             return Ok(WholeEthosTypeReference::Application(
                 WholeEthosTypeApplication::new(
-                    head,
+                    WholeEthosQuality::Shape(head),
                     self.reify_references(repeated_delegates(reference, "application arguments")?)?,
                 )
                 .map_err(|_| EthosDecodeError::Shape("non-empty type application arguments"))?,
@@ -2956,7 +3010,9 @@ impl EthosCodec {
                 Self::reflect_adjacent_application_delimited(
                     &self.ids.type_reference,
                     1,
-                    FieldValue::Reference(ResolvedReference::new(application.head.clone())),
+                    FieldValue::Reference(ResolvedReference::new(
+                        application.head.identity().clone(),
+                    )),
                     application
                         .arguments
                         .iter()

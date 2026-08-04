@@ -1,8 +1,8 @@
 use std::mem::{align_of, size_of};
 
 use core_ethos::{
-    WholeEthosAttributes, WholeEthosEnumeration, WholeEthosNewtype, WholeEthosTupleFields,
-    WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
+    WholeEthosAttributes, WholeEthosEnumeration, WholeEthosNewtype, WholeEthosQuality,
+    WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeReference, WholeEthosVariant,
     WholeEthosVariantPayload, WholeEthosVisibility, WholeEthosWrappedField,
 };
 use encoded_name_table::LocalEncodedId;
@@ -30,7 +30,7 @@ struct NamedWholeEthosWrappedField {
     bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
 )]
 struct NamedWholeEthosTypeApplication {
-    head: VocabularyEncodedId,
+    head: WholeEthosQuality,
     #[rkyv(omit_bounds)]
     arguments: Vec<WholeEthosTypeReference>,
 }
@@ -123,17 +123,20 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
     assert_archive_compatible!(
         WholeEthosTypeApplication,
         NamedWholeEthosTypeApplication,
-        WholeEthosTypeApplication::new(application_head.clone(), application_arguments.clone())
-            .expect("non-empty type arguments"),
+        WholeEthosTypeApplication::new(
+            WholeEthosQuality::Shape(application_head.clone()),
+            application_arguments.clone()
+        )
+        .expect("non-empty type arguments"),
         NamedWholeEthosTypeApplication {
-            head: application_head,
+            head: WholeEthosQuality::Shape(application_head),
             arguments: application_arguments,
         }
     );
 
     let wrapped_reference = WholeEthosTypeReference::Application(
         WholeEthosTypeApplication::new(
-            encoded_id(&[43, 11]),
+            WholeEthosQuality::Shape(encoded_id(&[43, 11])),
             vec![WholeEthosTypeReference::Identity(encoded_id(&[43, 13, 17]))],
         )
         .expect("non-empty type arguments"),
@@ -175,7 +178,7 @@ fn named_fields_preserve_every_whole_ethos_tuple_carrier_archive() {
             WholeEthosTypeReference::Identity(encoded_id(&[53, 31])),
             WholeEthosTypeReference::Application(
                 WholeEthosTypeApplication::new(
-                    encoded_id(&[53, 37]),
+                    WholeEthosQuality::Shape(encoded_id(&[53, 37])),
                     vec![WholeEthosTypeReference::Identity(encoded_id(&[53, 41, 43]))],
                 )
                 .expect("non-empty type arguments"),
