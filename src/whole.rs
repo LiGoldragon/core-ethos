@@ -6,7 +6,7 @@
 //! differ only by that root type and body record.
 
 use content_identity::{ArchiveError, PortableArchive};
-use nomos_types::StreamInitiation;
+use nomos_types::{StreamInitiation, StreamTermination};
 use raw_discovery::{
     BlockTree, BlockTreeDiscoveryConfiguration, BoundaryDiscoveryConfiguration,
     BoundaryDiscoveryContext, BoundaryDiscoveryContextIdentifier, BoundaryDiscoveryTransition,
@@ -416,6 +416,9 @@ pub enum WholeEthosItem {
     /// One standalone stream-initiation transformer, such as
     /// `Observer.Stream.(ObserverFilter ObserverSubscription ObservationEvent)`.
     StreamInitiation(WholeEthosStreamInitiation),
+    /// One strict stream-termination transformer held for its later lifecycle
+    /// syntax and execution slice.
+    StreamTermination(WholeEthosStreamTermination),
 }
 
 /// Stream-initiation source schema over Whole-Ethos identities and references.
@@ -429,6 +432,12 @@ pub type WholeEthosStreamInitiation = StreamInitiation<
     WholeEthosTypeReference,
     WholeEthosTypeReference,
 >;
+
+/// Stream-termination source schema over a Whole-Ethos stream identity.
+///
+/// This data carrier is archive-validated now. Its authored source spelling
+/// and lifecycle behavior remain owned by the later Stream slice.
+pub type WholeEthosStreamTermination = StreamTermination<VocabularyEncodedId>;
 
 /// A newtype declaration.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
@@ -891,6 +900,12 @@ fn validate_items(items: &[WholeEthosItem]) -> Result<(), WholeEthosArchiveError
                     initiation.subscription.clone(),
                     initiation.event.clone(),
                 ])?;
+            }
+            WholeEthosItem::StreamTermination(termination) => {
+                validate_identity(
+                    &termination.stream,
+                    WholeEthosEncodedIdPosition::ApplicationName,
+                )?;
             }
         }
     }
@@ -2768,6 +2783,9 @@ impl EthosCodec {
             WholeEthosItem::Enumeration(value) => self.reflect_enumeration(value),
             WholeEthosItem::Struct(value) => self.reflect_struct(value, &self.ids.item, 2),
             WholeEthosItem::StreamInitiation(value) => self.reflect_stream_initiation(value),
+            WholeEthosItem::StreamTermination(_) => {
+                Err(EthosEncodeError::UnsupportedStreamTermination)
+            }
         }
     }
 
@@ -3392,6 +3410,10 @@ pub enum EthosEncodeError {
     /// The strict stream transformer is absent from this codec's priors.
     #[error("Ethos stream initiation requires a registered Stream transformer")]
     UnregisteredStreamTransformer,
+
+    /// Stream termination has no authored source form in this codec slice.
+    #[error("Ethos stream termination has no authored source form in this codec")]
+    UnsupportedStreamTermination,
 }
 
 /// Failure while decoding or reifying a Whole-Ethos document.
