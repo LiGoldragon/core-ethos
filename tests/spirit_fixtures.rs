@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use core_ethos::{
-    EmptyEnumerationVariants, EmptyStructFields, EmptyTraitMethods, EmptyTypeArguments, EthosCodec,
-    EthosDecodeError, EthosGrammarIdentities, EthosGrammarIds, WholeEthos, WholeEthosArchiveError,
+    EmptyEnumerationVariants, EmptyStructFields, EmptyTypeArguments, EthosCodec, EthosDecodeError,
+    EthosGrammarIdentities, EthosGrammarIds, WholeEthos, WholeEthosArchiveError,
     WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriors, WholeEthosEnumeration,
     WholeEthosFileKind, WholeEthosHeader, WholeEthosItem, WholeEthosNexusBody, WholeEthosStruct,
     WholeEthosTrait, WholeEthosTypeApplication, WholeEthosTypeParameter, WholeEthosTypeReference,
@@ -84,12 +84,8 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "Admit",
     "Refuse",
     "SignalAdmission",
-    "admit",
-    "recordDecision",
     "Unit",
     "AgentGuardian",
-    "guard",
-    "guardReferent",
     "StoredRecord",
     "StoredReferent",
     "SourceSchemaVersion",
@@ -104,8 +100,6 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "Ordered",
     "Error",
     "Name",
-    "Transformer",
-    "name",
 ];
 
 fn encoded(local: u16) -> VocabularyEncodedId {
@@ -135,7 +129,6 @@ fn grammar_ids() -> EthosGrammarIds {
         variant: encoded(217),
         type_reference: encoded(218),
         trait_declaration: encoded(220),
-        method: encoded(221),
         table: encoded(222),
     };
     EthosGrammarIds::new(grammar).expect("Universal grammar identities")
@@ -406,28 +399,14 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
 }
 
 #[test]
-fn strict_method_schema_roundtrips_the_sectioned_name_parenthesis_form() {
+fn sectioned_name_parenthesis_form_is_refused_in_nexus() {
     let bindings = FixtureBindings::new();
     let codec = codec(&bindings);
     let source =
         "Nexus.1\n[]\n{[] [Transformer.{name.(Vector<Ordered> Result<Vector<Ordered> Error>)}]}\n";
-    let decoded = codec
-        .decode(source, &bindings)
-        .expect("sectioned named method application");
-    let emitted = codec
-        .encode(&decoded, &bindings)
-        .expect("sectioned named method application emits");
-    assert!(emitted.contains("name.(Vector<Ordered> Result<Vector<Ordered> Error>)"));
-    assert_eq!(
-        codec.decode(&emitted, &bindings).expect("reemitted method"),
-        decoded
-    );
     assert!(codec
-        .decode(
-            "Nexus.1\n[]\n{[] [Transformer.{name.{Vector<Ordered> Result<Vector<Ordered> Error>}}]}\n",
-            &bindings,
-        )
-        .is_err());
+        .decode(source, &bindings)
+        .is_err(), "sectioned transformer form is not an Ethos codec production");
 }
 
 #[test]
@@ -522,7 +501,7 @@ fn public_constructors_reject_unsupported_headers_mismatched_bodies_and_empty_gr
         ),
         Err(EmptyEnumerationVariants)
     );
-    assert_eq!(WholeEthosTrait::new(name, vec![]), Err(EmptyTraitMethods));
+    assert_eq!(WholeEthosTrait::new(name.clone()).name(), &name);
 }
 
 #[test]
@@ -552,8 +531,7 @@ fn fixtures_reify_every_kind_specific_body_position() {
     };
     assert_eq!(body.types().len(), 2);
     assert_eq!(body.traits().len(), 2);
-    assert_eq!(body.traits()[0].methods().len(), 2);
-    assert!(body.traits()[0].methods()[1].parameters().len() == 1);
+    assert_eq!(body.traits()[0].name(), &bindings.identity("SignalAdmission"));
 
     let sema = codec.decode(SEMA, &bindings).expect("sema");
     let WholeEthosBody::Sema(body) = sema.ethos().body() else {

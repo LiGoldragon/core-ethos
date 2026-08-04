@@ -31,13 +31,13 @@ pub use reference::{
 };
 pub use whole::{
     DecodedEncodedIdPosition, DecodedEthos, EmptyEnumerationVariants, EmptyStructFields,
-    EmptyTraitMethods, EmptyTupleFields, EmptyTypeArguments, EthosCodec, EthosCodecBuildError,
+    EmptyTupleFields, EmptyTypeArguments, EthosCodec, EthosCodecBuildError,
     EthosDecodeError, EthosDocument, EthosDocumentCodec, EthosEncodeError, EthosGrammarError,
     EthosGrammarIdPosition, EthosGrammarIdentities, EthosGrammarIds, WholeEthos,
     WholeEthosArchiveError, WholeEthosAttributes, WholeEthosBody, WholeEthosBuiltinPriorError,
     WholeEthosBuiltinPriorPosition, WholeEthosBuiltinPriors, WholeEthosEncodedIdPosition,
     WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosImport,
-    WholeEthosImports, WholeEthosInterfaceBody, WholeEthosItem, WholeEthosMethod,
+    WholeEthosImports, WholeEthosInterfaceBody, WholeEthosItem,
     WholeEthosNewtype, WholeEthosNexusBody, WholeEthosReferencePriorPosition, WholeEthosSemaBody,
     WholeEthosStreamInitiation, WholeEthosStruct, WholeEthosTable, WholeEthosTrait,
     WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeParameter,

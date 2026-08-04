@@ -647,20 +647,16 @@ pub struct EmptyEnumerationVariants;
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthosTrait {
     name: VocabularyEncodedId,
-    methods: Vec<WholeEthosMethod>,
 }
 
 impl WholeEthosTrait {
-    /// Construct a trait with one or more methods.
-    pub fn new(
-        name: VocabularyEncodedId,
-        methods: Vec<WholeEthosMethod>,
-    ) -> Result<Self, EmptyTraitMethods> {
-        if methods.is_empty() {
-            Err(EmptyTraitMethods)
-        } else {
-            Ok(Self { name, methods })
-        }
+    /// Construct a behavior-trait identity.
+    ///
+    /// Trait method signatures deliberately have no sectioned `name.(...)`
+    /// source form. Their future strict transformer schemas belong to the
+    /// standalone transformer surface instead of a trait-local application.
+    pub const fn new(name: VocabularyEncodedId) -> Self {
+        Self { name }
     }
 
     /// Trait declaration identity.
@@ -668,69 +664,8 @@ impl WholeEthosTrait {
         &self.name
     }
 
-    /// Method signatures in authored order.
-    pub fn methods(&self) -> &[WholeEthosMethod] {
-        &self.methods
-    }
-
     fn validate(&self) -> Result<(), WholeEthosArchiveError> {
-        if self.methods.is_empty() {
-            return Err(WholeEthosArchiveError::EmptyTraitMethods);
-        }
-        validate_identity(&self.name, WholeEthosEncodedIdPosition::TraitName)?;
-        for method in &self.methods {
-            method.validate()?;
-        }
-        Ok(())
-    }
-}
-
-/// A trait construction attempted to encode no methods.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("trait declaration requires at least one method")]
-pub struct EmptyTraitMethods;
-
-/// One method signature. The receiver is implied by trait membership.
-#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-pub struct WholeEthosMethod {
-    name: VocabularyEncodedId,
-    parameters: Vec<WholeEthosTypeReference>,
-    return_type: WholeEthosTypeReference,
-}
-
-impl WholeEthosMethod {
-    /// Construct a signature from positional parameters and explicit return type.
-    pub fn new(
-        name: VocabularyEncodedId,
-        parameters: Vec<WholeEthosTypeReference>,
-        return_type: WholeEthosTypeReference,
-    ) -> Self {
-        Self {
-            name,
-            parameters,
-            return_type,
-        }
-    }
-
-    /// Method declaration identity.
-    pub const fn name(&self) -> &VocabularyEncodedId {
-        &self.name
-    }
-
-    /// Positional parameter types.
-    pub fn parameters(&self) -> &[WholeEthosTypeReference] {
-        &self.parameters
-    }
-
-    /// Explicit last-position return type, including Unit.
-    pub const fn return_type(&self) -> &WholeEthosTypeReference {
-        &self.return_type
-    }
-
-    fn validate(&self) -> Result<(), WholeEthosArchiveError> {
-        validate_identity(&self.name, WholeEthosEncodedIdPosition::MethodName)?;
-        validate_references(&self.parameters)?;
-        validate_reference(&self.return_type)
+        validate_identity(&self.name, WholeEthosEncodedIdPosition::TraitName)
     }
 }
 
@@ -1100,8 +1035,6 @@ pub enum WholeEthosEncodedIdPosition {
     ApplicationName,
     /// Trait declaration.
     TraitName,
-    /// Method declaration.
-    MethodName,
     /// Table declaration.
     TableName,
 }
@@ -1160,9 +1093,6 @@ pub enum WholeEthosArchiveError {
     #[error("Whole-Ethos type parameter metadata does not match picked-up references")]
     TypeParameterPickupMismatch,
 
-    /// A trait cannot be represented by the grammar without methods.
-    #[error("Whole-Ethos trait declaration has no methods")]
-    EmptyTraitMethods,
 
     /// Authored declarations in this grammar are always public.
     #[error("Whole-Ethos declaration has visibility not admitted by the grammar")]
@@ -1212,7 +1142,6 @@ pub struct EthosGrammarIdentities {
     pub variant: VocabularyEncodedId,
     pub type_reference: VocabularyEncodedId,
     pub trait_declaration: VocabularyEncodedId,
-    pub method: VocabularyEncodedId,
     pub table: VocabularyEncodedId,
 }
 
@@ -1239,7 +1168,6 @@ pub struct EthosGrammarIds {
     variant: EncodedTypeId<VocabularyRoot>,
     type_reference: EncodedTypeId<VocabularyRoot>,
     trait_declaration: EncodedTypeId<VocabularyRoot>,
-    method: EncodedTypeId<VocabularyRoot>,
     table: EncodedTypeId<VocabularyRoot>,
 }
 
@@ -1274,7 +1202,6 @@ impl EthosGrammarIds {
             variant: grammar_id!(variant, Variant),
             type_reference: grammar_id!(type_reference, TypeReference),
             trait_declaration: grammar_id!(trait_declaration, TraitDeclaration),
-            method: grammar_id!(method, Method),
             table: grammar_id!(table, Table),
         })
     }
@@ -1317,7 +1244,6 @@ pub enum EthosGrammarIdPosition {
     Variant,
     TypeReference,
     TraitDeclaration,
-    Method,
     Table,
 }
 
@@ -2188,29 +2114,9 @@ impl EthosCodec {
 
         entries.push(typed_entry(
             ids.trait_declaration.clone(),
-            structural_rule(StructuralRule::ApplicationDelimited(
-                ApplicationDelimitedRule::new(
-                    APPLICATION_OPERATOR,
-                    BRACE_BOUNDARY,
-                    SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
-                    delegate(&ids.method),
-                    1,
-                    None,
-                )?,
-            )),
-        ));
-        entries.push(typed_entry(
-            ids.method.clone(),
-            structural_rule(StructuralRule::ApplicationDelimited(
-                ApplicationDelimitedRule::new(
-                    APPLICATION_OPERATOR,
-                    PARENTHESIS_BOUNDARY,
-                    SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::CamelCase)),
-                    delegate(&ids.type_reference),
-                    1,
-                    None,
-                )?,
-            )),
+            structural_rule(StructuralRule::Unary(UnaryRule::new(
+                SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::PascalCase)),
+            )?)),
         ));
         entries.push(typed_entry(
             ids.table.clone(),
@@ -2567,31 +2473,10 @@ impl EthosCodec {
         &self,
         value: &structural_codec::StructuralValue<VocabularyRoot>,
     ) -> Result<WholeEthosTrait, EthosDecodeError> {
-        let mut methods = Vec::new();
-        for method in repeated_delegates(value, "trait methods")? {
-            methods.push(self.reify_method(method)?);
-        }
-        WholeEthosTrait::new(
-            declaration_id::<ApplicationDelimitedHead>(value, "trait name")?,
-            methods,
-        )
-        .map_err(|_| EthosDecodeError::Shape("non-empty trait methods"))
-    }
-
-    fn reify_method(
-        &self,
-        value: &structural_codec::StructuralValue<VocabularyRoot>,
-    ) -> Result<WholeEthosMethod, EthosDecodeError> {
-        let mut references =
-            self.reify_references(repeated_delegates(value, "method signature types")?)?;
-        let return_type = references
-            .pop()
-            .ok_or(EthosDecodeError::Shape("explicit method return type"))?;
-        Ok(WholeEthosMethod::new(
-            declaration_id::<ApplicationDelimitedHead>(value, "method name")?,
-            references,
-            return_type,
-        ))
+        Ok(WholeEthosTrait::new(declaration_id::<UnaryRoot>(
+            value,
+            "trait name",
+        )?))
     }
 
     fn reify_table(
@@ -3025,42 +2910,10 @@ impl EthosCodec {
         &self,
         value: &WholeEthosTrait,
     ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
-        let methods = value
-            .methods
-            .iter()
-            .map(|method| self.reflect_method(method))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|method| FieldValue::Delegated(Box::new(method)))
-            .collect();
-        Self::reflect_application_delimited(
+        Self::reflect_unary(
             &self.ids.trait_declaration,
             0,
             FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
-            methods,
-        )
-        .map_err(Into::into)
-    }
-
-    fn reflect_method(
-        &self,
-        value: &WholeEthosMethod,
-    ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
-        let mut signature = value
-            .parameters
-            .iter()
-            .map(|parameter| self.reflect_reference(parameter))
-            .collect::<Result<Vec<_>, _>>()?;
-        signature.push(self.reflect_reference(&value.return_type)?);
-        let signature = signature
-            .into_iter()
-            .map(|reference| FieldValue::Delegated(Box::new(reference)))
-            .collect();
-        Self::reflect_application_delimited(
-            &self.ids.method,
-            0,
-            FieldValue::Declaration(DeclarationAssignment::new(value.name.clone())),
-            signature,
         )
         .map_err(Into::into)
     }

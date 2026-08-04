@@ -98,20 +98,4 @@ fn serialization_and_restore_reject_all_empty_grammar_cardinalities() {
         })),
         WholeEthosArchiveError::EmptyTupleFields
     );
-    assert_serialization_and_restore_reject!(
-        WholeEthos {
-            header: WholeEthosHeader {
-                kind: WholeEthosFileKind::Nexus,
-                version: SUPPORTED_VERSION,
-            },
-            body: WholeEthosBody::Nexus(WholeEthosNexusBody {
-                types: vec![],
-                traits: vec![WholeEthosTrait {
-                    name: identity(5),
-                    methods: vec![],
-                }],
-            }),
-        },
-        WholeEthosArchiveError::EmptyTraitMethods
-    );
 }
