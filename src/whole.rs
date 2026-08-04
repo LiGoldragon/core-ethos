@@ -30,6 +30,7 @@ use structural_codec::{
 const SQUARE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(1);
 const BRACE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(2);
 const APPLICATION_OPERATOR: TriggerIdentifier = TriggerIdentifier::new(3);
+const PARENTHESIS_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(0);
 const TEXT_CARRIER: TriggerIdentifier = TriggerIdentifier::new(4);
 const WHITESPACE_TRIVIA: TriggerIdentifier = TriggerIdentifier::new(5);
 const ANGLE_BOUNDARY: TriggerIdentifier = TriggerIdentifier::new(7);
@@ -2138,7 +2139,7 @@ impl EthosCodec {
             structural_rule(StructuralRule::ApplicationDelimited(
                 ApplicationDelimitedRule::new(
                     APPLICATION_OPERATOR,
-                    BRACE_BOUNDARY,
+                    PARENTHESIS_BOUNDARY,
                     SharedDescriptor::Declaration(AtomDescriptor::with_case(AtomCase::CamelCase)),
                     delegate(&ids.type_reference),
                     1,
@@ -3256,6 +3257,7 @@ fn typed_entry_with_rules(
 
 fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
     let active = TriggerSet::new(vec![
+        PARENTHESIS_BOUNDARY,
         SQUARE_BOUNDARY,
         BRACE_BOUNDARY,
         TEXT_CARRIER,
@@ -3270,9 +3272,15 @@ fn ethos_discovery() -> BlockTreeDiscoveryConfiguration {
                 BoundaryDiscoveryContext::new(CHILD_CONTEXT, active),
             ],
             vec![
+                BoundaryDiscoveryTransition::new(ROOT_CONTEXT, PARENTHESIS_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(ROOT_CONTEXT, SQUARE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(ROOT_CONTEXT, BRACE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(ROOT_CONTEXT, ANGLE_BOUNDARY, CHILD_CONTEXT),
+                BoundaryDiscoveryTransition::new(
+                    CHILD_CONTEXT,
+                    PARENTHESIS_BOUNDARY,
+                    CHILD_CONTEXT,
+                ),
                 BoundaryDiscoveryTransition::new(CHILD_CONTEXT, SQUARE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(CHILD_CONTEXT, BRACE_BOUNDARY, CHILD_CONTEXT),
                 BoundaryDiscoveryTransition::new(CHILD_CONTEXT, ANGLE_BOUNDARY, CHILD_CONTEXT),

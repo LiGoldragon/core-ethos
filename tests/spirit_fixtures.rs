@@ -105,6 +105,7 @@ const FIXTURE_TRANSLATOR_VOCABULARY: &[&str] = &[
     "Error",
     "Name",
     "Transformer",
+    "name",
 ];
 
 fn encoded(local: u16) -> VocabularyEncodedId {
@@ -378,6 +379,31 @@ fn type_references_require_strict_adjacent_angles_and_preserve_nested_shape() {
         WholeEthosTypeApplication::new(bindings.identity("Result"), vec![]),
         Err(EmptyTypeArguments)
     );
+}
+
+#[test]
+fn strict_method_schema_roundtrips_the_sectioned_name_parenthesis_form() {
+    let bindings = FixtureBindings::new();
+    let codec = codec(&bindings);
+    let source =
+        "Nexus.1\n[]\n{[] [Transformer.{name.(Vector<Ordered> Result<Vector<Ordered> Error>)}]}\n";
+    let decoded = codec
+        .decode(source, &bindings)
+        .expect("sectioned named method application");
+    let emitted = codec
+        .encode(&decoded, &bindings)
+        .expect("sectioned named method application emits");
+    assert!(emitted.contains("name.(Vector<Ordered> Result<Vector<Ordered> Error>)"));
+    assert_eq!(
+        codec.decode(&emitted, &bindings).expect("reemitted method"),
+        decoded
+    );
+    assert!(codec
+        .decode(
+            "Nexus.1\n[]\n{[] [Transformer.{name.{Vector<Ordered> Result<Vector<Ordered> Error>}}]}\n",
+            &bindings,
+        )
+        .is_err());
 }
 
 #[test]
