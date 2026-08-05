@@ -39,8 +39,8 @@ pub use whole::{
     WholeEthosEnumeration, WholeEthosFileKind, WholeEthosHeader, WholeEthosImport,
     WholeEthosImports, WholeEthosInterfaceBody, WholeEthosItem, WholeEthosNewtype,
     WholeEthosNexusBody, WholeEthosQuality, WholeEthosReferencePriorPosition, WholeEthosSemaBody,
-    WholeEthosStreamInitiation, WholeEthosStruct, WholeEthosTable, WholeEthosTrait,
-    WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeParameter,
+    WholeEthosSemaTableKey, WholeEthosStreamInitiation, WholeEthosStruct, WholeEthosTable,
+    WholeEthosTrait, WholeEthosTupleFields, WholeEthosTypeApplication, WholeEthosTypeParameter,
     WholeEthosTypeReference, WholeEthosVariant, WholeEthosVariantPayload, WholeEthosVisibility,
     WholeEthosWrappedField,
 };

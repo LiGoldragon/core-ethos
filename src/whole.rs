@@ -669,12 +669,36 @@ impl WholeEthosTrait {
     }
 }
 
+/// One source-declared Sema key archive contract.
+///
+/// A table key is more than an unconstrained type occurrence: this carrier
+/// marks the exact authored archive type that owns its durable lookup
+/// semantics.  Nomos must resolve this carrier to one bundle declaration
+/// before Logos may emit a table specification; an external fingerprint or a
+/// generated spelling is not key provenance.
+#[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+pub struct WholeEthosSemaTableKey {
+    archive_type: WholeEthosTypeReference,
+}
+
+impl WholeEthosSemaTableKey {
+    /// Preserve the table declaration's exact key archive type.
+    pub const fn new(archive_type: WholeEthosTypeReference) -> Self {
+        Self { archive_type }
+    }
+
+    /// Authored archive type whose semantics address this table.
+    pub const fn archive_type(&self) -> &WholeEthosTypeReference {
+        &self.archive_type
+    }
+}
+
 /// One sema table declaration. The section supplies the table operator.
 #[derive(Clone, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct WholeEthosTable {
     name: VocabularyEncodedId,
     record: WholeEthosTypeReference,
-    key: WholeEthosTypeReference,
+    key: WholeEthosSemaTableKey,
 }
 
 impl WholeEthosTable {
@@ -684,7 +708,11 @@ impl WholeEthosTable {
         record: WholeEthosTypeReference,
         key: WholeEthosTypeReference,
     ) -> Self {
-        Self { name, record, key }
+        Self {
+            name,
+            record,
+            key: WholeEthosSemaTableKey::new(key),
+        }
     }
 
     /// Table declaration identity.
@@ -697,15 +725,15 @@ impl WholeEthosTable {
         &self.record
     }
 
-    /// Key type.
-    pub const fn key(&self) -> &WholeEthosTypeReference {
+    /// Source-declared durable key archive contract.
+    pub const fn key(&self) -> &WholeEthosSemaTableKey {
         &self.key
     }
 
     fn validate(&self) -> Result<(), WholeEthosArchiveError> {
         validate_identity(&self.name, WholeEthosEncodedIdPosition::TableName)?;
         validate_reference(&self.record)?;
-        validate_reference(&self.key)
+        validate_reference(self.key.archive_type())
     }
 }
 
@@ -3003,7 +3031,7 @@ impl EthosCodec {
     ) -> Result<StructuralValue<VocabularyRoot>, EthosEncodeError> {
         let fields = vec![
             FieldValue::Delegated(Box::new(self.reflect_reference(&value.record)?)),
-            FieldValue::Delegated(Box::new(self.reflect_reference(&value.key)?)),
+            FieldValue::Delegated(Box::new(self.reflect_reference(value.key.archive_type())?)),
         ];
         Self::reflect_application_delimited(
             &self.ids.table,
