@@ -19,13 +19,13 @@ name-table               = { git = "https://github.com/LiGoldragon/name-table.gi
 nomos-types              = { git = "https://github.com/LiGoldragon/nomos-types.git", rev = "a7b831e0540a8ad263cd07ed44ec4c95c56771fb" }
 protos                   = { git = "https://github.com/LiGoldragon/protos.git", rev = "65e7c6d4692a40e1c49deffb3fb4a9a2c3555c5b" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2d4e2e00f2821c4e2893fa96028cef0ac76e9644" }
-structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "fc6807f4365cde1551bbfe120520aec68245abdb" }
-signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "51c02c4a7b6f67d9dad095f11986085d7d65785b" }
+structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "413e3744569ca237e837a1fd57d9ba6ad6adc3de" }
+signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "3a26cb43f8ce7f9fe85da64d19aa55aa662943ce" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
 
 [dev-dependencies]
-encoded-name-table = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "50cb4bb53ae2dc4f2516f6912be328ef98ae49f8" }
+encoded-name-table = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "a22f48d8040ab9235f3552ad8654ff8e27b8157d" }
 
 [lints.rust]
 unsafe_code = "forbid"
