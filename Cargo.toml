@@ -14,8 +14,8 @@ path = "src/lib.rs"
 
 [dependencies]
 encoded-name-table       = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "a22f48d8040ab9235f3552ad8654ff8e27b8157d" }
-raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "2d4e2e00f2821c4e2893fa96028cef0ac76e9644" }
-structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "1d79bf81fb7d5bf8108430b35bc6d71762eac63d" }
+raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "25c2003ca02c5c2a7047ccd5629abfb698a90459" }
+structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "70ef879bc99eb247b7661169794ee189d45c62ff" }
 signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "3f41813dd63904c7e2b3da4382eff64ed1bf12fe" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
