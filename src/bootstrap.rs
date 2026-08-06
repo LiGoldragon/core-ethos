@@ -2,8 +2,8 @@
 //!
 //! The boundary is deliberately two-phase: [`BootstrapReader::plan`] discovers
 //! every declaration occurrence without identity authority, then
-//! [`BootstrapReader::seal`] consumes exact authority dispositions and an explicit
-//! before-to-after textual metadata transition.
+//! [`BootstrapReader::seal`] prepares the exact transaction draft and obtains a
+//! configuration-specific receipt from the injected naming authority.
 
 mod catalog;
 mod error;

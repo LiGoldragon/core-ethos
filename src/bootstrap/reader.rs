@@ -129,31 +129,59 @@ pub struct AssignedIdentity {
     pub disposition: IdentityDisposition,
 }
 
-/// The exact naming proposal and identity dispositions presented to the
-/// authority injected into one reader.
+/// Publicly constructible, explicitly unvalidated transaction parts. External
+/// stores and writers accept [`PreparedBootstrapTransaction`] instead; callers
+/// obtain that wrapper through [`BootstrapReader::validate_draft`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedBootstrapDraft {
+    pub decoded: DecodedBootstrap,
+    pub generated_streams: Vec<PreparedStreamGeneration>,
+    pub schema_additions: IdentitySchemaCatalog,
+    pub naming_transition: TextualMetadataTransition,
+    pub identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    pub canonical_order: CanonicalIdentityOrder,
+}
+
+/// The exact prepared proposal presented to the authority injected into one
+/// reader. Callers can inspect this request but cannot construct one.
 pub struct BootstrapNamingAuthorityRequest<'a> {
-    transition: &'a TextualMetadataTransition,
-    identity_dispositions: &'a BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    transaction: &'a PreparedBootstrapDraft,
 }
 
 impl BootstrapNamingAuthorityRequest<'_> {
+    pub const fn transaction(&self) -> &PreparedBootstrapDraft {
+        self.transaction
+    }
+
     pub const fn transition(&self) -> &TextualMetadataTransition {
-        self.transition
+        &self.transaction.naming_transition
     }
 
     pub const fn identity_dispositions(
         &self,
     ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
-        self.identity_dispositions
+        &self.transaction.identity_dispositions
     }
 }
 
 /// Authenticity boundary for naming proposals. The reader validates structural
-/// consistency separately; only this injected authority can accept a proof.
+/// consistency separately; only this injected authority can issue and verify its
+/// configuration-specific receipt.
 pub trait BootstrapNamingAuthority {
     type Proof;
+    type Receipt: Clone + std::fmt::Debug + Eq;
 
-    fn verify(&self, request: BootstrapNamingAuthorityRequest<'_>, proof: &Self::Proof) -> bool;
+    fn authorize(
+        &self,
+        request: BootstrapNamingAuthorityRequest<'_>,
+        proof: &Self::Proof,
+    ) -> Option<Self::Receipt>;
+
+    fn verify_receipt(
+        &self,
+        request: BootstrapNamingAuthorityRequest<'_>,
+        receipt: &Self::Receipt,
+    ) -> bool;
 }
 
 /// Checked syntactic assignment set; plan-relative exactness is enforced at seal.
@@ -239,34 +267,60 @@ fn identity_dispositions(
 /// Complete, validated meaning and schema/name updates prepared for an external
 /// authority to commit atomically. The reader has not committed storage.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct VerifiedNamingAuthorization {
+struct VerifiedNamingAuthorization<Receipt> {
     transition: TextualMetadataTransition,
     identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    receipt: Receipt,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedBootstrapTransaction {
+pub struct PreparedBootstrapTransaction<Authority: BootstrapNamingAuthority> {
     decoded: DecodedBootstrap,
     generated_streams: Vec<PreparedStreamGeneration>,
     schema_additions: IdentitySchemaCatalog,
-    naming_authorization: VerifiedNamingAuthorization,
+    naming_authorization: VerifiedNamingAuthorization<Authority::Receipt>,
     canonical_order: CanonicalIdentityOrder,
 }
 
-/// Publicly constructible, explicitly unvalidated transaction parts. External
-/// stores and writers accept [`PreparedBootstrapTransaction`] instead; callers
-/// obtain that wrapper through [`BootstrapReader::validate_draft`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedBootstrapDraft {
-    pub decoded: DecodedBootstrap,
-    pub generated_streams: Vec<PreparedStreamGeneration>,
-    pub schema_additions: IdentitySchemaCatalog,
-    pub naming_transition: TextualMetadataTransition,
-    pub identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
-    pub canonical_order: CanonicalIdentityOrder,
+impl<Authority: BootstrapNamingAuthority> Clone for PreparedBootstrapTransaction<Authority> {
+    fn clone(&self) -> Self {
+        Self {
+            decoded: self.decoded.clone(),
+            generated_streams: self.generated_streams.clone(),
+            schema_additions: self.schema_additions.clone(),
+            naming_authorization: self.naming_authorization.clone(),
+            canonical_order: self.canonical_order.clone(),
+        }
+    }
 }
 
-impl PreparedBootstrapTransaction {
+impl<Authority: BootstrapNamingAuthority> std::fmt::Debug
+    for PreparedBootstrapTransaction<Authority>
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedBootstrapTransaction")
+            .field("decoded", &self.decoded)
+            .field("generated_streams", &self.generated_streams)
+            .field("schema_additions", &self.schema_additions)
+            .field("naming_authorization", &self.naming_authorization)
+            .field("canonical_order", &self.canonical_order)
+            .finish()
+    }
+}
+
+impl<Authority: BootstrapNamingAuthority> PartialEq for PreparedBootstrapTransaction<Authority> {
+    fn eq(&self, other: &Self) -> bool {
+        self.decoded == other.decoded
+            && self.generated_streams == other.generated_streams
+            && self.schema_additions == other.schema_additions
+            && self.naming_authorization == other.naming_authorization
+            && self.canonical_order == other.canonical_order
+    }
+}
+
+impl<Authority: BootstrapNamingAuthority> Eq for PreparedBootstrapTransaction<Authority> {}
+
+impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority> {
     pub const fn archive_status(&self) -> BootstrapArchiveStatus {
         BootstrapArchiveStatus::NotYetArchived
     }
@@ -295,6 +349,27 @@ impl PreparedBootstrapTransaction {
 
     pub const fn canonical_order(&self) -> &CanonicalIdentityOrder {
         &self.canonical_order
+    }
+
+    /// The authority-issued receipt is exposed read-only for storage boundaries.
+    pub const fn naming_authority_receipt(&self) -> &Authority::Receipt {
+        &self.naming_authorization.receipt
+    }
+
+    /// Re-verify this exact transaction with the authority configuration that
+    /// brands its type.
+    pub fn verify_naming_authority(&self, authority: &Authority) -> Result<(), BootstrapReadError> {
+        let draft = self.to_draft();
+        if authority.verify_receipt(
+            BootstrapNamingAuthorityRequest {
+                transaction: &draft,
+            },
+            self.naming_authority_receipt(),
+        ) {
+            Ok(())
+        } else {
+            Err(BootstrapReadError::NamingAuthorityReceiptRejected)
+        }
     }
 
     pub fn to_draft(&self) -> PreparedBootstrapDraft {
@@ -367,13 +442,8 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         generated: &GeneratedStreamAssignments,
         naming_transition: &TextualMetadataTransition,
         authority_proof: &Authority::Proof,
-    ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
+    ) -> Result<PreparedBootstrapTransaction<Authority>, BootstrapReadError> {
         let identity_dispositions = identity_dispositions(assignments, generated);
-        let naming_authorization = self.verify_naming_authority(
-            naming_transition,
-            &identity_dispositions,
-            authority_proof,
-        )?;
         let canonical_order =
             self.validate_assignment_inputs(plan, assignments, generated, naming_transition)?;
         let schema_additions = self.schema_additions(plan, assignments, generated)?;
@@ -424,7 +494,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 )?,
             },
         };
-        self.validate_verified_draft(
+        self.authorize_draft(
             PreparedBootstrapDraft {
                 decoded,
                 generated_streams: prepared_streams,
@@ -433,7 +503,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 identity_dispositions,
                 canonical_order,
             },
-            naming_authorization,
+            authority_proof,
         )
     }
 
@@ -443,55 +513,46 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         &self,
         draft: PreparedBootstrapDraft,
         authority_proof: &Authority::Proof,
-    ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
-        let naming_authorization = self.verify_naming_authority(
-            &draft.naming_transition,
-            &draft.identity_dispositions,
-            authority_proof,
-        )?;
-        self.validate_verified_draft(draft, naming_authorization)
+    ) -> Result<PreparedBootstrapTransaction<Authority>, BootstrapReadError> {
+        self.authorize_draft(draft, authority_proof)
     }
 
-    fn validate_verified_draft(
+    fn authorize_draft(
         &self,
         draft: PreparedBootstrapDraft,
-        naming_authorization: VerifiedNamingAuthorization,
-    ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
-        if draft.naming_transition != naming_authorization.transition
-            || draft.identity_dispositions != naming_authorization.identity_dispositions
-        {
-            return Err(BootstrapReadError::NamingAuthorityRejected);
-        }
+        authority_proof: &Authority::Proof,
+    ) -> Result<PreparedBootstrapTransaction<Authority>, BootstrapReadError> {
+        let receipt = self
+            .naming_authority
+            .authorize(
+                BootstrapNamingAuthorityRequest {
+                    transaction: &draft,
+                },
+                authority_proof,
+            )
+            .ok_or(BootstrapReadError::NamingAuthorityRejected)?;
         let transaction = PreparedBootstrapTransaction {
             decoded: draft.decoded,
             generated_streams: draft.generated_streams,
             schema_additions: draft.schema_additions,
-            naming_authorization,
+            naming_authorization: VerifiedNamingAuthorization {
+                transition: draft.naming_transition,
+                identity_dispositions: draft.identity_dispositions,
+                receipt,
+            },
             canonical_order: draft.canonical_order,
         };
-        self.validate_prepared(&transaction)?;
+        self.validate_transaction(&transaction)?;
         Ok(transaction)
     }
 
-    fn verify_naming_authority(
+    /// Re-verify authority authenticity and every prepared-model invariant.
+    pub fn validate_transaction(
         &self,
-        transition: &TextualMetadataTransition,
-        identity_dispositions: &BTreeMap<VocabularyEncodedId, IdentityDisposition>,
-        proof: &Authority::Proof,
-    ) -> Result<VerifiedNamingAuthorization, BootstrapReadError> {
-        if !self.naming_authority.verify(
-            BootstrapNamingAuthorityRequest {
-                transition,
-                identity_dispositions,
-            },
-            proof,
-        ) {
-            return Err(BootstrapReadError::NamingAuthorityRejected);
-        }
-        Ok(VerifiedNamingAuthorization {
-            transition: transition.clone(),
-            identity_dispositions: identity_dispositions.clone(),
-        })
+        transaction: &PreparedBootstrapTransaction<Authority>,
+    ) -> Result<(), BootstrapReadError> {
+        transaction.verify_naming_authority(&self.naming_authority)?;
+        self.validate_prepared(transaction)
     }
 
     pub fn archive_status(&self) -> BootstrapArchiveStatus {
@@ -512,7 +573,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
 
     pub(crate) fn validate_prepared(
         &self,
-        transaction: &PreparedBootstrapTransaction,
+        transaction: &PreparedBootstrapTransaction<Authority>,
     ) -> Result<(), BootstrapReadError> {
         let decoded = &transaction.decoded;
         if decoded.document.header.kind != decoded.document.body.kind() {
@@ -600,7 +661,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
 
     fn validate_prepared_dispositions(
         &self,
-        transaction: &PreparedBootstrapTransaction,
+        transaction: &PreparedBootstrapTransaction<Authority>,
         declared_identities: &BTreeSet<VocabularyEncodedId>,
     ) -> Result<(), BootstrapReadError> {
         let disposition_identities = transaction
@@ -668,7 +729,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
 
     fn validate_writer_visibility(
         &self,
-        transaction: &PreparedBootstrapTransaction,
+        transaction: &PreparedBootstrapTransaction<Authority>,
         schemas: SchemaView<'_>,
     ) -> Result<(), BootstrapReadError> {
         let snapshot = transaction.naming_transition().after();

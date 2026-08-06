@@ -16,7 +16,10 @@ naming-authority proof ───────────────────
 authority canonical identity bytes ────────┘
                                            │
                                            v
-                              PreparedBootstrapTransaction
+                         authority-issued exact-draft receipt
+                                           │
+                                           v
+                         PreparedBootstrapTransaction<Authority>
                               (not committed storage)
 ```
 
@@ -31,13 +34,13 @@ spelling without colliding.
 
 `TextualMetadataTransition` is a caller-constructible proposal containing exact
 before and after snapshots. It can preserve, add, rename, move, or remove
-identities, but cannot authenticate itself. Seal presents the proposal and exact
-identity dispositions to the injected `BootstrapNamingAuthority`; only a valid
-authority-specific proof creates the private authorization stored by
-`PreparedBootstrapTransaction`. Independently, seal requires the before snapshot
-to equal the reader catalog and validates the after snapshot against assignments,
-schemas, canonical identity bytes, and semantic visibility. The reader never
-authors or commits the transition.
+identities, but cannot authenticate itself. Seal first assembles the complete
+`PreparedBootstrapDraft`, then presents that exact draft and an authority-specific
+proof to the injected `BootstrapNamingAuthority`. Successful authorization
+returns a configuration-specific receipt. Independently, seal requires the
+before snapshot to equal the reader catalog and validates the after snapshot
+against assignments, schemas, canonical identity bytes, and semantic visibility.
+The reader never authors or commits the transition.
 
 Candidate collection is first restricted to the syntactically applicable
 namespace. Fixed file-kind/role vocabulary never enters body-reference lookup.
@@ -117,15 +120,16 @@ and generated identities remain mutually unique. Grammar, catalog, reader, and
 runtime admission never inspect an EncodedName root, tag, or chain; grammar
 constructor identifiers are only local structural addresses.
 
-The prepared transaction records a private verified authorization containing the
-dispositions and exact metadata transition. Its fields are private and exposed
-read-only. Public untrusted parts remain a `PreparedBootstrapDraft` until
-`validate_draft` re-verifies authority and constructs the wrapper. Validation
-also proves that every after-snapshot identity has both a schema and canonical
-bytes, so a next catalog built from the after snapshot, merged schemas, and
-canonical order succeeds by construction. A reread then uses `Existing`
-dispositions and produces no schema additions. Rename, move, and deletion
-similarly reuse identities instead of reminting them.
+The prepared transaction records the private receipt with the dispositions and
+exact metadata transition. `PreparedBootstrapTransaction<Authority>` is branded
+by the authority type, so even two authority implementations sharing one receipt
+carrier cannot consume each other's transactions. Public untrusted parts remain
+a `PreparedBootstrapDraft` until `validate_draft` obtains a receipt and constructs
+the wrapper. Validation also proves that every after-snapshot identity has both a
+schema and canonical bytes, so a next catalog built from the after snapshot,
+merged schemas, and canonical order succeeds by construction. A reread then uses
+`Existing` dispositions and produces no schema additions. Rename, move, and
+deletion similarly reuse identities instead of reminting them.
 
 All New declarations are installed in a transient schema overlay before
 body resolution, making source order irrelevant. Visible resolution collects
@@ -165,13 +169,18 @@ Every seal and write performs exhaustive validation:
   and relation reference through the local/import/prior environment;
 - canonical ordering of every unordered named collection.
 
-The writer accepts only the validated wrapper and revalidates it. It uses the
-prepared transition's after snapshot for every emitted spelling and for reverse
-visibility checks. Authored references see authored declarations, imports, and
-priors; generated initiation and termination declarations are seated only in the
-separate internal environment used to validate generated Stream anatomy. A write,
-persisted restart, new plan, and reseal with Existing assignments reproduces
-equal semantic meaning without new schema objects.
+The receipt has a public read-only accessor and a transaction verification method
+for external stores. Verification reconstructs the exact complete draft and asks
+the configured authority to verify its receipt; a different configuration of the
+same authority type is therefore refused. Reader transaction validation and the
+writer perform the same receipt check before exhaustive model validation. The
+writer then uses the prepared transition's after snapshot for every emitted
+spelling and reverse visibility check. Authored references see authored
+declarations, imports, and priors; generated initiation and termination
+declarations are seated only in the separate internal environment used to
+validate generated Stream anatomy. A write, persisted restart, new plan, and
+reseal with Existing assignments reproduces equal semantic meaning without new
+schema objects.
 
 Runtime values have strict typed carriers: initiation contains only Query, the
 `RuntimeStream<Event>` contains only a registry-admitted

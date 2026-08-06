@@ -15,9 +15,9 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
     /// source declarations.
     pub fn write(
         &self,
-        transaction: &PreparedBootstrapTransaction,
+        transaction: &PreparedBootstrapTransaction<Authority>,
     ) -> Result<String, BootstrapWriteError> {
-        self.validate_prepared(transaction)?;
+        self.validate_transaction(transaction)?;
         let decoded = transaction.decoded();
         let snapshot = transaction.naming_transition().after();
         let root = self.roots().for_kind(decoded.document.header.kind);

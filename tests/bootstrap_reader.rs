@@ -21,19 +21,99 @@ fn authority_bytes(local: u16) -> Vec<u8> {
 }
 
 const AUTHORITY_PROOF: u64 = 0x0065_7468_6f73;
+const AUTHORITY_IDENTITY: u64 = 0x0062_7261_6e64_2d61;
 
-#[derive(Clone, Debug)]
-struct FakeAuthority;
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FakeAuthority {
+    identity: u64,
+    accepted_proof: u64,
+}
+
+impl FakeAuthority {
+    const fn primary() -> Self {
+        Self {
+            identity: AUTHORITY_IDENTITY,
+            accepted_proof: AUTHORITY_PROOF,
+        }
+    }
+
+    const fn alternate() -> Self {
+        Self {
+            identity: AUTHORITY_IDENTITY + 1,
+            accepted_proof: AUTHORITY_PROOF + 1,
+        }
+    }
+
+    const fn receipt_seal(&self) -> u64 {
+        self.identity.rotate_left(17) ^ self.accepted_proof
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FakeAuthorityReceipt {
+    authority_identity: u64,
+    transaction: PreparedBootstrapDraft,
+    seal: u64,
+}
 
 impl BootstrapNamingAuthority for FakeAuthority {
     type Proof = u64;
+    type Receipt = FakeAuthorityReceipt;
 
-    fn verify(&self, request: BootstrapNamingAuthorityRequest<'_>, proof: &Self::Proof) -> bool {
-        let _proposal = request.transition();
-        let _dispositions = request.identity_dispositions();
-        *proof == AUTHORITY_PROOF
+    fn authorize(
+        &self,
+        request: BootstrapNamingAuthorityRequest<'_>,
+        proof: &Self::Proof,
+    ) -> Option<Self::Receipt> {
+        (*proof == self.accepted_proof).then(|| FakeAuthorityReceipt {
+            authority_identity: self.identity,
+            transaction: request.transaction().clone(),
+            seal: self.receipt_seal(),
+        })
+    }
+
+    fn verify_receipt(
+        &self,
+        request: BootstrapNamingAuthorityRequest<'_>,
+        receipt: &Self::Receipt,
+    ) -> bool {
+        receipt.authority_identity == self.identity
+            && receipt.transaction == *request.transaction()
+            && receipt.seal == self.receipt_seal()
     }
 }
+
+#[derive(Clone, Debug)]
+struct AlwaysTrueAuthority;
+
+impl BootstrapNamingAuthority for AlwaysTrueAuthority {
+    type Proof = ();
+    // Deliberately reuse the receipt carrier: the transaction's Authority brand,
+    // not carrier-type coincidence, prevents this authority from masquerading.
+    type Receipt = FakeAuthorityReceipt;
+
+    fn authorize(
+        &self,
+        request: BootstrapNamingAuthorityRequest<'_>,
+        _proof: &Self::Proof,
+    ) -> Option<Self::Receipt> {
+        Some(FakeAuthorityReceipt {
+            authority_identity: 0,
+            transaction: request.transaction().clone(),
+            seal: 0,
+        })
+    }
+
+    fn verify_receipt(
+        &self,
+        _request: BootstrapNamingAuthorityRequest<'_>,
+        _receipt: &Self::Receipt,
+    ) -> bool {
+        true
+    }
+}
+
+type PreparedTransaction = PreparedBootstrapTransaction<FakeAuthority>;
 
 fn record(
     module: &[&str],
@@ -83,11 +163,20 @@ struct Extra {
 #[derive(Clone)]
 struct Fixture {
     reader: BootstrapReader<FakeAuthority>,
+    authority: FakeAuthority,
     snapshot: TextualMetadataSnapshot,
     schemas: IdentitySchemaCatalog,
 }
 
 fn make_fixture(current_module: &[&str], extras: Vec<Extra>) -> Fixture {
+    make_fixture_with_authority(current_module, extras, FakeAuthority::primary())
+}
+
+fn make_fixture_with_authority(
+    current_module: &[&str],
+    extras: Vec<Extra>,
+    authority: FakeAuthority,
+) -> Fixture {
     let prior_specs = [
         (
             1,
@@ -146,7 +235,7 @@ fn make_fixture(current_module: &[&str], extras: Vec<Extra>) -> Fixture {
     let snapshot = TextualMetadataSnapshot::new(records).unwrap();
     let schemas = IdentitySchemaCatalog::new(schemas).unwrap();
     let order = CanonicalIdentityOrder::new(ordering).unwrap();
-    fixture_from_parts(current_module, snapshot, schemas, order)
+    fixture_from_parts(current_module, snapshot, schemas, order, authority)
 }
 
 fn fixture_from_parts(
@@ -154,6 +243,7 @@ fn fixture_from_parts(
     snapshot: TextualMetadataSnapshot,
     schemas: IdentitySchemaCatalog,
     order: CanonicalIdentityOrder,
+    authority: FakeAuthority,
 ) -> Fixture {
     let priors = BootstrapPriorVocabulary::new(prior_identities(), &schemas, &snapshot).unwrap();
     let catalog = BootstrapCatalog::new(
@@ -174,11 +264,12 @@ fn fixture_from_parts(
             syntax: id(901),
         },
         catalog,
-        FakeAuthority,
+        authority.clone(),
     )
     .unwrap();
     Fixture {
         reader,
+        authority,
         snapshot,
         schemas,
     }
@@ -186,7 +277,7 @@ fn fixture_from_parts(
 
 fn restarted(
     prior: &Fixture,
-    transaction: &PreparedBootstrapTransaction,
+    transaction: &PreparedTransaction,
     current_module: &[&str],
 ) -> Fixture {
     let schemas = IdentitySchemaCatalog::new(
@@ -203,6 +294,7 @@ fn restarted(
         transaction.naming_transition().after().clone(),
         schemas,
         transaction.canonical_order().clone(),
+        prior.authority.clone(),
     )
 }
 
@@ -364,7 +456,7 @@ fn existing_inputs(
 fn seal_new(
     fixture: &Fixture,
     source: &str,
-) -> (BootstrapReadPlan, SealInputs, PreparedBootstrapTransaction) {
+) -> (BootstrapReadPlan, SealInputs, PreparedTransaction) {
     let plan = fixture.reader.plan(source).unwrap();
     let inputs = new_inputs(&plan, &fixture.snapshot);
     let transaction = fixture
@@ -1244,6 +1336,46 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
     ));
     let written = fixture.reader.write(&transaction).unwrap();
     assert!(written.contains("Thing.String"));
+}
+
+#[test]
+fn authority_receipts_are_exact_configuration_brands_at_store_validation_and_write() {
+    fn store_accepts<Authority: BootstrapNamingAuthority>(
+        authority: &Authority,
+        transaction: &PreparedBootstrapTransaction<Authority>,
+    ) -> Result<(), BootstrapReadError> {
+        transaction.verify_naming_authority(authority)
+    }
+
+    let fixture = make_fixture(&["app"], vec![]);
+    let (_, _, transaction) =
+        seal_new(&fixture, "Interface.{1 0 0}\n[]\n{[] [] [] [Thing.String]}");
+    let _: &FakeAuthorityReceipt = transaction.naming_authority_receipt();
+    store_accepts(&fixture.authority, &transaction).unwrap();
+    fixture.reader.validate_transaction(&transaction).unwrap();
+    fixture.reader.write(&transaction).unwrap();
+
+    let alternate = make_fixture_with_authority(&["app"], vec![], FakeAuthority::alternate());
+    assert!(matches!(
+        store_accepts(&alternate.authority, &transaction),
+        Err(BootstrapReadError::NamingAuthorityReceiptRejected)
+    ));
+    assert!(matches!(
+        alternate.reader.validate_transaction(&transaction),
+        Err(BootstrapReadError::NamingAuthorityReceiptRejected)
+    ));
+    assert!(matches!(
+        alternate.reader.write(&transaction),
+        Err(BootstrapWriteError::InvalidModel(
+            BootstrapReadError::NamingAuthorityReceiptRejected
+        ))
+    ));
+
+    // Even sharing the exact Receipt carrier cannot erase the authority brand.
+    assert_ne!(
+        std::any::TypeId::of::<PreparedBootstrapTransaction<FakeAuthority>>(),
+        std::any::TypeId::of::<PreparedBootstrapTransaction<AlwaysTrueAuthority>>()
+    );
 }
 
 #[test]

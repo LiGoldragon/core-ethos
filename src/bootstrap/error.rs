@@ -73,6 +73,8 @@ pub enum BootstrapReadError {
     MetadataTransitionBeforeMismatch,
     #[error("the naming authority rejected the supplied proof for this proposal")]
     NamingAuthorityRejected,
+    #[error("the configured naming authority rejected this transaction's receipt")]
+    NamingAuthorityReceiptRejected,
     #[error("the sealing snapshot adds unrelated identity {0:?}")]
     ExtraMetadataIdentity(VocabularyEncodedId),
     #[error("textual lookup {module_path:?}:{name} has no identity")]

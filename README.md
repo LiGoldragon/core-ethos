@@ -24,18 +24,20 @@ The `bootstrap` module separates five authorities that must never collapse:
    carry authority-supplied canonical ordering bytes. Generated Stream identities
    use the same dispositions in their separate assignment channel.
 5. `TextualMetadataTransition` is a public before→after proposal, never proof of
-   its own authority. `BootstrapReader::seal` presents that proposal, the exact
-   dispositions, and an authority-specific proof to the injected
-   `BootstrapNamingAuthority`. Only successful verification creates the private
-   authorization retained by the prepared transaction. A proposal may preserve,
-   rename, move, add, or remove projections; the reader still validates its
-   structural consistency and never commits it.
+   its own authority. `BootstrapReader::seal` presents the complete
+   `PreparedBootstrapDraft` and an authority-specific proof to the injected
+   `BootstrapNamingAuthority`. Only successful authorization issues the private,
+   configuration-specific receipt retained by the prepared transaction. A
+   proposal may preserve, rename, move, add, or remove projections; the reader
+   still validates its structural consistency and never commits it.
 
-The resulting `PreparedBootstrapTransaction` has private invariant-bearing fields
-and read-only accessors, so stores can accept only a validated value. Untrusted
-parts remain a `PreparedBootstrapDraft` until `validate_draft` re-verifies an
-authority proof and succeeds. The writer consumes its exact transition and uses
-the after snapshot in both directions. No magic spelling exists for
+The resulting `PreparedBootstrapTransaction<Authority>` is branded by its
+authority type and has private invariant-bearing fields. Its receipt is exposed
+read-only, with a public verification method for stores configured with that
+authority. Untrusted parts remain a `PreparedBootstrapDraft` until
+`validate_draft` obtains a receipt and succeeds. Reader validation and every
+write re-verify that receipt against the exact reconstructed draft before using
+the transition. No magic spelling exists for
 file kinds, primitives, Shapes, roles, Stream, or StreamIdentity: every visible
 projection comes from metadata attached to a typed prior identity.
 
