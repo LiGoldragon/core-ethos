@@ -19,8 +19,8 @@ use structural_codec::{
     DecodeFormId, EncodedConstructorId, EncodedNameResolver, EncodedTypeId, FieldRole,
     FieldVisitor, OrderedSequence, PlannedFieldValue, PlannedStructuralValue, Position,
     RuleCoproduct, SharedDescriptor, StableRoleId, StructuralEntry, StructuralEvaluator,
-    StructuralRule, StructuralVocabularyIdentity, StructureRecord, TableIdentityPayload,
-    TargetLayoutIdentity, TextualRenderingPolicy, UnaryRoot, UnaryRule,
+    StructuralPlanning, StructuralRule, StructuralVocabularyIdentity, StructureRecord,
+    TableIdentityPayload, TargetLayoutIdentity, TextualRenderingPolicy, UnaryRoot, UnaryRule,
 };
 
 use super::error::{BootstrapBuildError, BootstrapReadError};
@@ -366,8 +366,8 @@ impl BootstrapGrammar {
     }
 
     pub(crate) fn plan(&self, source: &str) -> Result<StructuralDocumentPlan, BootstrapReadError> {
-        let plan =
-            StructuralEvaluator::new(&self.table)?.plan_text(&self.document, source, &NoNames)?;
+        let evaluator = StructuralEvaluator::new(&self.table)?;
+        let plan = StructuralPlanning::plan_text(&evaluator, &self.document, source, &NoNames)?;
         let roots = [
             self.syntax_from_field(field::<HeaderSyntaxRole>(&plan, "header")?)?,
             self.syntax_from_field(field::<ImportsSyntaxRole>(&plan, "imports")?)?,
