@@ -1,14 +1,12 @@
 //! # core-ethos
 //!
-//! The stringless encoded Ethos carriers for the protos language family.
+//! Strict bootstrap Ethos reading and encoded carriers for the protos language family.
 //!
-//! [`whole`] is the sole textual and structural surface. It decodes composite
-//! Interface, Nexus, and Sema documents and emits their encoded meaning through
-//! the canonical full-chain `structural-codec` contract, receiving declaration
-//! assignments and lookup-only references from the naming authority. The older
-//! flat declaration algebra remains available only as sealed execution data while
-//! its consumers migrate; it is not a textual authoring path.
+//! [`bootstrap`] is the canonical two-phase textual boundary. [`whole`] and the
+//! older flat declaration algebra remain temporarily for consumer migration and
+//! are not extended by the bootstrap schema.
 
+pub mod bootstrap;
 pub mod capsule;
 pub mod declaration;
 pub mod error;

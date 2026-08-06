@@ -1,70 +1,83 @@
 # Architecture — core-ethos
 
-## One full-chain structural universe
+## Shared two-phase bootstrap reader
 
-`core-ethos` has one canonical `raw-discovery` dependency and one canonical
-`structural-codec` dependency. The `whole` module defines one composite document
-shape: header, imports, body. Its `OrderedSequence` admits the bare header and
-the two following delimited objects without a positional source splitter.
+`bootstrap` separates structural discovery, naming authority, semantic sealing,
+and textual projection.
 
-The codec accepts `DecodeNameBindings<VocabularyRoot>` as read-only authority
-state. Declaration positions require `declaration_assignment`; references
-require `reference_resolution`. The component never receives an allocation
-capability.
+The structural layer owns one Ethos-specific sealed token profile and one
+addressed table. Its recursive syntax type distinguishes atom, dot application,
+bare-angle application, braces, squares, parentheses, and guillemets. A single
+ordered document record requires Header, Imports, and Body. Every file kind goes
+through the same `StructuralEvaluator::plan_text` call; the selected header only
+chooses a typed body-root definition. There is no Interface, Nexus, or Sema
+parser.
 
-Decode is two-phase. The shared evaluator decodes `Kind.Version`; a registry of
-`EthosFileRoot` implementations selects the addressed document root; then the
-same evaluator decodes the complete document. Each kind contributes a body root
-record and a small trait implementation rather than a parser. Interface, Nexus,
-and Sema body records all delegate through the same declaration, reference,
-application, list, and product rules.
+This structural tree is intentionally pre-semantic. The expected typed position
+then chooses `Declaration`, `TypeExpression`, `RoleEntry`, Trait method, or table
+meaning. Consequently an atom is never classified by spelling alone, and the
+semantic model contains no generic syntax tree or transformer application.
 
-The decode result retains the typed `WholeEthos` value and a typed source-only
-import representation. Encoding reflects those values into a fresh checked
-structural mirror and passes that mirror to the shared writer under the selected
-root. Presentation trivia is canonicalized; correctness is established by
-decoding the emission to the same typed value and archive bytes. Text carried as
-actual scalar content remains in the typed import representation and therefore
-survives reflection. Imports remain absent from `WholeEthos` archives.
+Planning walks the selected schema before any body resolution. It produces
+ephemeral `DeclarationOccurrence` handles with exact full-source bounds and
+enforces module, enum-variant, and Trait-method uniqueness. A Stream occurrence
+requests its output, initiation, and termination identities in one plan. These
+handles are decode-local coordination values; they are not archived or hashed.
 
-The encoded value is `WholeEthos`, a header plus one selected body:
+Sealing accepts a `NamingAssignments` set and proves it equals the planned set.
+The reader has no allocation capability. It constructs a complete resolution
+environment from:
 
-- newtypes retain visibility, declaration identity, and wrapped type;
-- enumerations retain declaration and variant identities plus positional
-  payloads;
-- structs retain only ordered type references, never authored field labels;
-- object-first operator applications retain operator, authored name, and
-  positional payload without assigning Stream semantics;
-- traits retain methods whose last positional type is the explicit return;
-- tables retain record and key type positions while their section supplies the
-  table operator;
-- type references retain complete identity or application-head chains;
-- fields have no authored names.
+- all top-level assignments, so source order is irrelevant;
+- the source-only import selectors resolved through `BootstrapCatalog`;
+- the closed, role-typed `BootstrapPriorVocabulary`.
 
-Public construction, serialization, and archive restoration validate the
-supported version, header/body kind agreement, grammar cardinalities,
-visibility forms, and encoded root/chain invariants before returning or writing
-a value. `WholeEthos` does not carry a composed NameTree pin and is not itself a
-Capsule.
+References are checked against their position's admitted class: nominal,
+persistent nominal, Shape, Trait, or the audited Stream Nomos head. Local
+parameter binders never receive a global encoded identity. Inferred Trait
+vectors are sorted by encoded identity and used as declaration-local
+co-reference keys; named binders additionally reject incompatible reuse.
 
-## Retained execution data boundary
+The semantic output consists only of purpose-built carriers:
 
-`EncodedEthos` and its declaration/reference algebra predate the full-chain
-identity model. They remain only because the current sealed execution engine
-still consumes those values. They expose no textual decoder, structural table,
-universe bridge, or `EncodedForm` implementation. This makes the phase boundary
-honest: the flat values are execution data awaiting migration, not a second
-authoring model.
+- Interface roles contain declarations or nominal references, while all
+  `InterfaceRoleMembership` relations are owned by the Interface root;
+- plain types contain newtype, struct, or enum bodies and strict recursive type
+  expressions;
+- Stream contains exactly its three generated nominal declarations, while the
+  Interface holds their Input/Output/Input relations;
+- Nexus holds Traits first, then supporting declarations, with marker Traits
+  represented by an explicit empty method product;
+- Sema holds persistent nominal declarations and tables whose record and key
+  leaves are persistent nominal identities.
 
-The retired modules were `document`, `fixture`, `rules`, `textual`, and
-`universe`. They depended on flat `ScopedEncodedTypeId`, local NameTable
-allocation, and the structural-codec 0.6 descriptor model. Preserving them by
-porting a duplicate full-chain grammar would have created a second authoring
-surface beside `whole`.
+Review-sensitive root orders and the complete prior catalog are isolated in
+typed definitions. Nothing in these semantic forms names Rust, LLVM, an ABI, a
+storage engine, or the current operating system.
 
-## Capsule boundary
+## Canonical writer
 
-`capsule_from_issued_hash` fixes the outer kind to `protos::Ethos`. It passes
-through a caller-issued content hash and opaque complete NameTree pin; it does
-not derive their relationship or make the retained flat execution data a
-full-chain carrier.
+The writer traverses the strict model rather than source bytes. It retrieves
+global spellings from an injected `EncodedNameResolver`, uses retained
+source-only imports and local-binder projections, restores every explicit empty
+vector/product, and emits the ruled delimiters and ordering. Stream writes back
+only `OutputName.Stream.(Query Event)`; initiation and termination remain
+generated meaning rather than additional authored declarations.
+
+## Transitional boundary
+
+`whole` is the previous composite authoring carrier and remains temporarily for
+downstream compatibility. `EncodedEthos` and its declaration/reference algebra
+predate the full-chain model and remain only as sealed execution data. The new
+reader does not extend either representation. Removing them belongs to consumer
+migration, not to widening the bootstrap schema.
+
+## Identity and Capsule boundary
+
+Grammar, prior, declaration, and lookup identities are caller-supplied. The
+crate treats the pinned `VocabularyEncodedId` carrier as opaque and does not
+allocate names, handle collisions, store naming tables, or derive a durable
+identity scheme from its present chain anatomy.
+
+`capsule_from_issued_hash` similarly passes through a caller-issued content hash
+and opaque complete NameTree pin. It does not derive their relationship.

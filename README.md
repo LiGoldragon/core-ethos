@@ -1,44 +1,65 @@
 # core-ethos
 
-`core-ethos` owns the stringless encoded Ethos carriers.
+`core-ethos` owns the strict bootstrap Ethos reader and its purpose-built
+Interface, Nexus, and Sema semantic forms.
 
-## Canonical textual and structural surface
+## Canonical bootstrap surface
 
-The `whole` module is the one production textual/structural path. Its
-`EthosCodec` decodes Interface, Nexus, and Sema files through `raw-discovery`
-and `structural-codec` using complete `VocabularyEncodedId` chains:
+The `bootstrap` module is the canonical authoring boundary. One shared
+`BootstrapReader` handles every file kind in two phases:
 
-- declaration positions consume assignments already issued by the translator;
-- reference positions perform lookup only;
-- fields are positional;
-- every document is a header, imports object, and kind-selected body;
-- the header is decoded first and its kind selects one addressed document root;
-- Interface bodies carry inputs, outputs, refusals, and shared types;
-- Nexus bodies carry operand types and trait method signatures;
-- Sema bodies carry record types and `table.{Record Key}` declarations;
-- imports are parsed into a typed source-only representation and remain absent
-  from the encoded archive;
-- encoding reflects `WholeEthos` plus those imports into a fresh checked mirror
-  and the shared writer emits canonical text;
-- decoding canonical emission reproduces the same encoded value and archive
-  bytes; presentation whitespace is not identity, while carried text remains
-  meaningful;
-- no local name or identity allocation exists;
-- `WholeEthos` validates version, body kind, grammar cardinalities, visibility,
-  and every complete chain on construction, serialization, and restore.
+1. `plan` uses `raw-discovery` and the existing `structural-codec` evaluator to
+   select one complete structural tree and report every declaration identity
+   request with its exact source bound. It allocates nothing.
+2. `seal` requires exactly one caller-issued `NamingAssignment` per planned
+   occurrence, rejects missing and extra assignments, loads typed priors and
+   imported metadata, establishes scopes, resolves strict leaf classes, and
+   constructs the kind-selected semantic model.
 
-The grammar identities and builtin reference/operator priors are caller-supplied
-typed data. Unknown file kinds and unsupported versions refuse through typed
-errors. The codec uses the Standard discovery profile and the canonical
-`structural-codec` dependency only.
+The reader accepts the ruled bootstrap projections:
 
-## Retained sealed declaration data
+```ethos
+Interface.{1 0 0}
+[component:protocol:interface.[Entry Referent]]
+{
+  [Submit.Request]
+  [Accepted.Response]
+  [Rejected.{Reason Explanation}]
+  [Request.String Response.String Reason.String Explanation.String]
+}
+```
 
-The older `EncodedEthos` declaration algebra remains because the current sealed
-Nomos execution engine consumes it. It carries flat `Identifier` values and is
-not an authoring, textual, or structural-codec surface. Its former flat
-`TextualEthos`, structural fixture, and universe bridge were retired when the
-crate converged on the full-chain structural contract.
+- Headers contain exactly three canonical nonnegative decimal components.
+- Imports use a colon module path and a nonempty square selector vector,
+  including singleton imports.
+- Interface is `{Inputs Outputs Refusals Types}` and role relations belong to
+  the Interface, not to the referenced types.
+- Nexus is `{Traits Types}`; a Trait always has an explicit method product and
+  each method's final position is its mandatory return.
+- Sema is `{RecordTypes Tables}` and both table leaves must resolve to persistent
+  nominal declarations.
+- Type expressions are exactly nominal references, nonempty Shape applications,
+  or guillemet Trait requirements. Inferred Trait vectors normalize and co-refer
+  only within their containing declaration; named binders are scope-local.
+- `Name.Stream.(Query Event)` is the sole audited Nomos arm. It atomically
+  consumes three externally assigned identities and produces initiation Input,
+  direct `Stream<Event>` Output, and termination Input declarations. There is no
+  generic transformer carrier or authored termination arm.
+
+`BootstrapReader::write` emits a canonical equivalent projection from encoded
+meaning plus source-only import and local-binder metadata. Global visible names
+come only from the caller's `EncodedNameResolver`.
+
+The current `VocabularyEncodedId` representation is treated as an injected
+opaque naming-authority value. Allocation, collision handling, module storage,
+Capsule composition, and identity persistence are outside this crate.
+
+## Transitional carriers
+
+The historical `whole` module and older flat `EncodedEthos` algebra remain for
+downstream migration. They are not extended by the bootstrap reader. The flat
+algebra is sealed execution data for the current Nomos engine, not an authoring
+model.
 
 ## Capsule carrier
 
