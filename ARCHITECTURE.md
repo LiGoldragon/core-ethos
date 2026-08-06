@@ -188,13 +188,10 @@ Runtime values have strict typed carriers: initiation contains only Query, the
 `RuntimeStream<Event>` handle value rather than a bare identity. Unregistered and
 mismatched handles are typed refusals.
 
-## Archive and transitional boundary
+## Archive boundary
 
 `BootstrapArchiveStatus::NotYetArchived` is explicit. A durable archive today
 would freeze the chain-shaped identity carrier the bootstrap otherwise treats as
 opaque. Once random EncodedName is stable, the semantic document and prepared
 schema additions can gain a validated archive/content-identity boundary while
 continuing to exclude imports and textual metadata.
-
-`whole` and flat `EncodedEthos` remain untouched transitional consumers. They are
-not alternate schemas for new bootstrap work.
