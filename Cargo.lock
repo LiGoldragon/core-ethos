@@ -109,12 +109,7 @@ dependencies = [
 name = "core-ethos"
 version = "0.28.0"
 dependencies = [
- "content-identity 0.3.0",
- "content-identity 0.5.0",
- "name-table 0.1.0",
- "name-table 0.3.0",
- "nomos-types",
- "protos",
+ "name-table",
  "raw-discovery",
  "rkyv",
  "signal-sema-translator",
@@ -222,30 +217,12 @@ dependencies = [
 
 [[package]]
 name = "name-table"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/name-table.git?rev=196610e2907687dcb8dbd0d2dfaafe4aefd9fa27#196610e2907687dcb8dbd0d2dfaafe4aefd9fa27"
-dependencies = [
- "content-identity 0.3.0",
- "rkyv",
- "thiserror",
-]
-
-[[package]]
-name = "name-table"
 version = "0.3.0"
 source = "git+https://github.com/LiGoldragon/name-table.git?rev=a22f48d8040ab9235f3552ad8654ff8e27b8157d#a22f48d8040ab9235f3552ad8654ff8e27b8157d"
 dependencies = [
  "content-identity 0.5.0",
  "rkyv",
  "thiserror",
-]
-
-[[package]]
-name = "nomos-types"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/nomos-types.git?rev=a7b831e0540a8ad263cd07ed44ec4c95c56771fb#a7b831e0540a8ad263cd07ed44ec4c95c56771fb"
-dependencies = [
- "rkyv",
 ]
 
 [[package]]
@@ -411,7 +388,7 @@ version = "0.4.0"
 source = "git+https://github.com/LiGoldragon/signal-sema-translator.git?rev=3a26cb43f8ce7f9fe85da64d19aa55aa662943ce#3a26cb43f8ce7f9fe85da64d19aa55aa662943ce"
 dependencies = [
  "blake3",
- "name-table 0.3.0",
+ "name-table",
  "protos",
  "rkyv",
  "signal-frame",
@@ -436,7 +413,7 @@ version = "0.19.0"
 source = "git+https://github.com/LiGoldragon/structural-codec.git?rev=413e3744569ca237e837a1fd57d9ba6ad6adc3de#413e3744569ca237e837a1fd57d9ba6ad6adc3de"
 dependencies = [
  "content-identity 0.3.0",
- "name-table 0.3.0",
+ "name-table",
  "raw-discovery",
  "rkyv",
  "thiserror",

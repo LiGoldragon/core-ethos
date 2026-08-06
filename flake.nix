@@ -1,5 +1,5 @@
 {
-  description = "core-ethos — composite whole-Ethos round trips and retained sealed execution data";
+  description = "core-ethos — authority-sealed bootstrap Ethos reader and model";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
