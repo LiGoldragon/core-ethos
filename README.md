@@ -112,11 +112,6 @@ textual projections are already excluded from semantic meaning; a validated
 archive/content-identity boundary belongs immediately after the identity substrate
 is stable.
 
-## Transitional carriers
-
-The historical `whole` module and flat `EncodedEthos` execution algebra remain
-unchanged for downstream migration. The bootstrap reader does not extend them.
-
 ## Build and test
 
 ```sh
