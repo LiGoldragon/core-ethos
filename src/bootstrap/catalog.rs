@@ -1,5 +1,6 @@
 //! Independent textual and semantic authority snapshots.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
@@ -7,29 +8,51 @@ use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 use super::error::BootstrapReadError;
 use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaContract};
 
+/// The exact lexical address of one textual projection. Nested declarations
+/// use their owning encoded identity, so equal sibling spellings never occupy
+/// the same address.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TextualProjectionAddress {
+    pub module_path: Vec<String>,
+    pub lexical_owner: Option<VocabularyEncodedId>,
+    pub visible_name: String,
+}
+
 /// One textual projection record. It carries no semantic class information.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextualMetadataRecord {
-    pub module_path: Vec<String>,
-    pub visible_name: String,
+    pub address: TextualProjectionAddress,
     pub encoded_name: VocabularyEncodedId,
 }
 
 /// An immutable bidirectional one-record-per-object textual snapshot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TextualMetadataSnapshot {
     records: Vec<TextualMetadataRecord>,
     by_identity: BTreeMap<VocabularyEncodedId, usize>,
-    by_projection: BTreeMap<(Vec<String>, String), Vec<VocabularyEncodedId>>,
+    by_projection: BTreeMap<TextualProjectionAddress, VocabularyEncodedId>,
 }
+
+impl PartialEq for TextualMetadataSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.by_identity.len() == other.by_identity.len()
+            && self.records.iter().all(|record| {
+                other
+                    .record(&record.encoded_name)
+                    .is_some_and(|other| other == record)
+            })
+    }
+}
+
+impl Eq for TextualMetadataSnapshot {}
 
 impl TextualMetadataSnapshot {
     pub fn new(records: Vec<TextualMetadataRecord>) -> Result<Self, BootstrapReadError> {
         let mut by_identity = BTreeMap::new();
-        let mut by_projection = BTreeMap::<(Vec<String>, String), Vec<VocabularyEncodedId>>::new();
+        let mut by_projection = BTreeMap::new();
         for (index, record) in records.iter().enumerate() {
-            validate_module_path(&record.module_path)?;
-            validate_visible_name(&record.visible_name)?;
+            validate_module_path(&record.address.module_path)?;
+            validate_visible_name(&record.address.visible_name)?;
             if by_identity
                 .insert(record.encoded_name.clone(), index)
                 .is_some()
@@ -38,10 +61,26 @@ impl TextualMetadataSnapshot {
                     record.encoded_name.clone(),
                 ));
             }
-            by_projection
-                .entry((record.module_path.clone(), record.visible_name.clone()))
-                .or_default()
-                .push(record.encoded_name.clone());
+            if by_projection
+                .insert(record.address.clone(), record.encoded_name.clone())
+                .is_some()
+            {
+                return Err(BootstrapReadError::DuplicateMetadataProjectionAddress {
+                    module_path: record.address.module_path.clone(),
+                    lexical_owner: record.address.lexical_owner.clone(),
+                    name: record.address.visible_name.clone(),
+                });
+            }
+        }
+        for record in &records {
+            if let Some(owner) = &record.address.lexical_owner {
+                if owner == &record.encoded_name || !by_identity.contains_key(owner) {
+                    return Err(BootstrapReadError::InvalidMetadataLexicalOwner {
+                        identity: record.encoded_name.clone(),
+                        owner: owner.clone(),
+                    });
+                }
+            }
         }
         Ok(Self {
             records,
@@ -62,32 +101,121 @@ impl TextualMetadataSnapshot {
 
     pub fn spelling(&self, identity: &VocabularyEncodedId) -> Option<&str> {
         self.record(identity)
-            .map(|record| record.visible_name.as_str())
+            .map(|record| record.address.visible_name.as_str())
     }
 
-    pub fn identities_at(
+    pub fn identity_at(
         &self,
         module_path: &[String],
+        lexical_owner: Option<&VocabularyEncodedId>,
         visible_name: &str,
-    ) -> &[VocabularyEncodedId] {
-        self.by_projection
-            .get(&(module_path.to_vec(), visible_name.to_owned()))
-            .map_or(&[], Vec::as_slice)
+    ) -> Option<&VocabularyEncodedId> {
+        self.by_projection.get(&TextualProjectionAddress {
+            module_path: module_path.to_vec(),
+            lexical_owner: lexical_owner.cloned(),
+            visible_name: visible_name.to_owned(),
+        })
     }
 
     pub(crate) fn identities(&self) -> impl Iterator<Item = &VocabularyEncodedId> {
         self.by_identity.keys()
     }
+}
 
-    pub(crate) fn extends(&self, earlier: &Self) -> Result<(), BootstrapReadError> {
-        for record in &earlier.records {
-            if self.record(&record.encoded_name) != Some(record) {
-                return Err(BootstrapReadError::MetadataSnapshotDoesNotExtend(
-                    record.encoded_name.clone(),
-                ));
+/// Naming-authority proof for one explicit before-to-after projection change.
+/// The reader consumes this proof; it never invents or broadens the transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextualMetadataTransition {
+    before: TextualMetadataSnapshot,
+    after: TextualMetadataSnapshot,
+}
+
+impl TextualMetadataTransition {
+    pub const fn new(before: TextualMetadataSnapshot, after: TextualMetadataSnapshot) -> Self {
+        Self { before, after }
+    }
+
+    pub const fn before(&self) -> &TextualMetadataSnapshot {
+        &self.before
+    }
+
+    pub const fn after(&self) -> &TextualMetadataSnapshot {
+        &self.after
+    }
+}
+
+/// Canonical bytes supplied by identity authority. No EncodedName carrier
+/// anatomy participates in semantic ordering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalIdentityOrder {
+    by_identity: BTreeMap<VocabularyEncodedId, Vec<u8>>,
+}
+
+impl CanonicalIdentityOrder {
+    pub fn new(
+        entries: impl IntoIterator<Item = (VocabularyEncodedId, Vec<u8>)>,
+    ) -> Result<Self, BootstrapReadError> {
+        let mut by_identity = BTreeMap::new();
+        let mut identities_by_bytes = BTreeMap::<Vec<u8>, VocabularyEncodedId>::new();
+        for (identity, bytes) in entries {
+            if bytes.is_empty() {
+                return Err(BootstrapReadError::EmptyCanonicalIdentityBytes(identity));
+            }
+            if by_identity
+                .insert(identity.clone(), bytes.clone())
+                .is_some()
+            {
+                return Err(BootstrapReadError::DuplicateCanonicalIdentity(identity));
+            }
+            if let Some(other) = identities_by_bytes.insert(bytes, identity.clone()) {
+                return Err(BootstrapReadError::DuplicateCanonicalIdentityBytes {
+                    first: other,
+                    second: identity,
+                });
             }
         }
-        Ok(())
+        Ok(Self { by_identity })
+    }
+
+    pub fn bytes(&self, identity: &VocabularyEncodedId) -> Option<&[u8]> {
+        self.by_identity.get(identity).map(Vec::as_slice)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (&VocabularyEncodedId, &[u8])> {
+        self.by_identity
+            .iter()
+            .map(|(identity, bytes)| (identity, bytes.as_slice()))
+    }
+
+    pub fn compare(
+        &self,
+        left: &VocabularyEncodedId,
+        right: &VocabularyEncodedId,
+    ) -> Result<Ordering, BootstrapReadError> {
+        let left = self
+            .bytes(left)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(left.clone()))?;
+        let right = self
+            .bytes(right)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(right.clone()))?;
+        Ok(left.cmp(right))
+    }
+
+    pub(crate) fn contains(&self, identity: &VocabularyEncodedId) -> bool {
+        self.by_identity.contains_key(identity)
+    }
+
+    pub(crate) fn extended(
+        &self,
+        additions: impl IntoIterator<Item = (VocabularyEncodedId, Vec<u8>)>,
+    ) -> Result<Self, BootstrapReadError> {
+        let mut entries = self
+            .by_identity
+            .iter()
+            .map(|(identity, bytes)| (identity.clone(), bytes.clone()))
+            .collect::<Vec<_>>();
+        entries.extend(additions);
+        Self::new(entries)
     }
 }
 
@@ -128,16 +256,11 @@ impl IdentitySchema {
             return Err(BootstrapReadError::NonUniversalSchemaIdentity(identity));
         }
         let roles = roles.into_iter().collect::<BTreeSet<_>>();
-        for role in &roles {
-            for other in &roles {
-                if role < other && conflicting_role_family(*role, *other) {
-                    return Err(BootstrapReadError::ConflictingSchemaRoles {
-                        identity: identity.clone(),
-                        first: *role,
-                        second: *other,
-                    });
-                }
-            }
+        if roles.is_empty() || !admitted_role_set(&roles) {
+            return Err(BootstrapReadError::IncompatibleSchemaRoles {
+                identity,
+                roles: roles.iter().copied().collect(),
+            });
         }
         Ok(Self { identity, roles })
     }
@@ -169,15 +292,15 @@ impl IdentitySchema {
     }
 }
 
-fn conflicting_role_family(left: SchemaRole, right: SchemaRole) -> bool {
-    matches!(
-        (left, right),
-        (SchemaRole::FileKind(_), SchemaRole::FileKind(_))
-            | (SchemaRole::InterfaceRole(_), SchemaRole::InterfaceRole(_))
-            | (SchemaRole::Nominal { .. }, SchemaRole::Nominal { .. })
-            | (SchemaRole::Shape { .. }, SchemaRole::Shape { .. })
-            | (SchemaRole::Nomos(_), SchemaRole::Nomos(_))
-    )
+fn admitted_role_set(roles: &BTreeSet<SchemaRole>) -> bool {
+    if roles.len() == 1 {
+        return true;
+    }
+    roles
+        == &BTreeSet::from([
+            SchemaRole::Shape { arity: 1 },
+            SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
+        ])
 }
 
 /// Identity-keyed semantic schema authority.
@@ -359,6 +482,39 @@ impl BootstrapPriorVocabulary {
                 ));
             }
         }
+        if identities.stream_nomos != identities.stream_shape {
+            return Err(BootstrapReadError::InvalidPriorIdentityRelationship(
+                "stream_nomos and stream_shape must be the same identity",
+            ));
+        }
+        let positions = [
+            ("interface_kind", &identities.interface_kind),
+            ("nexus_kind", &identities.nexus_kind),
+            ("sema_kind", &identities.sema_kind),
+            ("input_role", &identities.input_role),
+            ("output_role", &identities.output_role),
+            ("refusal_role", &identities.refusal_role),
+            ("string_type", &identities.string_type),
+            ("integer_type", &identities.integer_type),
+            ("boolean_type", &identities.boolean_type),
+            ("unit_type", &identities.unit_type),
+            ("vector_shape", &identities.vector_shape),
+            ("option_shape", &identities.option_shape),
+            ("map_shape", &identities.map_shape),
+            ("result_shape", &identities.result_shape),
+            ("stream_shape", &identities.stream_shape),
+            ("stream_identity_shape", &identities.stream_identity_shape),
+        ];
+        let mut seated = BTreeMap::new();
+        for (position, identity) in positions {
+            if let Some(previous) = seated.insert(identity.clone(), position) {
+                return Err(BootstrapReadError::DuplicatePriorIdentity {
+                    first: previous,
+                    second: position,
+                    identity: identity.clone(),
+                });
+            }
+        }
         let kind_names = [
             metadata.spelling(&identities.interface_kind),
             metadata.spelling(&identities.nexus_kind),
@@ -386,26 +542,59 @@ impl BootstrapPriorVocabulary {
         }
     }
 
-    pub(crate) fn all_identities(&self) -> Vec<VocabularyEncodedId> {
+    pub(crate) fn body_nominal_identities(&self) -> [&VocabularyEncodedId; 4] {
         let ids = &self.identities;
-        vec![
-            ids.interface_kind.clone(),
-            ids.nexus_kind.clone(),
-            ids.sema_kind.clone(),
-            ids.input_role.clone(),
-            ids.output_role.clone(),
-            ids.refusal_role.clone(),
-            ids.string_type.clone(),
-            ids.integer_type.clone(),
-            ids.boolean_type.clone(),
-            ids.unit_type.clone(),
-            ids.vector_shape.clone(),
-            ids.option_shape.clone(),
-            ids.map_shape.clone(),
-            ids.result_shape.clone(),
-            ids.stream_nomos.clone(),
-            ids.stream_shape.clone(),
-            ids.stream_identity_shape.clone(),
+        [
+            &ids.string_type,
+            &ids.integer_type,
+            &ids.boolean_type,
+            &ids.unit_type,
+        ]
+    }
+
+    pub(crate) fn shape_identities(&self) -> [&VocabularyEncodedId; 6] {
+        let ids = &self.identities;
+        [
+            &ids.vector_shape,
+            &ids.option_shape,
+            &ids.map_shape,
+            &ids.result_shape,
+            &ids.stream_shape,
+            &ids.stream_identity_shape,
+        ]
+    }
+
+    pub(crate) fn role_identity(&self, role: InterfaceRole) -> &VocabularyEncodedId {
+        match role {
+            InterfaceRole::Input => &self.identities.input_role,
+            InterfaceRole::Output => &self.identities.output_role,
+            InterfaceRole::Refusal => &self.identities.refusal_role,
+        }
+    }
+
+    pub(crate) fn is_fixed_identity(&self, identity: &VocabularyEncodedId) -> bool {
+        self.fixed_identities().contains(&identity)
+    }
+
+    pub(crate) fn fixed_identities(&self) -> [&VocabularyEncodedId; 16] {
+        let ids = &self.identities;
+        [
+            &ids.interface_kind,
+            &ids.nexus_kind,
+            &ids.sema_kind,
+            &ids.input_role,
+            &ids.output_role,
+            &ids.refusal_role,
+            &ids.string_type,
+            &ids.integer_type,
+            &ids.boolean_type,
+            &ids.unit_type,
+            &ids.vector_shape,
+            &ids.option_shape,
+            &ids.map_shape,
+            &ids.result_shape,
+            &ids.stream_shape,
+            &ids.stream_identity_shape,
         ]
     }
 }
@@ -452,6 +641,7 @@ pub struct BootstrapCatalog {
     schemas: IdentitySchemaCatalog,
     priors: BootstrapPriorVocabulary,
     versions: BootstrapVersionPolicy,
+    canonical_order: CanonicalIdentityOrder,
 }
 
 impl BootstrapCatalog {
@@ -461,18 +651,19 @@ impl BootstrapCatalog {
         schemas: IdentitySchemaCatalog,
         priors: BootstrapPriorVocabulary,
         versions: BootstrapVersionPolicy,
+        canonical_order: CanonicalIdentityOrder,
     ) -> Result<Self, BootstrapReadError> {
         validate_module_path(&current_module_path)?;
-        for schema in schemas.entries() {
-            if metadata.record(schema.identity()).is_none() {
-                return Err(BootstrapReadError::MissingMetadataIdentity(
-                    schema.identity().clone(),
-                ));
-            }
-        }
         for identity in metadata.identities() {
             if !schemas.contains(identity) {
                 return Err(BootstrapReadError::MissingSchema(identity.clone()));
+            }
+        }
+        for schema in schemas.entries() {
+            if !canonical_order.contains(schema.identity()) {
+                return Err(BootstrapReadError::MissingCanonicalIdentity(
+                    schema.identity().clone(),
+                ));
             }
         }
         let priors = BootstrapPriorVocabulary::new(priors.identities.clone(), &schemas, &metadata)?;
@@ -482,6 +673,7 @@ impl BootstrapCatalog {
             schemas,
             priors,
             versions,
+            canonical_order,
         })
     }
 
@@ -503,6 +695,10 @@ impl BootstrapCatalog {
 
     pub fn versions(&self) -> &BootstrapVersionPolicy {
         &self.versions
+    }
+
+    pub fn canonical_order(&self) -> &CanonicalIdentityOrder {
+        &self.canonical_order
     }
 }
 

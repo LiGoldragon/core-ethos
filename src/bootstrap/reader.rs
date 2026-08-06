@@ -13,7 +13,9 @@ use super::grammar::{
     BootstrapGrammar, BootstrapGrammarIdentities, Delimiter, StructuralDocumentPlan, SyntaxNode,
 };
 use super::model::*;
-use super::root::{RootSchema, RootSchemaRegistry, SectionSchema};
+use super::root::{
+    BootstrapSectionSchema as SectionSchema, RootSchema, RootSchemaRegistry, RootSemanticSectionRef,
+};
 
 /// Ephemeral, plan-local handle for one authored declaration occurrence.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -109,12 +111,28 @@ impl BootstrapReadPlan {
 pub struct NamingAssignment {
     pub occurrence: DeclarationOccurrence,
     pub encoded_name: VocabularyEncodedId,
+    pub disposition: IdentityDisposition,
+}
+
+/// Naming authority's statement about whether an identity is being reused or
+/// minted. New identities carry their authority-supplied canonical bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdentityDisposition {
+    Existing,
+    New { canonical_bytes: Vec<u8> },
+}
+
+/// One authority disposition for a generated identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssignedIdentity {
+    pub encoded_name: VocabularyEncodedId,
+    pub disposition: IdentityDisposition,
 }
 
 /// Checked syntactic assignment set; plan-relative exactness is enforced at seal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingAssignments {
-    by_occurrence: BTreeMap<DeclarationOccurrence, VocabularyEncodedId>,
+    by_occurrence: BTreeMap<DeclarationOccurrence, NamingAssignment>,
 }
 
 impl NamingAssignments {
@@ -122,7 +140,7 @@ impl NamingAssignments {
         let mut by_occurrence = BTreeMap::new();
         for assignment in assignments {
             if by_occurrence
-                .insert(assignment.occurrence, assignment.encoded_name)
+                .insert(assignment.occurrence, assignment.clone())
                 .is_some()
             {
                 return Err(BootstrapReadError::DuplicateAssignment(
@@ -133,7 +151,7 @@ impl NamingAssignments {
         Ok(Self { by_occurrence })
     }
 
-    fn get(&self, occurrence: DeclarationOccurrence) -> Option<&VocabularyEncodedId> {
+    fn get(&self, occurrence: DeclarationOccurrence) -> Option<&NamingAssignment> {
         self.by_occurrence.get(&occurrence)
     }
 }
@@ -142,8 +160,8 @@ impl NamingAssignments {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedStreamAssignment {
     pub source: DeclarationOccurrence,
-    pub initiation: VocabularyEncodedId,
-    pub termination: VocabularyEncodedId,
+    pub initiation: AssignedIdentity,
+    pub termination: AssignedIdentity,
 }
 
 /// Exact generated Stream assignments, separate from authored naming requests.
@@ -175,15 +193,67 @@ impl GeneratedStreamAssignments {
 /// authority to commit atomically. The reader has not committed storage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBootstrapTransaction {
+    decoded: DecodedBootstrap,
+    generated_streams: Vec<PreparedStreamGeneration>,
+    schema_additions: IdentitySchemaCatalog,
+    naming_transition: TextualMetadataTransition,
+    identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    canonical_order: CanonicalIdentityOrder,
+}
+
+/// Publicly constructible, explicitly unvalidated transaction parts. External
+/// stores and writers accept [`PreparedBootstrapTransaction`] instead; callers
+/// obtain that wrapper through [`BootstrapReader::validate_draft`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedBootstrapDraft {
     pub decoded: DecodedBootstrap,
     pub generated_streams: Vec<PreparedStreamGeneration>,
     pub schema_additions: IdentitySchemaCatalog,
-    pub naming_snapshot: TextualMetadataSnapshot,
+    pub naming_transition: TextualMetadataTransition,
+    pub identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    pub canonical_order: CanonicalIdentityOrder,
 }
 
 impl PreparedBootstrapTransaction {
     pub const fn archive_status(&self) -> BootstrapArchiveStatus {
         BootstrapArchiveStatus::NotYetArchived
+    }
+
+    pub const fn decoded(&self) -> &DecodedBootstrap {
+        &self.decoded
+    }
+
+    pub fn generated_streams(&self) -> &[PreparedStreamGeneration] {
+        &self.generated_streams
+    }
+
+    pub const fn schema_additions(&self) -> &IdentitySchemaCatalog {
+        &self.schema_additions
+    }
+
+    pub const fn naming_transition(&self) -> &TextualMetadataTransition {
+        &self.naming_transition
+    }
+
+    pub const fn identity_dispositions(
+        &self,
+    ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+        &self.identity_dispositions
+    }
+
+    pub const fn canonical_order(&self) -> &CanonicalIdentityOrder {
+        &self.canonical_order
+    }
+
+    pub fn to_draft(&self) -> PreparedBootstrapDraft {
+        PreparedBootstrapDraft {
+            decoded: self.decoded.clone(),
+            generated_streams: self.generated_streams.clone(),
+            schema_additions: self.schema_additions.clone(),
+            naming_transition: self.naming_transition.clone(),
+            identity_dispositions: self.identity_dispositions.clone(),
+            canonical_order: self.canonical_order.clone(),
+        }
     }
 }
 
@@ -232,24 +302,31 @@ impl BootstrapReader {
         })
     }
 
-    /// Seal using exact authored assignments, exact Stream-generated assignments,
-    /// and the complete post-operation textual snapshot. The result remains a
-    /// prepared transaction; no authority state is mutated.
+    /// Seal using exact authored dispositions, exact Stream-generated
+    /// dispositions, and an authority-issued before-to-after textual transition.
+    /// The result remains a prepared transaction; no authority state is mutated.
     pub fn seal(
         &self,
         plan: &BootstrapReadPlan,
         assignments: &NamingAssignments,
         generated: &GeneratedStreamAssignments,
-        naming_snapshot: &TextualMetadataSnapshot,
+        naming_transition: &TextualMetadataTransition,
     ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
-        self.validate_assignment_inputs(plan, assignments, generated, naming_snapshot)?;
+        let canonical_order =
+            self.validate_assignment_inputs(plan, assignments, generated, naming_transition)?;
         let schema_additions = self.schema_additions(plan, assignments, generated)?;
         let schemas = SchemaView {
             existing: self.catalog.schemas(),
             additions: &schema_additions,
         };
-        let environment =
-            ResolutionEnvironment::new(plan, assignments, naming_snapshot, &self.catalog, schemas)?;
+        let environment = ResolutionEnvironment::new(
+            plan,
+            assignments,
+            naming_transition.after(),
+            &self.catalog,
+            schemas,
+            &canonical_order,
+        )?;
         let (_, _, body, root) = self.envelope(&plan.structural)?;
         let fields = expect_delimited(body, Delimiter::Brace, "registered body")?;
         let mut cursor = AssignmentCursor::new(&plan.declarations, assignments);
@@ -267,20 +344,61 @@ impl BootstrapReader {
             )?);
         }
         cursor.finish()?;
+        sort_by_identity(
+            &mut prepared_streams,
+            |stream| &stream.output.name,
+            &canonical_order,
+        )?;
         let decoded = DecodedBootstrap {
             document: BootstrapDocument {
                 header: plan.header,
-                body: assemble_body(root, sections)?,
+                body: assemble_body(root, sections, self.catalog.priors(), &canonical_order)?,
             },
             source: BootstrapSourceProjection {
-                imports: plan.imports.clone(),
+                imports: canonicalize_imports(
+                    &plan.imports,
+                    naming_transition.after(),
+                    &canonical_order,
+                )?,
             },
         };
-        let transaction = PreparedBootstrapTransaction {
+        let identity_dispositions = assignments
+            .by_occurrence
+            .values()
+            .map(|assignment| {
+                (
+                    assignment.encoded_name.clone(),
+                    assignment.disposition.clone(),
+                )
+            })
+            .chain(generated.by_source.values().flat_map(|assignment| {
+                [&assignment.initiation, &assignment.termination]
+                    .map(|assigned| (assigned.encoded_name.clone(), assigned.disposition.clone()))
+            }))
+            .collect();
+        self.validate_draft(PreparedBootstrapDraft {
             decoded,
             generated_streams: prepared_streams,
             schema_additions,
-            naming_snapshot: naming_snapshot.clone(),
+            naming_transition: naming_transition.clone(),
+            identity_dispositions,
+            canonical_order,
+        })
+    }
+
+    /// Validate untrusted transaction parts and return the invariant-bearing
+    /// wrapper accepted by writers and external stores.
+    pub fn validate_draft(
+        &self,
+        draft: PreparedBootstrapDraft,
+    ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
+        let transaction = PreparedBootstrapTransaction {
+            decoded: draft.decoded,
+            generated_streams: draft.generated_streams,
+            schema_additions: draft.schema_additions,
+            naming_transition: draft.naming_transition,
+            identity_dispositions: draft.identity_dispositions,
+            canonical_order: draft.canonical_order,
         };
         self.validate_prepared(&transaction)?;
         Ok(transaction)
@@ -288,6 +406,10 @@ impl BootstrapReader {
 
     pub fn archive_status(&self) -> BootstrapArchiveStatus {
         BootstrapArchiveStatus::NotYetArchived
+    }
+
+    pub fn section_order(&self, kind: EthosKind) -> &[super::root::BootstrapSectionSchema] {
+        self.roots.section_order(kind)
     }
 
     pub(crate) fn catalog(&self) -> &BootstrapCatalog {
@@ -319,9 +441,15 @@ impl BootstrapReader {
                 supported: self.catalog.versions().supported(),
             });
         }
-        transaction
-            .naming_snapshot
-            .extends(self.catalog.metadata())?;
+        if transaction.naming_transition.before() != self.catalog.metadata() {
+            return Err(BootstrapReadError::MetadataTransitionBeforeMismatch);
+        }
+        let snapshot = transaction.naming_transition.after();
+        for identity in self.catalog.priors().fixed_identities() {
+            snapshot
+                .record(identity)
+                .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
+        }
         for import in &decoded.source.imports {
             validate_module_path(&import.module_path)?;
             if import.imported_names.is_empty() {
@@ -329,22 +457,12 @@ impl BootstrapReader {
             }
             for name in &import.imported_names {
                 validate_visible_name(name)?;
-                let ids = transaction
-                    .naming_snapshot
-                    .identities_at(&import.module_path, name);
-                if ids.len() != 1 {
-                    return Err(if ids.is_empty() {
-                        BootstrapReadError::MissingTextualLookup {
-                            module_path: import.module_path.clone(),
-                            name: name.clone(),
-                        }
-                    } else {
-                        BootstrapReadError::AmbiguousReference {
-                            name: name.clone(),
-                            identities: ids.to_vec(),
-                        }
-                    });
-                }
+                snapshot
+                    .identity_at(&import.module_path, None, name)
+                    .ok_or_else(|| BootstrapReadError::MissingTextualLookup {
+                        module_path: import.module_path.clone(),
+                        name: name.clone(),
+                    })?;
             }
         }
         let schemas = SchemaView {
@@ -353,14 +471,220 @@ impl BootstrapReader {
         };
         let mut validator = PreparedModelValidator {
             schemas,
-            snapshot: &transaction.naming_snapshot,
+            snapshot,
             current_module: self.catalog.current_module_path(),
             expected_additions: BTreeMap::new(),
+            seen_existing: BTreeSet::new(),
             streams: BTreeMap::new(),
+            canonical_order: &transaction.canonical_order,
+            priors: self.catalog.priors(),
+            new_identities: transaction
+                .identity_dispositions
+                .iter()
+                .filter_map(|(identity, disposition)| match disposition {
+                    IdentityDisposition::New { .. } => Some(identity.clone()),
+                    IdentityDisposition::Existing => None,
+                })
+                .collect(),
         };
-        validator.validate_body(&decoded.document.body)?;
+        validator.validate_body(
+            &decoded.document.body,
+            self.roots.for_kind(decoded.document.header.kind),
+        )?;
         validator.validate_streams(&transaction.generated_streams, self.catalog.priors())?;
-        validator.validate_additions(&transaction.schema_additions, self.catalog.metadata())
+        validator.validate_additions(&transaction.schema_additions)?;
+        let declared_identities = validator.seen_existing.clone();
+        self.validate_prepared_dispositions(transaction, &declared_identities)?;
+        self.validate_writer_visibility(transaction, schemas)
+    }
+
+    fn validate_prepared_dispositions(
+        &self,
+        transaction: &PreparedBootstrapTransaction,
+        declared_identities: &BTreeSet<VocabularyEncodedId>,
+    ) -> Result<(), BootstrapReadError> {
+        let disposition_identities = transaction
+            .identity_dispositions
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if &disposition_identities != declared_identities {
+            return Err(BootstrapReadError::InvalidPreparedModel(
+                "authority dispositions do not exactly equal prepared declarations",
+            ));
+        }
+        let mut canonical_additions = Vec::new();
+        for (identity, disposition) in &transaction.identity_dispositions {
+            if identity.root_variant() != &VocabularyRoot::Universal {
+                return Err(BootstrapReadError::InvalidPreparedModel(
+                    "prepared disposition identity is not Universal",
+                ));
+            }
+            match disposition {
+                IdentityDisposition::Existing => {
+                    if self.catalog.priors().is_fixed_identity(identity)
+                        || self.catalog.schemas().get(identity).is_none()
+                        || transaction.schema_additions.get(identity).is_some()
+                    {
+                        return Err(BootstrapReadError::ExistingAssignmentMissing {
+                            identity: identity.clone(),
+                        });
+                    }
+                    if transaction.canonical_order.bytes(identity)
+                        != self.catalog.canonical_order().bytes(identity)
+                    {
+                        return Err(BootstrapReadError::MissingCanonicalIdentity(
+                            identity.clone(),
+                        ));
+                    }
+                }
+                IdentityDisposition::New { canonical_bytes } => {
+                    if self.catalog.schemas().contains(identity)
+                        || self.catalog.metadata().record(identity).is_some()
+                        || self.catalog.canonical_order().contains(identity)
+                    {
+                        return Err(BootstrapReadError::NewAssignmentAlreadyExists {
+                            identity: identity.clone(),
+                        });
+                    }
+                    if transaction.schema_additions.get(identity).is_none()
+                        || transaction.canonical_order.bytes(identity)
+                            != Some(canonical_bytes.as_slice())
+                    {
+                        return Err(BootstrapReadError::MissingCanonicalIdentity(
+                            identity.clone(),
+                        ));
+                    }
+                    canonical_additions.push((identity.clone(), canonical_bytes.clone()));
+                }
+            }
+        }
+        let exact_order = self
+            .catalog
+            .canonical_order()
+            .extended(canonical_additions)?;
+        if transaction.canonical_order != exact_order {
+            return Err(BootstrapReadError::InvalidPreparedModel(
+                "prepared canonical order is not the exact authority extension",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_writer_visibility(
+        &self,
+        transaction: &PreparedBootstrapTransaction,
+        schemas: SchemaView<'_>,
+    ) -> Result<(), BootstrapReadError> {
+        let snapshot = transaction.naming_transition.after();
+        let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        let mut seat_local = |identity: &VocabularyEncodedId| -> Result<(), BootstrapReadError> {
+            let record = snapshot
+                .record(identity)
+                .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
+            if record.address.module_path == self.catalog.current_module_path()
+                && record.address.lexical_owner.is_none()
+            {
+                local
+                    .entry(record.address.visible_name.clone())
+                    .or_default()
+                    .push(identity.clone());
+            }
+            Ok(())
+        };
+        match &transaction.decoded.document.body {
+            BootstrapBody::Interface(body) => {
+                for entry in body
+                    .inputs
+                    .iter()
+                    .chain(&body.outputs)
+                    .chain(&body.refusals)
+                {
+                    if let RoleEntry::Declaration(declaration) = entry {
+                        seat_local(&declaration.name)?;
+                    }
+                }
+                for declaration in &body.types {
+                    seat_local(declaration_identity(declaration))?;
+                }
+            }
+            BootstrapBody::Nexus(body) => {
+                for declaration in &body.traits {
+                    seat_local(&declaration.name)?;
+                }
+                for declaration in &body.types {
+                    seat_local(declaration_identity(declaration))?;
+                }
+            }
+            BootstrapBody::Sema(body) => {
+                for declaration in &body.record_types {
+                    seat_local(&declaration.name)?;
+                }
+            }
+        }
+        for generated in &transaction.generated_streams {
+            seat_local(&generated.initiation.name)?;
+            seat_local(&generated.termination.name)?;
+        }
+
+        let mut imported = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        for import in &transaction.decoded.source.imports {
+            for name in &import.imported_names {
+                let identity = snapshot
+                    .identity_at(&import.module_path, None, name)
+                    .ok_or_else(|| BootstrapReadError::MissingTextualLookup {
+                        module_path: import.module_path.clone(),
+                        name: name.clone(),
+                    })?;
+                imported
+                    .entry(name.clone())
+                    .or_default()
+                    .push(identity.clone());
+            }
+        }
+
+        let mut references = Vec::new();
+        collect_document_references(&transaction.decoded.document.body, &mut references);
+        for generated in &transaction.generated_streams {
+            collect_expression_references(
+                &TypeExpression::ShapeApplication(generated.output.stream_of_event.clone()),
+                &mut references,
+            );
+            references.push((
+                generated.termination.stream_handle.clone(),
+                ReferenceNamespace::Nominal,
+            ));
+            for relation in &generated.role_relations {
+                references.push((relation.target.clone(), ReferenceNamespace::Nominal));
+            }
+        }
+        for (identity, namespace) in references {
+            let Some(name) = snapshot.spelling(&identity) else {
+                return Err(BootstrapReadError::MissingMetadataIdentity(identity));
+            };
+            let resolved = resolve_visible_identity(
+                name,
+                local
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|identities| identities.iter().cloned()),
+                &imported,
+                namespace,
+                ResolutionAuthority {
+                    priors: self.catalog.priors(),
+                    snapshot,
+                    schemas,
+                    canonical_order: &transaction.canonical_order,
+                },
+            );
+            if !matches!(resolved, Ok(ref resolved) if resolved == &identity) {
+                return Err(BootstrapReadError::InvisibleOrNonRoundTrippingReference {
+                    identity,
+                    name: name.to_owned(),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn envelope<'a>(
@@ -393,20 +717,24 @@ impl BootstrapReader {
         plan: &BootstrapReadPlan,
         assignments: &NamingAssignments,
         generated: &GeneratedStreamAssignments,
-        snapshot: &TextualMetadataSnapshot,
-    ) -> Result<(), BootstrapReadError> {
-        snapshot.extends(self.catalog.metadata())?;
+        transition: &TextualMetadataTransition,
+    ) -> Result<CanonicalIdentityOrder, BootstrapReadError> {
+        if transition.before() != self.catalog.metadata() {
+            return Err(BootstrapReadError::MetadataTransitionBeforeMismatch);
+        }
+        let snapshot = transition.after();
         let expected = plan
             .declarations
             .iter()
             .map(PlannedDeclaration::occurrence)
             .collect::<BTreeSet<_>>();
         for declaration in &plan.declarations {
-            let Some(identity) = assignments.get(declaration.occurrence) else {
+            let Some(assignment) = assignments.get(declaration.occurrence) else {
                 return Err(BootstrapReadError::MissingAssignment(
                     declaration.occurrence.ordinal(),
                 ));
             };
+            let identity = &assignment.encoded_name;
             if identity.root_variant() != &VocabularyRoot::Universal {
                 return Err(BootstrapReadError::NonUniversalAssignment {
                     occurrence: declaration.occurrence.ordinal(),
@@ -443,17 +771,39 @@ impl BootstrapReader {
             return Err(BootstrapReadError::ExtraGeneratedStreamAssignment);
         }
 
+        let mut used_ids = BTreeSet::new();
         let mut new_ids = BTreeSet::new();
+        let mut canonical_additions = Vec::new();
         for declaration in &plan.declarations {
-            let identity = assignments
+            let assignment = assignments
                 .get(declaration.occurrence)
                 .expect("completeness checked above");
-            self.validate_new_identity(identity, declaration.occurrence.ordinal(), &mut new_ids)?;
+            let identity = &assignment.encoded_name;
+            let required = schema_role_for_purpose(declaration.purpose);
+            self.validate_authority_assignment(
+                identity,
+                &assignment.disposition,
+                required,
+                &mut used_ids,
+                &mut new_ids,
+                &mut canonical_additions,
+            )?;
             let record = snapshot
                 .record(identity)
                 .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
-            if record.module_path != self.catalog.current_module_path()
-                || record.visible_name != declaration.spelling
+            let lexical_owner = match declaration.scope {
+                PlannedScope::Module => None,
+                PlannedScope::Enum(owner) | PlannedScope::Trait(owner) => Some(
+                    assignments
+                        .get(owner)
+                        .expect("owner occurrence precedes its nested declaration")
+                        .encoded_name
+                        .clone(),
+                ),
+            };
+            if record.address.module_path != self.catalog.current_module_path()
+                || record.address.lexical_owner != lexical_owner
+                || record.address.visible_name != declaration.spelling
             {
                 return Err(BootstrapReadError::MetadataProjectionMismatch {
                     identity: identity.clone(),
@@ -461,18 +811,28 @@ impl BootstrapReader {
             }
         }
         for assignment in generated.by_source.values() {
-            for identity in [&assignment.initiation, &assignment.termination] {
+            for assigned in [&assignment.initiation, &assignment.termination] {
+                let identity = &assigned.encoded_name;
                 if identity.root_variant() != &VocabularyRoot::Universal {
                     return Err(BootstrapReadError::NonUniversalAssignment {
                         occurrence: assignment.source.ordinal(),
                         identity: identity.clone(),
                     });
                 }
-                self.validate_new_identity(identity, assignment.source.ordinal(), &mut new_ids)?;
+                self.validate_authority_assignment(
+                    identity,
+                    &assigned.disposition,
+                    SchemaRole::Nominal { persistent: false },
+                    &mut used_ids,
+                    &mut new_ids,
+                    &mut canonical_additions,
+                )?;
                 let record = snapshot
                     .record(identity)
                     .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
-                if record.module_path != self.catalog.current_module_path() {
+                if record.address.module_path != self.catalog.current_module_path()
+                    || record.address.lexical_owner.is_some()
+                {
                     return Err(BootstrapReadError::MetadataProjectionMismatch {
                         identity: identity.clone(),
                     });
@@ -480,28 +840,61 @@ impl BootstrapReader {
             }
         }
         for identity in snapshot.identities() {
-            if self.catalog.metadata().record(identity).is_none() && !new_ids.contains(identity) {
+            if !self.catalog.schemas().contains(identity) && !new_ids.contains(identity) {
                 return Err(BootstrapReadError::ExtraMetadataIdentity(identity.clone()));
             }
         }
-        Ok(())
+        self.catalog.canonical_order().extended(canonical_additions)
     }
 
-    fn validate_new_identity(
+    fn validate_authority_assignment(
         &self,
         identity: &VocabularyEncodedId,
-        _occurrence: u32,
+        disposition: &IdentityDisposition,
+        required: SchemaRole,
+        used_ids: &mut BTreeSet<VocabularyEncodedId>,
         new_ids: &mut BTreeSet<VocabularyEncodedId>,
+        canonical_additions: &mut Vec<(VocabularyEncodedId, Vec<u8>)>,
     ) -> Result<(), BootstrapReadError> {
-        if self.catalog.schemas().contains(identity)
-            || self.catalog.metadata().record(identity).is_some()
-            || !new_ids.insert(identity.clone())
-        {
+        if !used_ids.insert(identity.clone()) {
             return Err(BootstrapReadError::AssignedIdentityCollision {
                 identity: identity.clone(),
             });
         }
-        Ok(())
+        match disposition {
+            IdentityDisposition::Existing => {
+                let Some(schema) = self.catalog.schemas().get(identity) else {
+                    return Err(BootstrapReadError::ExistingAssignmentMissing {
+                        identity: identity.clone(),
+                    });
+                };
+                if self.catalog.priors().is_fixed_identity(identity) || !schema.admits(required) {
+                    return Err(BootstrapReadError::ExistingAssignmentNotReusable {
+                        identity: identity.clone(),
+                        required,
+                    });
+                }
+                if !self.catalog.canonical_order().contains(identity) {
+                    return Err(BootstrapReadError::MissingCanonicalIdentity(
+                        identity.clone(),
+                    ));
+                }
+                Ok(())
+            }
+            IdentityDisposition::New { canonical_bytes } => {
+                if self.catalog.schemas().contains(identity)
+                    || self.catalog.metadata().record(identity).is_some()
+                    || self.catalog.canonical_order().contains(identity)
+                {
+                    return Err(BootstrapReadError::NewAssignmentAlreadyExists {
+                        identity: identity.clone(),
+                    });
+                }
+                new_ids.insert(identity.clone());
+                canonical_additions.push((identity.clone(), canonical_bytes.clone()));
+                Ok(())
+            }
+        }
     }
 
     fn schema_additions(
@@ -512,31 +905,25 @@ impl BootstrapReader {
     ) -> Result<IdentitySchemaCatalog, BootstrapReadError> {
         let mut additions = Vec::new();
         for declaration in &plan.declarations {
-            let identity = assignments
+            let assignment = assignments
                 .get(declaration.occurrence)
-                .expect("assignment inputs validated before schema preparation")
-                .clone();
-            let role = match declaration.purpose {
-                DeclarationPurpose::Type | DeclarationPurpose::StreamInitiation => {
-                    SchemaRole::Nominal { persistent: false }
-                }
-                DeclarationPurpose::PersistentType => SchemaRole::Nominal { persistent: true },
-                DeclarationPurpose::Variant => SchemaRole::Variant,
-                DeclarationPurpose::Trait => SchemaRole::Trait,
-                DeclarationPurpose::Method => SchemaRole::Method,
-                DeclarationPurpose::Table => SchemaRole::Table,
-            };
-            additions.push(IdentitySchema::new(identity, [role])?);
+                .expect("assignment inputs validated before schema preparation");
+            if matches!(assignment.disposition, IdentityDisposition::New { .. }) {
+                additions.push(IdentitySchema::new(
+                    assignment.encoded_name.clone(),
+                    [schema_role_for_purpose(declaration.purpose)],
+                )?);
+            }
         }
         for assignment in generated.by_source.values() {
-            additions.push(IdentitySchema::new(
-                assignment.initiation.clone(),
-                [SchemaRole::Nominal { persistent: false }],
-            )?);
-            additions.push(IdentitySchema::new(
-                assignment.termination.clone(),
-                [SchemaRole::Nominal { persistent: false }],
-            )?);
+            for assigned in [&assignment.initiation, &assignment.termination] {
+                if matches!(assigned.disposition, IdentityDisposition::New { .. }) {
+                    additions.push(IdentitySchema::new(
+                        assigned.encoded_name.clone(),
+                        [SchemaRole::Nominal { persistent: false }],
+                    )?);
+                }
+            }
         }
         IdentitySchemaCatalog::new(additions)
     }
@@ -547,19 +934,23 @@ struct PreparedModelValidator<'a> {
     snapshot: &'a TextualMetadataSnapshot,
     current_module: &'a [String],
     expected_additions: BTreeMap<VocabularyEncodedId, SchemaRole>,
+    seen_existing: BTreeSet<VocabularyEncodedId>,
     streams: BTreeMap<VocabularyEncodedId, StreamInitiationDeclaration>,
+    canonical_order: &'a CanonicalIdentityOrder,
+    priors: &'a BootstrapPriorVocabulary,
+    new_identities: BTreeSet<VocabularyEncodedId>,
 }
 
 impl PreparedModelValidator<'_> {
-    fn validate_body(&mut self, body: &BootstrapBody) -> Result<(), BootstrapReadError> {
-        match body {
-            BootstrapBody::Interface(body) => {
-                let mut expected_memberships = Vec::new();
-                for (role, entries) in [
-                    (InterfaceRole::Input, body.inputs.as_slice()),
-                    (InterfaceRole::Output, body.outputs.as_slice()),
-                    (InterfaceRole::Refusal, body.refusals.as_slice()),
-                ] {
+    fn validate_body(
+        &mut self,
+        body: &BootstrapBody,
+        root: &RootSchema,
+    ) -> Result<(), BootstrapReadError> {
+        let mut expected_memberships = Vec::new();
+        for (schema, section) in root.sections.iter().zip(root.semantic_sections(body)?) {
+            match (schema, section) {
+                (SectionSchema::Role(role), RootSemanticSectionRef::Role(entries)) => {
                     for entry in entries {
                         match entry {
                             RoleEntry::Declaration(declaration) => {
@@ -570,46 +961,70 @@ impl PreparedModelValidator<'_> {
                             }
                         }
                         expected_memberships.push(InterfaceRoleMembership {
-                            role,
+                            role: *role,
                             target: entry.target().clone(),
                         });
                     }
+                    self.require_sorted_by_identity(entries, RoleEntry::target)?;
                 }
-                if body.memberships != expected_memberships {
+                (
+                    SectionSchema::Declarations { admit_nomos },
+                    RootSemanticSectionRef::Declarations(declarations),
+                ) => {
+                    for declaration in declarations {
+                        self.validate_declaration(declaration, *admit_nomos)?;
+                    }
+                    self.require_sorted_by_identity(declarations, declaration_identity)?;
+                }
+                (SectionSchema::Traits, RootSemanticSectionRef::Traits(declarations)) => {
+                    for declaration in declarations {
+                        self.validate_trait(declaration)?;
+                    }
+                    self.require_sorted_by_identity(declarations, |item| &item.name)?;
+                }
+                (
+                    SectionSchema::PersistentDeclarations,
+                    RootSemanticSectionRef::PersistentDeclarations(declarations),
+                ) => {
+                    for declaration in declarations {
+                        self.validate_type_declaration(declaration, true)?;
+                    }
+                    self.require_sorted_by_identity(declarations, |item| &item.name)?;
+                }
+                (SectionSchema::Tables, RootSemanticSectionRef::Tables(tables)) => {
+                    for table in tables {
+                        self.expect_declaration(&table.name, SchemaRole::Table, None)?;
+                        require_schema(
+                            self.schemas,
+                            &table.record_type,
+                            ExpectedSchema::PersistentNominal,
+                        )?;
+                        require_schema(
+                            self.schemas,
+                            &table.key_type,
+                            ExpectedSchema::PersistentNominal,
+                        )?;
+                    }
+                    self.require_sorted_by_identity(tables, |item| &item.name)?;
+                }
+                _ => {
                     return Err(BootstrapReadError::InvalidPreparedModel(
-                        "Interface memberships do not exactly equal role entries",
+                        "root registry section does not match semantic projection",
                     ));
                 }
-                for declaration in &body.types {
-                    self.validate_declaration(declaration, true)?;
-                }
             }
-            BootstrapBody::Nexus(body) => {
-                for declaration in &body.traits {
-                    self.validate_trait(declaration)?;
-                }
-                for declaration in &body.types {
-                    self.validate_declaration(declaration, false)?;
-                }
+        }
+        if let BootstrapBody::Interface(body) = body {
+            self.sort_memberships(&mut expected_memberships)?;
+            if body.memberships != expected_memberships {
+                return Err(BootstrapReadError::InvalidPreparedModel(
+                    "Interface memberships do not exactly equal role entries",
+                ));
             }
-            BootstrapBody::Sema(body) => {
-                for declaration in &body.record_types {
-                    self.validate_type_declaration(declaration, true)?;
-                }
-                for table in &body.tables {
-                    self.expect_addition(&table.name, SchemaRole::Table)?;
-                    require_schema(
-                        self.schemas,
-                        &table.record_type,
-                        ExpectedSchema::PersistentNominal,
-                    )?;
-                    require_schema(
-                        self.schemas,
-                        &table.key_type,
-                        ExpectedSchema::PersistentNominal,
-                    )?;
-                }
-            }
+        } else if !expected_memberships.is_empty() {
+            return Err(BootstrapReadError::InvalidPreparedModel(
+                "non-Interface root produced role memberships",
+            ));
         }
         Ok(())
     }
@@ -625,8 +1040,12 @@ impl PreparedModelValidator<'_> {
                 if !admit_nomos {
                     return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
                 }
-                self.expect_addition(&declaration.name, SchemaRole::Nominal { persistent: false })?;
-                let mut binders = BinderValidation::new(&declaration.name);
+                self.expect_declaration(
+                    &declaration.name,
+                    SchemaRole::Nominal { persistent: false },
+                    None,
+                )?;
+                let mut binders = BinderValidation::new(&declaration.name, self.canonical_order);
                 self.validate_expression(&declaration.query, &mut binders)?;
                 self.validate_expression(&declaration.event, &mut binders)?;
                 if self
@@ -648,8 +1067,8 @@ impl PreparedModelValidator<'_> {
         declaration: &TypeDeclaration,
         persistent: bool,
     ) -> Result<(), BootstrapReadError> {
-        self.expect_addition(&declaration.name, SchemaRole::Nominal { persistent })?;
-        let mut binders = BinderValidation::new(&declaration.name);
+        self.expect_declaration(&declaration.name, SchemaRole::Nominal { persistent }, None)?;
+        let mut binders = BinderValidation::new(&declaration.name, self.canonical_order);
         match &declaration.body {
             TypeBody::Newtype(expression) => self.validate_expression(expression, &mut binders)?,
             TypeBody::Struct(fields) => {
@@ -664,7 +1083,11 @@ impl PreparedModelValidator<'_> {
                     ));
                 }
                 for variant in variants {
-                    self.expect_addition(&variant.name, SchemaRole::Variant)?;
+                    self.expect_declaration(
+                        &variant.name,
+                        SchemaRole::Variant,
+                        Some(&declaration.name),
+                    )?;
                     match &variant.body {
                         VariantBody::Unit => {}
                         VariantBody::Unary(expression) => {
@@ -682,21 +1105,23 @@ impl PreparedModelValidator<'_> {
                         }
                     }
                 }
+                self.require_sorted_by_identity(variants, |item| &item.name)?;
             }
         }
         Ok(())
     }
 
     fn validate_trait(&mut self, declaration: &TraitDeclaration) -> Result<(), BootstrapReadError> {
-        self.expect_addition(&declaration.name, SchemaRole::Trait)?;
+        self.expect_declaration(&declaration.name, SchemaRole::Trait, None)?;
         for method in &declaration.methods {
-            self.expect_addition(&method.name, SchemaRole::Method)?;
-            let mut binders = BinderValidation::new(&method.name);
+            self.expect_declaration(&method.name, SchemaRole::Method, Some(&declaration.name))?;
+            let mut binders = BinderValidation::new(&method.name, self.canonical_order);
             for parameter in &method.parameters {
                 self.validate_expression(parameter, &mut binders)?;
             }
             self.validate_expression(&method.return_type, &mut binders)?;
         }
+        self.require_sorted_by_identity(&declaration.methods, |item| &item.name)?;
         Ok(())
     }
 
@@ -735,9 +1160,7 @@ impl PreparedModelValidator<'_> {
                 for identity in &requirement.required_traits {
                     require_schema(self.schemas, identity, ExpectedSchema::Trait)?;
                 }
-                if !requirement.required_traits.windows(2).all(|pair| {
-                    canonical_encoded_name_cmp(&pair[0], &pair[1]) == CompareOrdering::Less
-                }) {
+                if !self.strictly_sorted(&requirement.required_traits)? {
                     return Err(BootstrapReadError::InvalidPreparedModel(
                         "Trait requirement is not in unique canonical byte order",
                     ));
@@ -782,13 +1205,15 @@ impl PreparedModelValidator<'_> {
                     "generated Stream declaration anatomy",
                 ));
             }
-            self.expect_addition(
+            self.expect_declaration(
                 &stream.initiation.name,
                 SchemaRole::Nominal { persistent: false },
+                None,
             )?;
-            self.expect_addition(
+            self.expect_declaration(
                 &stream.termination.name,
                 SchemaRole::Nominal { persistent: false },
+                None,
             )?;
             let expected_relations = [
                 InterfaceRoleMembership {
@@ -810,20 +1235,21 @@ impl PreparedModelValidator<'_> {
                 ));
             }
         }
+        self.require_sorted_by_identity(generated, |item| &item.output.name)?;
         Ok(())
     }
 
-    fn expect_addition(
+    fn expect_declaration(
         &mut self,
         identity: &VocabularyEncodedId,
         role: SchemaRole,
+        lexical_owner: Option<&VocabularyEncodedId>,
     ) -> Result<(), BootstrapReadError> {
         let schema = self
             .schemas
-            .additions
             .get(identity)
             .ok_or_else(|| BootstrapReadError::MissingSchema(identity.clone()))?;
-        if schema.roles() != &BTreeSet::from([role]) {
+        if !schema.admits(role) {
             return Err(BootstrapReadError::WrongSchemaRole {
                 identity: identity.clone(),
                 required: role,
@@ -833,17 +1259,33 @@ impl PreparedModelValidator<'_> {
             .snapshot
             .record(identity)
             .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
-        if record.module_path != self.current_module {
+        if record.address.module_path != self.current_module
+            || record.address.lexical_owner.as_ref() != lexical_owner
+        {
             return Err(BootstrapReadError::MetadataProjectionMismatch {
                 identity: identity.clone(),
             });
         }
-        if self
-            .expected_additions
-            .insert(identity.clone(), role)
-            .is_some()
-        {
+        if !self.seen_existing.insert(identity.clone()) {
             return Err(BootstrapReadError::AssignedIdentityCollision {
+                identity: identity.clone(),
+            });
+        }
+        if self.new_identities.contains(identity) {
+            let addition = self
+                .schemas
+                .additions
+                .get(identity)
+                .ok_or_else(|| BootstrapReadError::MissingSchema(identity.clone()))?;
+            if addition.roles() != &BTreeSet::from([role]) {
+                return Err(BootstrapReadError::WrongSchemaRole {
+                    identity: identity.clone(),
+                    required: role,
+                });
+            }
+            self.expected_additions.insert(identity.clone(), role);
+        } else if self.schemas.existing.get(identity).is_none() {
+            return Err(BootstrapReadError::ExistingAssignmentMissing {
                 identity: identity.clone(),
             });
         }
@@ -853,7 +1295,6 @@ impl PreparedModelValidator<'_> {
     fn validate_additions(
         &self,
         additions: &IdentitySchemaCatalog,
-        base_snapshot: &TextualMetadataSnapshot,
     ) -> Result<(), BootstrapReadError> {
         let actual = additions
             .entries()
@@ -869,29 +1310,81 @@ impl PreparedModelValidator<'_> {
                 "schema additions are not exactly the prepared declarations",
             ));
         }
-        for identity in self.snapshot.identities() {
-            if base_snapshot.record(identity).is_none() && !expected.contains(identity) {
-                return Err(BootstrapReadError::ExtraMetadataIdentity(identity.clone()));
+        Ok(())
+    }
+
+    fn strictly_sorted(
+        &self,
+        identities: &[VocabularyEncodedId],
+    ) -> Result<bool, BootstrapReadError> {
+        for pair in identities.windows(2) {
+            if self.canonical_order.compare(&pair[0], &pair[1])? != CompareOrdering::Less {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn require_sorted_by_identity<T>(
+        &self,
+        values: &[T],
+        identity: impl Fn(&T) -> &VocabularyEncodedId,
+    ) -> Result<(), BootstrapReadError> {
+        for pair in values.windows(2) {
+            if self
+                .canonical_order
+                .compare(identity(&pair[0]), identity(&pair[1]))?
+                != CompareOrdering::Less
+            {
+                return Err(BootstrapReadError::InvalidPreparedModel(
+                    "unordered named collection is not in canonical identity order",
+                ));
             }
         }
         Ok(())
     }
+
+    fn sort_memberships(
+        &self,
+        memberships: &mut [InterfaceRoleMembership],
+    ) -> Result<(), BootstrapReadError> {
+        memberships.sort_by(|left, right| {
+            let left_role = self.canonical_order.bytes(match left.role {
+                InterfaceRole::Input => self.priors.role_identity(InterfaceRole::Input),
+                InterfaceRole::Output => self.priors.role_identity(InterfaceRole::Output),
+                InterfaceRole::Refusal => self.priors.role_identity(InterfaceRole::Refusal),
+            });
+            let right_role = self.canonical_order.bytes(match right.role {
+                InterfaceRole::Input => self.priors.role_identity(InterfaceRole::Input),
+                InterfaceRole::Output => self.priors.role_identity(InterfaceRole::Output),
+                InterfaceRole::Refusal => self.priors.role_identity(InterfaceRole::Refusal),
+            });
+            left_role.cmp(&right_role).then_with(|| {
+                self.canonical_order
+                    .bytes(&left.target)
+                    .cmp(&self.canonical_order.bytes(&right.target))
+            })
+        });
+        Ok(())
+    }
 }
 
-struct BinderValidation {
+struct BinderValidation<'a> {
     owner: VocabularyEncodedId,
     by_parameter: BTreeMap<LocalParameter, (Option<String>, Vec<u8>)>,
     inferred: BTreeMap<Vec<u8>, LocalParameter>,
     named: BTreeMap<String, (Vec<u8>, LocalParameter)>,
+    canonical_order: &'a CanonicalIdentityOrder,
 }
 
-impl BinderValidation {
-    fn new(owner: &VocabularyEncodedId) -> Self {
+impl<'a> BinderValidation<'a> {
+    fn new(owner: &VocabularyEncodedId, canonical_order: &'a CanonicalIdentityOrder) -> Self {
         Self {
             owner: owner.clone(),
             by_parameter: BTreeMap::new(),
             inferred: BTreeMap::new(),
             named: BTreeMap::new(),
+            canonical_order,
         }
     }
 
@@ -902,7 +1395,7 @@ impl BinderValidation {
                 "local parameter escapes its containing declaration",
             ));
         }
-        let key = normalized_trait_key(&requirement.required_traits);
+        let key = normalized_trait_key(&requirement.required_traits, self.canonical_order)?;
         let name = match &requirement.binder {
             ParameterBinder::Inferred(_) => None,
             ParameterBinder::Named { local_name, .. } => {
@@ -1023,17 +1516,12 @@ fn parse_imports(
                 .map(|node| {
                     let (name, _) = expect_atom(node, "imported visible name")?;
                     validate_visible_name(name)?;
-                    let ids = metadata.identities_at(&module_path, name);
-                    match ids {
-                        [] => Err(BootstrapReadError::MissingTextualLookup {
+                    match metadata.identity_at(&module_path, None, name) {
+                        None => Err(BootstrapReadError::MissingTextualLookup {
                             module_path: module_path.clone(),
                             name: name.to_owned(),
                         }),
-                        [_] => Ok(name.to_owned()),
-                        many => Err(BootstrapReadError::AmbiguousReference {
-                            name: name.to_owned(),
-                            identities: many.to_vec(),
-                        }),
+                        Some(_) => Ok(name.to_owned()),
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1058,20 +1546,13 @@ impl<'a> ExistingVisibleEnvironment<'a> {
         let mut imported = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
         for import in imports {
             for name in &import.imported_names {
-                let ids = catalog.metadata().identities_at(&import.module_path, name);
-                let [identity] = ids else {
-                    return Err(if ids.is_empty() {
-                        BootstrapReadError::MissingTextualLookup {
-                            module_path: import.module_path.clone(),
-                            name: name.clone(),
-                        }
-                    } else {
-                        BootstrapReadError::AmbiguousReference {
-                            name: name.clone(),
-                            identities: ids.to_vec(),
-                        }
-                    });
-                };
+                let identity = catalog
+                    .metadata()
+                    .identity_at(&import.module_path, None, name)
+                    .ok_or_else(|| BootstrapReadError::MissingTextualLookup {
+                        module_path: import.module_path.clone(),
+                        name: name.clone(),
+                    })?;
                 imported
                     .entry(name.clone())
                     .or_default()
@@ -1081,13 +1562,25 @@ impl<'a> ExistingVisibleEnvironment<'a> {
         Ok(Self { imported, catalog })
     }
 
-    fn resolve_identity(&self, spelling: &str) -> Result<VocabularyEncodedId, BootstrapReadError> {
+    fn resolve_identity(
+        &self,
+        spelling: &str,
+        namespace: ReferenceNamespace,
+    ) -> Result<VocabularyEncodedId, BootstrapReadError> {
         resolve_visible_identity(
             spelling,
             std::iter::empty(),
             &self.imported,
-            self.catalog.priors(),
-            self.catalog.metadata(),
+            namespace,
+            ResolutionAuthority {
+                priors: self.catalog.priors(),
+                snapshot: self.catalog.metadata(),
+                schemas: SchemaView {
+                    existing: self.catalog.schemas(),
+                    additions: &IdentitySchemaCatalog::default(),
+                },
+                canonical_order: self.catalog.canonical_order(),
+            },
         )
     }
 
@@ -1304,7 +1797,7 @@ impl OccurrencePlanner {
         else {
             return Err(unexpected_node(node, "audited Nomos application"));
         };
-        let identity = environment.resolve_identity(nomos)?;
+        let identity = environment.resolve_identity(nomos, ReferenceNamespace::Nomos)?;
         let schema = environment.schema(&identity)?;
         let Some(NomosSchema::StreamInitiation { arity }) = schema.nomos() else {
             return Err(BootstrapReadError::WrongSchemaRole {
@@ -1457,7 +1950,7 @@ fn validate_type_expression_plan(
         SyntaxNode::AngleApplication {
             head, arguments, ..
         } => {
-            let identity = environment.resolve_identity(head)?;
+            let identity = environment.resolve_identity(head, ReferenceNamespace::Shape)?;
             let schema = environment.schema(&identity)?;
             let Some(arity) = schema.shape_arity() else {
                 return Err(BootstrapReadError::WrongSchemaRole {
@@ -1532,12 +2025,21 @@ impl<'a> SchemaView<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ResolutionAuthority<'a> {
+    priors: &'a BootstrapPriorVocabulary,
+    snapshot: &'a TextualMetadataSnapshot,
+    schemas: SchemaView<'a>,
+    canonical_order: &'a CanonicalIdentityOrder,
+}
+
 struct ResolutionEnvironment<'a> {
     local: BTreeMap<String, Vec<VocabularyEncodedId>>,
     imported: BTreeMap<String, Vec<VocabularyEncodedId>>,
     snapshot: &'a TextualMetadataSnapshot,
     priors: &'a BootstrapPriorVocabulary,
     schemas: SchemaView<'a>,
+    canonical_order: &'a CanonicalIdentityOrder,
 }
 
 impl<'a> ResolutionEnvironment<'a> {
@@ -1547,6 +2049,7 @@ impl<'a> ResolutionEnvironment<'a> {
         snapshot: &'a TextualMetadataSnapshot,
         catalog: &'a BootstrapCatalog,
         schemas: SchemaView<'a>,
+        canonical_order: &'a CanonicalIdentityOrder,
     ) -> Result<Self, BootstrapReadError> {
         let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
         for declaration in &plan.declarations {
@@ -1555,6 +2058,7 @@ impl<'a> ResolutionEnvironment<'a> {
                     assignments
                         .get(declaration.occurrence)
                         .expect("assignment completeness validated")
+                        .encoded_name
                         .clone(),
                 );
             }
@@ -1566,10 +2070,15 @@ impl<'a> ResolutionEnvironment<'a> {
             snapshot,
             priors: catalog.priors(),
             schemas,
+            canonical_order,
         })
     }
 
-    fn resolve_identity(&self, spelling: &str) -> Result<VocabularyEncodedId, BootstrapReadError> {
+    fn resolve_identity(
+        &self,
+        spelling: &str,
+        namespace: ReferenceNamespace,
+    ) -> Result<VocabularyEncodedId, BootstrapReadError> {
         resolve_visible_identity(
             spelling,
             self.local
@@ -1577,8 +2086,13 @@ impl<'a> ResolutionEnvironment<'a> {
                 .into_iter()
                 .flat_map(|identities| identities.iter().cloned()),
             &self.imported,
-            self.priors,
-            self.snapshot,
+            namespace,
+            ResolutionAuthority {
+                priors: self.priors,
+                snapshot: self.snapshot,
+                schemas: self.schemas,
+                canonical_order: self.canonical_order,
+            },
         )
     }
 
@@ -1587,7 +2101,7 @@ impl<'a> ResolutionEnvironment<'a> {
         spelling: &str,
         expected: ExpectedSchema,
     ) -> Result<VocabularyEncodedId, BootstrapReadError> {
-        let identity = self.resolve_identity(spelling)?;
+        let identity = self.resolve_identity(spelling, expected.namespace())?;
         require_schema(self.schemas, &identity, expected)?;
         Ok(identity)
     }
@@ -1600,6 +2114,25 @@ enum ExpectedSchema {
     Trait,
     Shape,
     StreamNomos,
+}
+
+impl ExpectedSchema {
+    const fn namespace(self) -> ReferenceNamespace {
+        match self {
+            Self::Nominal | Self::PersistentNominal => ReferenceNamespace::Nominal,
+            Self::Trait => ReferenceNamespace::Trait,
+            Self::Shape => ReferenceNamespace::Shape,
+            Self::StreamNomos => ReferenceNamespace::Nomos,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReferenceNamespace {
+    Nominal,
+    Trait,
+    Shape,
+    Nomos,
 }
 
 fn require_schema<'a>(
@@ -1649,20 +2182,61 @@ fn resolve_visible_identity(
     spelling: &str,
     local: impl IntoIterator<Item = VocabularyEncodedId>,
     imported: &BTreeMap<String, Vec<VocabularyEncodedId>>,
-    priors: &BootstrapPriorVocabulary,
-    snapshot: &TextualMetadataSnapshot,
+    namespace: ReferenceNamespace,
+    authority: ResolutionAuthority<'_>,
 ) -> Result<VocabularyEncodedId, BootstrapReadError> {
     let mut candidates = local.into_iter().collect::<Vec<_>>();
     candidates.extend(imported.get(spelling).into_iter().flatten().cloned());
-    candidates.extend(
-        priors
-            .all_identities()
+    let prior_candidates = match namespace {
+        ReferenceNamespace::Nominal => authority
+            .priors
+            .body_nominal_identities()
             .into_iter()
-            .filter(|identity| snapshot.spelling(identity) == Some(spelling)),
+            .cloned()
+            .collect::<Vec<_>>(),
+        ReferenceNamespace::Shape => authority
+            .priors
+            .shape_identities()
+            .into_iter()
+            .cloned()
+            .collect(),
+        ReferenceNamespace::Nomos => {
+            vec![authority.priors.identities().stream_nomos.clone()]
+        }
+        ReferenceNamespace::Trait => Vec::new(),
+    };
+    candidates.extend(
+        prior_candidates
+            .iter()
+            .filter(|identity| authority.snapshot.spelling(identity) == Some(spelling))
+            .cloned(),
     );
-    candidates.sort_by(canonical_encoded_name_cmp);
+    candidates.retain(|identity| {
+        authority
+            .schemas
+            .get(identity)
+            .is_some_and(|schema| namespace_admits(schema, namespace))
+    });
+    for identity in &candidates {
+        authority
+            .canonical_order
+            .bytes(identity)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
+    }
+    candidates.sort_by(|left, right| {
+        authority
+            .canonical_order
+            .bytes(left)
+            .expect("presence checked")
+            .cmp(
+                authority
+                    .canonical_order
+                    .bytes(right)
+                    .expect("presence checked"),
+            )
+    });
     candidates.dedup();
-    match candidates.as_slice() {
+    let identity = match candidates.as_slice() {
         [] => Err(BootstrapReadError::UnresolvedReference {
             name: spelling.to_owned(),
         }),
@@ -1671,25 +2245,34 @@ fn resolve_visible_identity(
             name: spelling.to_owned(),
             identities: many.to_vec(),
         }),
+    }?;
+    match namespace {
+        ReferenceNamespace::Shape
+            if !authority
+                .priors
+                .shape_identities()
+                .into_iter()
+                .any(|prior| prior == &identity) =>
+        {
+            Err(BootstrapReadError::NonPriorShapeIdentity { identity })
+        }
+        ReferenceNamespace::Nomos if identity != authority.priors.identities().stream_nomos => {
+            Err(BootstrapReadError::NonPriorNomosIdentity { identity })
+        }
+        _ => Ok(identity),
     }
 }
 
-/// Explicit canonical EncodedName byte ordering: root tag followed by each
-/// table-local u16 in network byte order. No carrier-derived `Ord` participates.
-fn canonical_encoded_name_cmp(
-    left: &VocabularyEncodedId,
-    right: &VocabularyEncodedId,
-) -> CompareOrdering {
-    canonical_encoded_name_bytes(left).cmp(&canonical_encoded_name_bytes(right))
-}
-
-fn canonical_encoded_name_bytes(identity: &VocabularyEncodedId) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(1 + identity.chain().len() * 2);
-    bytes.push(identity.root_variant().tag());
-    for local in identity.chain() {
-        bytes.extend_from_slice(&local.value().to_be_bytes());
+fn namespace_admits(schema: &IdentitySchema, namespace: ReferenceNamespace) -> bool {
+    match namespace {
+        ReferenceNamespace::Nominal => schema
+            .roles()
+            .iter()
+            .any(|role| matches!(role, SchemaRole::Nominal { .. })),
+        ReferenceNamespace::Trait => schema.admits(SchemaRole::Trait),
+        ReferenceNamespace::Shape => schema.shape_arity().is_some(),
+        ReferenceNamespace::Nomos => schema.nomos().is_some(),
     }
-    bytes
 }
 
 struct AssignmentCursor<'a> {
@@ -1727,6 +2310,7 @@ impl<'a> AssignmentCursor<'a> {
             self.assignments
                 .get(planned.occurrence)
                 .expect("assignment completeness validated")
+                .encoded_name
                 .clone(),
             planned.occurrence,
         ))
@@ -1788,14 +2372,16 @@ fn reify_section(
                 });
                 entries.push(entry);
             }
+            sort_by_identity(&mut entries, RoleEntry::target, environment.canonical_order)?;
+            sort_memberships(&mut memberships, priors, environment.canonical_order)?;
             Ok(ReifiedSection::Role {
                 role,
                 entries,
                 memberships,
             })
         }
-        SectionSchema::Declarations { admit_nomos } => Ok(ReifiedSection::Declarations(
-            items
+        SectionSchema::Declarations { admit_nomos } => {
+            let mut declarations = items
                 .iter()
                 .map(|node| {
                     reify_declaration(
@@ -1808,16 +2394,24 @@ fn reify_section(
                         priors,
                     )
                 })
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        SectionSchema::Traits => Ok(ReifiedSection::Traits(
-            items
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_by_identity(
+                &mut declarations,
+                declaration_identity,
+                environment.canonical_order,
+            )?;
+            Ok(ReifiedSection::Declarations(declarations))
+        }
+        SectionSchema::Traits => {
+            let mut traits = items
                 .iter()
                 .map(|node| reify_trait(node, environment, cursor))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        SectionSchema::PersistentDeclarations => Ok(ReifiedSection::PersistentDeclarations(
-            items
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_by_identity(&mut traits, |item| &item.name, environment.canonical_order)?;
+            Ok(ReifiedSection::Traits(traits))
+        }
+        SectionSchema::PersistentDeclarations => {
+            let mut declarations = items
                 .iter()
                 .map(|node| {
                     reify_type_declaration(
@@ -1827,97 +2421,167 @@ fn reify_section(
                         DeclarationPurpose::PersistentType,
                     )
                 })
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        SectionSchema::Tables => Ok(ReifiedSection::Tables(
-            items
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_by_identity(
+                &mut declarations,
+                |item| &item.name,
+                environment.canonical_order,
+            )?;
+            Ok(ReifiedSection::PersistentDeclarations(declarations))
+        }
+        SectionSchema::Tables => {
+            let mut tables = items
                 .iter()
                 .map(|node| reify_table(node, environment, cursor))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_by_identity(&mut tables, |item| &item.name, environment.canonical_order)?;
+            Ok(ReifiedSection::Tables(tables))
+        }
     }
 }
 
 fn assemble_body(
     root: &RootSchema,
-    mut sections: Vec<ReifiedSection>,
+    sections: Vec<ReifiedSection>,
+    priors: &BootstrapPriorVocabulary,
+    canonical_order: &CanonicalIdentityOrder,
 ) -> Result<BootstrapBody, BootstrapReadError> {
+    if sections.len() != root.sections.len() {
+        return Err(BootstrapReadError::InvalidPreparedModel(
+            "root registry section count",
+        ));
+    }
     match root.kind {
         EthosKind::Interface => {
-            let [inputs, outputs, refusals, declarations] = sections.as_mut_slice() else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Interface root section count",
-                ));
-            };
-            let (
-                ReifiedSection::Role {
-                    role: InterfaceRole::Input,
-                    entries: inputs,
-                    memberships: input_memberships,
-                },
-                ReifiedSection::Role {
-                    role: InterfaceRole::Output,
-                    entries: outputs,
-                    memberships: output_memberships,
-                },
-                ReifiedSection::Role {
-                    role: InterfaceRole::Refusal,
-                    entries: refusals,
-                    memberships: refusal_memberships,
-                },
-                ReifiedSection::Declarations(declarations),
-            ) = (inputs, outputs, refusals, declarations)
-            else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Interface root section kinds",
-                ));
-            };
+            let mut inputs = None;
+            let mut outputs = None;
+            let mut refusals = None;
+            let mut declarations = None;
             let mut memberships = Vec::new();
-            memberships.append(input_memberships);
-            memberships.append(output_memberships);
-            memberships.append(refusal_memberships);
+            for (schema, section) in root.sections.iter().zip(sections) {
+                match (schema, section) {
+                    (
+                        SectionSchema::Role(expected),
+                        ReifiedSection::Role {
+                            role,
+                            entries,
+                            memberships: mut section_memberships,
+                        },
+                    ) if expected == &role => {
+                        let slot = match role {
+                            InterfaceRole::Input => &mut inputs,
+                            InterfaceRole::Output => &mut outputs,
+                            InterfaceRole::Refusal => &mut refusals,
+                        };
+                        if slot.replace(entries).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Interface role section in root registry",
+                            ));
+                        }
+                        memberships.append(&mut section_memberships);
+                    }
+                    (SectionSchema::Declarations { .. }, ReifiedSection::Declarations(values)) => {
+                        if declarations.replace(values).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Interface declaration section in root registry",
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(BootstrapReadError::InvalidPreparedModel(
+                            "Interface root registry section kind",
+                        ));
+                    }
+                }
+            }
+            sort_memberships(&mut memberships, priors, canonical_order)?;
             Ok(BootstrapBody::Interface(InterfaceBody {
-                inputs: std::mem::take(inputs),
-                outputs: std::mem::take(outputs),
-                refusals: std::mem::take(refusals),
-                types: std::mem::take(declarations),
+                inputs: inputs.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Interface Input",
+                ))?,
+                outputs: outputs.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Interface Output",
+                ))?,
+                refusals: refusals.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Interface Refusal",
+                ))?,
+                types: declarations.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Interface Types",
+                ))?,
                 memberships,
             }))
         }
         EthosKind::Nexus => {
-            let [traits, declarations] = sections.as_mut_slice() else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Nexus root section count",
-                ));
-            };
-            let (ReifiedSection::Traits(traits), ReifiedSection::Declarations(declarations)) =
-                (traits, declarations)
-            else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Nexus root section kinds",
-                ));
-            };
+            let mut traits = None;
+            let mut declarations = None;
+            for (schema, section) in root.sections.iter().zip(sections) {
+                match (schema, section) {
+                    (SectionSchema::Traits, ReifiedSection::Traits(values)) => {
+                        if traits.replace(values).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Nexus Trait section in root registry",
+                            ));
+                        }
+                    }
+                    (SectionSchema::Declarations { .. }, ReifiedSection::Declarations(values)) => {
+                        if declarations.replace(values).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Nexus declaration section in root registry",
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(BootstrapReadError::InvalidPreparedModel(
+                            "Nexus root registry section kind",
+                        ));
+                    }
+                }
+            }
             Ok(BootstrapBody::Nexus(NexusBody {
-                traits: std::mem::take(traits),
-                types: std::mem::take(declarations),
+                traits: traits.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Nexus Traits",
+                ))?,
+                types: declarations.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Nexus Types",
+                ))?,
             }))
         }
         EthosKind::Sema => {
-            let [records, tables] = sections.as_mut_slice() else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Sema root section count",
-                ));
-            };
-            let (ReifiedSection::PersistentDeclarations(records), ReifiedSection::Tables(tables)) =
-                (records, tables)
-            else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "Sema root section kinds",
-                ));
-            };
+            let mut records = None;
+            let mut tables = None;
+            for (schema, section) in root.sections.iter().zip(sections) {
+                match (schema, section) {
+                    (
+                        SectionSchema::PersistentDeclarations,
+                        ReifiedSection::PersistentDeclarations(values),
+                    ) => {
+                        if records.replace(values).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Sema declaration section in root registry",
+                            ));
+                        }
+                    }
+                    (SectionSchema::Tables, ReifiedSection::Tables(values)) => {
+                        if tables.replace(values).is_some() {
+                            return Err(BootstrapReadError::InvalidPreparedModel(
+                                "duplicate Sema table section in root registry",
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(BootstrapReadError::InvalidPreparedModel(
+                            "Sema root registry section kind",
+                        ));
+                    }
+                }
+            }
             Ok(BootstrapBody::Sema(SemaBody {
-                record_types: std::mem::take(records),
-                tables: std::mem::take(tables),
+                record_types: records.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Sema declarations",
+                ))?,
+                tables: tables.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Sema tables",
+                ))?,
             }))
         }
     }
@@ -1976,7 +2640,7 @@ fn reify_type_declaration(
         });
     }
     let (name, _) = cursor.take(head, purpose)?;
-    let mut parameters = ParameterScope::new(name.clone());
+    let mut parameters = ParameterScope::new(name.clone(), environment.canonical_order);
     let body = match payload.as_ref() {
         SyntaxNode::Delimited {
             delimiter: Delimiter::Brace,
@@ -1992,12 +2656,18 @@ fn reify_type_declaration(
             delimiter: Delimiter::Square,
             items,
             ..
-        } => TypeBody::Enum(
-            items
+        } => {
+            let mut variants = items
                 .iter()
                 .map(|variant| reify_variant(variant, environment, cursor, &mut parameters))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
+                .collect::<Result<Vec<_>, _>>()?;
+            sort_by_identity(
+                &mut variants,
+                |item| &item.name,
+                environment.canonical_order,
+            )?;
+            TypeBody::Enum(variants)
+        }
         expression => TypeBody::Newtype(parse_type_expression(
             expression,
             environment,
@@ -2074,7 +2744,7 @@ fn reify_stream(
     let generated = generated.get(occurrence).ok_or_else(|| {
         BootstrapReadError::MissingGeneratedStreamAssignment(occurrence.ordinal())
     })?;
-    let mut parameters = ParameterScope::new(output_name.clone());
+    let mut parameters = ParameterScope::new(output_name.clone(), environment.canonical_order);
     let query = parse_type_expression(query, environment, &mut parameters)?;
     let event = parse_type_expression(event, environment, &mut parameters)?;
     let declaration = StreamInitiationDeclaration {
@@ -2084,7 +2754,7 @@ fn reify_stream(
     };
     let prepared = PreparedStreamGeneration {
         initiation: StreamInitiationInterfaceDeclaration {
-            name: generated.initiation.clone(),
+            name: generated.initiation.encoded_name.clone(),
             query,
         },
         output: StreamInterfaceDeclaration {
@@ -2095,13 +2765,13 @@ fn reify_stream(
             },
         },
         termination: StreamTerminationInterfaceDeclaration {
-            name: generated.termination.clone(),
+            name: generated.termination.encoded_name.clone(),
             stream_handle: output_name.clone(),
         },
         role_relations: [
             InterfaceRoleMembership {
                 role: InterfaceRole::Input,
-                target: generated.initiation.clone(),
+                target: generated.initiation.encoded_name.clone(),
             },
             InterfaceRoleMembership {
                 role: InterfaceRole::Output,
@@ -2109,7 +2779,7 @@ fn reify_stream(
             },
             InterfaceRoleMembership {
                 role: InterfaceRole::Input,
-                target: generated.termination.clone(),
+                target: generated.termination.encoded_name.clone(),
             },
         ],
     };
@@ -2125,10 +2795,11 @@ fn reify_trait(
         return Err(unexpected_node(node, "TraitName.{Methods}"));
     };
     let name = cursor.take(head, DeclarationPurpose::Trait)?.0;
-    let methods = expect_delimited(payload, Delimiter::Brace, "Trait methods")?
+    let mut methods = expect_delimited(payload, Delimiter::Brace, "Trait methods")?
         .iter()
         .map(|method| reify_method(method, environment, cursor))
         .collect::<Result<Vec<_>, _>>()?;
+    sort_by_identity(&mut methods, |item| &item.name, environment.canonical_order)?;
     Ok(TraitDeclaration { name, methods })
 }
 
@@ -2145,7 +2816,7 @@ fn reify_method(
     let Some((return_node, parameter_nodes)) = signature.split_last() else {
         return Err(unexpected_node(payload, "mandatory method return"));
     };
-    let mut parameter_scope = ParameterScope::new(name.clone());
+    let mut parameter_scope = ParameterScope::new(name.clone(), environment.canonical_order);
     let parameters = parameter_nodes
         .iter()
         .map(|node| parse_type_expression(node, environment, &mut parameter_scope))
@@ -2184,15 +2855,17 @@ struct ParameterScope {
     next: u32,
     inferred: BTreeMap<Vec<u8>, LocalParameter>,
     named: BTreeMap<String, (Vec<u8>, LocalParameter)>,
+    canonical_order: CanonicalIdentityOrder,
 }
 
 impl ParameterScope {
-    fn new(owner: VocabularyEncodedId) -> Self {
+    fn new(owner: VocabularyEncodedId, canonical_order: &CanonicalIdentityOrder) -> Self {
         Self {
             owner,
             next: 0,
             inferred: BTreeMap::new(),
             named: BTreeMap::new(),
+            canonical_order: canonical_order.clone(),
         }
     }
 
@@ -2201,7 +2874,7 @@ impl ParameterScope {
         name: Option<&str>,
         traits: &[VocabularyEncodedId],
     ) -> Result<ParameterBinder, BootstrapReadError> {
-        let key = normalized_trait_key(traits);
+        let key = normalized_trait_key(traits, &self.canonical_order)?;
         if let Some(name) = name {
             validate_visible_name(name)?;
             if let Some((prior, parameter)) = self.named.get(name) {
@@ -2240,14 +2913,19 @@ impl ParameterScope {
     }
 }
 
-fn normalized_trait_key(traits: &[VocabularyEncodedId]) -> Vec<u8> {
+fn normalized_trait_key(
+    traits: &[VocabularyEncodedId],
+    canonical_order: &CanonicalIdentityOrder,
+) -> Result<Vec<u8>, BootstrapReadError> {
     let mut key = Vec::new();
     for identity in traits {
-        let bytes = canonical_encoded_name_bytes(identity);
+        let bytes = canonical_order
+            .bytes(identity)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
         key.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-        key.extend_from_slice(&bytes);
+        key.extend_from_slice(bytes);
     }
-    key
+    Ok(key)
 }
 
 fn parse_type_expression(
@@ -2305,7 +2983,7 @@ fn parse_type_expression(
                 };
                 traits.push(environment.require(trait_name, ExpectedSchema::Trait)?);
             }
-            traits.sort_by(canonical_encoded_name_cmp);
+            sort_identities(&mut traits, environment.canonical_order)?;
             for pair in traits.windows(2) {
                 if pair[0] == pair[1] {
                     return Err(BootstrapReadError::DuplicateTrait(pair[0].clone()));
@@ -2353,4 +3031,254 @@ fn unexpected_node(node: &SyntaxNode, expected: &'static str) -> BootstrapReadEr
         found: node.kind_name(),
         start: node.bound().start(),
     }
+}
+
+fn schema_role_for_purpose(purpose: DeclarationPurpose) -> SchemaRole {
+    match purpose {
+        DeclarationPurpose::Type | DeclarationPurpose::StreamInitiation => {
+            SchemaRole::Nominal { persistent: false }
+        }
+        DeclarationPurpose::PersistentType => SchemaRole::Nominal { persistent: true },
+        DeclarationPurpose::Variant => SchemaRole::Variant,
+        DeclarationPurpose::Trait => SchemaRole::Trait,
+        DeclarationPurpose::Method => SchemaRole::Method,
+        DeclarationPurpose::Table => SchemaRole::Table,
+    }
+}
+
+fn declaration_identity(declaration: &Declaration) -> &VocabularyEncodedId {
+    match declaration {
+        Declaration::Type(declaration) => &declaration.name,
+        Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => &declaration.name,
+    }
+}
+
+fn canonicalize_imports(
+    imports: &[ImportEntry],
+    snapshot: &TextualMetadataSnapshot,
+    canonical_order: &CanonicalIdentityOrder,
+) -> Result<Vec<ImportEntry>, BootstrapReadError> {
+    let mut by_module = BTreeMap::<Vec<String>, BTreeMap<Vec<u8>, String>>::new();
+    for import in imports {
+        for name in &import.imported_names {
+            let identity = snapshot
+                .identity_at(&import.module_path, None, name)
+                .ok_or_else(|| BootstrapReadError::MissingTextualLookup {
+                    module_path: import.module_path.clone(),
+                    name: name.clone(),
+                })?;
+            let bytes = canonical_order
+                .bytes(identity)
+                .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
+            by_module
+                .entry(import.module_path.clone())
+                .or_default()
+                .insert(bytes.to_vec(), name.clone());
+        }
+    }
+    Ok(by_module
+        .into_iter()
+        .map(|(module_path, names)| ImportEntry {
+            module_path,
+            imported_names: names.into_values().collect(),
+        })
+        .collect())
+}
+
+fn collect_document_references(
+    body: &BootstrapBody,
+    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+) {
+    match body {
+        BootstrapBody::Interface(body) => {
+            for entry in body
+                .inputs
+                .iter()
+                .chain(&body.outputs)
+                .chain(&body.refusals)
+            {
+                match entry {
+                    RoleEntry::Declaration(declaration) => {
+                        collect_type_declaration_references(declaration, references)
+                    }
+                    RoleEntry::Reference(identity) => {
+                        references.push((identity.clone(), ReferenceNamespace::Nominal));
+                    }
+                }
+            }
+            for declaration in &body.types {
+                match declaration {
+                    Declaration::Type(declaration) => {
+                        collect_type_declaration_references(declaration, references)
+                    }
+                    Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => {
+                        collect_expression_references(&declaration.query, references);
+                        collect_expression_references(&declaration.event, references);
+                    }
+                }
+            }
+            for membership in &body.memberships {
+                references.push((membership.target.clone(), ReferenceNamespace::Nominal));
+            }
+        }
+        BootstrapBody::Nexus(body) => {
+            for declaration in &body.traits {
+                for method in &declaration.methods {
+                    for parameter in &method.parameters {
+                        collect_expression_references(parameter, references);
+                    }
+                    collect_expression_references(&method.return_type, references);
+                }
+            }
+            for declaration in &body.types {
+                match declaration {
+                    Declaration::Type(declaration) => {
+                        collect_type_declaration_references(declaration, references)
+                    }
+                    Declaration::Nomos(NomosDeclaration::StreamInitiation(_)) => {}
+                }
+            }
+        }
+        BootstrapBody::Sema(body) => {
+            for declaration in &body.record_types {
+                collect_type_declaration_references(declaration, references);
+            }
+            for table in &body.tables {
+                references.push((table.record_type.clone(), ReferenceNamespace::Nominal));
+                references.push((table.key_type.clone(), ReferenceNamespace::Nominal));
+            }
+        }
+    }
+}
+
+fn collect_type_declaration_references(
+    declaration: &TypeDeclaration,
+    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+) {
+    match &declaration.body {
+        TypeBody::Newtype(expression) => collect_expression_references(expression, references),
+        TypeBody::Struct(fields) => {
+            for field in fields {
+                collect_expression_references(field, references);
+            }
+        }
+        TypeBody::Enum(variants) => {
+            for variant in variants {
+                match &variant.body {
+                    VariantBody::Unit => {}
+                    VariantBody::Unary(expression) => {
+                        collect_expression_references(expression, references)
+                    }
+                    VariantBody::Product(fields) => {
+                        for field in fields {
+                            collect_expression_references(field, references);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_expression_references(
+    expression: &TypeExpression,
+    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+) {
+    match expression {
+        TypeExpression::Reference(identity) => {
+            references.push((identity.clone(), ReferenceNamespace::Nominal));
+        }
+        TypeExpression::ShapeApplication(application) => {
+            references.push((application.shape.clone(), ReferenceNamespace::Shape));
+            for argument in &application.arguments {
+                collect_expression_references(argument, references);
+            }
+        }
+        TypeExpression::TraitRequirement(requirement) => {
+            references.extend(
+                requirement
+                    .required_traits()
+                    .iter()
+                    .cloned()
+                    .map(|identity| (identity, ReferenceNamespace::Trait)),
+            );
+        }
+    }
+}
+
+fn sort_identities(
+    identities: &mut [VocabularyEncodedId],
+    canonical_order: &CanonicalIdentityOrder,
+) -> Result<(), BootstrapReadError> {
+    for identity in identities.iter() {
+        canonical_order
+            .bytes(identity)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
+    }
+    identities.sort_by(|left, right| {
+        canonical_order
+            .bytes(left)
+            .expect("presence checked")
+            .cmp(canonical_order.bytes(right).expect("presence checked"))
+    });
+    Ok(())
+}
+
+fn sort_by_identity<T>(
+    values: &mut [T],
+    identity: impl Fn(&T) -> &VocabularyEncodedId,
+    canonical_order: &CanonicalIdentityOrder,
+) -> Result<(), BootstrapReadError> {
+    for value in values.iter() {
+        let identity = identity(value);
+        canonical_order
+            .bytes(identity)
+            .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
+    }
+    values.sort_by(|left, right| {
+        canonical_order
+            .bytes(identity(left))
+            .expect("presence checked")
+            .cmp(
+                canonical_order
+                    .bytes(identity(right))
+                    .expect("presence checked"),
+            )
+    });
+    Ok(())
+}
+
+fn sort_memberships(
+    memberships: &mut [InterfaceRoleMembership],
+    priors: &BootstrapPriorVocabulary,
+    canonical_order: &CanonicalIdentityOrder,
+) -> Result<(), BootstrapReadError> {
+    for membership in memberships.iter() {
+        for identity in [priors.role_identity(membership.role), &membership.target] {
+            canonical_order
+                .bytes(identity)
+                .ok_or_else(|| BootstrapReadError::MissingCanonicalIdentity(identity.clone()))?;
+        }
+    }
+    memberships.sort_by(|left, right| {
+        canonical_order
+            .bytes(priors.role_identity(left.role))
+            .expect("presence checked")
+            .cmp(
+                canonical_order
+                    .bytes(priors.role_identity(right.role))
+                    .expect("presence checked"),
+            )
+            .then_with(|| {
+                canonical_order
+                    .bytes(&left.target)
+                    .expect("presence checked")
+                    .cmp(
+                        canonical_order
+                            .bytes(&right.target)
+                            .expect("presence checked"),
+                    )
+            })
+    });
+    Ok(())
 }

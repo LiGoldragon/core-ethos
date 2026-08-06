@@ -4,10 +4,13 @@ use signal_sema_translator::VocabularyEncodedId;
 
 use super::catalog::{BootstrapPriorVocabulary, TextualMetadataSnapshot};
 use super::error::BootstrapReadError;
-use super::model::{EthosKind, InterfaceRole};
+use super::model::{
+    BootstrapBody, Declaration, EthosKind, InterfaceRole, RoleEntry, TableDeclaration,
+    TraitDeclaration, TypeDeclaration,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SectionSchema {
+pub enum BootstrapSectionSchema {
     Role(InterfaceRole),
     Declarations { admit_nomos: bool },
     Traits,
@@ -19,7 +22,64 @@ pub(crate) enum SectionSchema {
 pub(crate) struct RootSchema {
     pub(crate) kind: EthosKind,
     pub(crate) kind_identity: VocabularyEncodedId,
-    pub(crate) sections: Vec<SectionSchema>,
+    pub(crate) sections: Vec<BootstrapSectionSchema>,
+}
+
+pub(crate) enum RootSemanticSectionRef<'a> {
+    Role(&'a [RoleEntry]),
+    Declarations(&'a [Declaration]),
+    Traits(&'a [TraitDeclaration]),
+    PersistentDeclarations(&'a [TypeDeclaration]),
+    Tables(&'a [TableDeclaration]),
+}
+
+impl RootSchema {
+    pub(crate) fn semantic_sections<'a>(
+        &self,
+        body: &'a BootstrapBody,
+    ) -> Result<Vec<RootSemanticSectionRef<'a>>, BootstrapReadError> {
+        if body.kind() != self.kind {
+            return Err(BootstrapReadError::HeaderBodyMismatch {
+                header: self.kind,
+                body: body.kind(),
+            });
+        }
+        self.sections
+            .iter()
+            .map(|schema| match (schema, body) {
+                (
+                    BootstrapSectionSchema::Role(InterfaceRole::Input),
+                    BootstrapBody::Interface(body),
+                ) => Ok(RootSemanticSectionRef::Role(&body.inputs)),
+                (
+                    BootstrapSectionSchema::Role(InterfaceRole::Output),
+                    BootstrapBody::Interface(body),
+                ) => Ok(RootSemanticSectionRef::Role(&body.outputs)),
+                (
+                    BootstrapSectionSchema::Role(InterfaceRole::Refusal),
+                    BootstrapBody::Interface(body),
+                ) => Ok(RootSemanticSectionRef::Role(&body.refusals)),
+                (BootstrapSectionSchema::Declarations { .. }, BootstrapBody::Interface(body)) => {
+                    Ok(RootSemanticSectionRef::Declarations(&body.types))
+                }
+                (BootstrapSectionSchema::Traits, BootstrapBody::Nexus(body)) => {
+                    Ok(RootSemanticSectionRef::Traits(&body.traits))
+                }
+                (BootstrapSectionSchema::Declarations { .. }, BootstrapBody::Nexus(body)) => {
+                    Ok(RootSemanticSectionRef::Declarations(&body.types))
+                }
+                (BootstrapSectionSchema::PersistentDeclarations, BootstrapBody::Sema(body)) => Ok(
+                    RootSemanticSectionRef::PersistentDeclarations(&body.record_types),
+                ),
+                (BootstrapSectionSchema::Tables, BootstrapBody::Sema(body)) => {
+                    Ok(RootSemanticSectionRef::Tables(&body.tables))
+                }
+                _ => Err(BootstrapReadError::InvalidPreparedModel(
+                    "root registry section cannot project this body",
+                )),
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -36,24 +96,27 @@ impl RootSchemaRegistry {
                     kind: EthosKind::Interface,
                     kind_identity: ids.interface_kind.clone(),
                     sections: vec![
-                        SectionSchema::Role(InterfaceRole::Input),
-                        SectionSchema::Role(InterfaceRole::Output),
-                        SectionSchema::Role(InterfaceRole::Refusal),
-                        SectionSchema::Declarations { admit_nomos: true },
+                        BootstrapSectionSchema::Role(InterfaceRole::Input),
+                        BootstrapSectionSchema::Role(InterfaceRole::Output),
+                        BootstrapSectionSchema::Role(InterfaceRole::Refusal),
+                        BootstrapSectionSchema::Declarations { admit_nomos: true },
                     ],
                 },
                 RootSchema {
                     kind: EthosKind::Nexus,
                     kind_identity: ids.nexus_kind.clone(),
                     sections: vec![
-                        SectionSchema::Traits,
-                        SectionSchema::Declarations { admit_nomos: false },
+                        BootstrapSectionSchema::Traits,
+                        BootstrapSectionSchema::Declarations { admit_nomos: false },
                     ],
                 },
                 RootSchema {
                     kind: EthosKind::Sema,
                     kind_identity: ids.sema_kind.clone(),
-                    sections: vec![SectionSchema::PersistentDeclarations, SectionSchema::Tables],
+                    sections: vec![
+                        BootstrapSectionSchema::PersistentDeclarations,
+                        BootstrapSectionSchema::Tables,
+                    ],
                 },
             ],
         }
@@ -75,5 +138,9 @@ impl RootSchemaRegistry {
             .iter()
             .find(|root| root.kind == kind)
             .expect("the closed registry seats every EthosKind")
+    }
+
+    pub(crate) fn section_order(&self, kind: EthosKind) -> &[BootstrapSectionSchema] {
+        &self.for_kind(kind).sections
     }
 }

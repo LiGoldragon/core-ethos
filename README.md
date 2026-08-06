@@ -8,8 +8,10 @@ Interface, Nexus, and Sema semantic forms.
 The `bootstrap` module separates five authorities that must never collapse:
 
 1. `TextualMetadataSnapshot` is a bidirectional, one-record-per-object snapshot.
-   Each record is only module path, visible name, and encoded identity. It says
-   nothing about semantic class.
+   Each projection address is module path, optional lexical-owner identity, and
+   visible name. Exact addresses are unique; variants or methods under different
+   owners may lawfully reuse one spelling. Metadata says nothing about semantic
+   class.
 2. `IdentitySchemaCatalog` is keyed only by encoded identity. One identity may
    carry several compatible roles, each with exact data such as Shape arity,
    persistence, file kind, Interface role, or audited Nomos schema.
@@ -17,16 +19,20 @@ The `bootstrap` module separates five authorities that must never collapse:
    assignment-independent cardinality and Shape/Nomos arity, and reports only
    authored declaration occurrences with exact source bounds. It allocates no
    identity.
-4. `NamingAssignments` supplies exactly one externally allocated identity for
-   every authored occurrence. `GeneratedStreamAssignments` separately supplies
-   initiation and termination identities keyed to an authored Stream occurrence.
-5. `BootstrapReader::seal` resolves textual ambiguity to one identity before
-   consulting its schema roles, validates the complete post-operation name
-   snapshot, and returns a `PreparedBootstrapTransaction`. It commits no naming,
-   schema, or component storage.
+4. `NamingAssignments` supplies exactly one externally authorized identity and
+   `Existing`/`New` disposition for every authored occurrence. New identities
+   carry authority-supplied canonical ordering bytes. Generated Stream identities
+   use the same dispositions in their separate assignment channel.
+5. `BootstrapReader::seal` consumes an explicit authority-issued
+   `TextualMetadataTransition`. That before→after transition may preserve,
+   rename, move, add, or remove projections. The reader validates it against the
+   plan and catalog; it never invents or commits a transition.
 
-The writer consumes that same prepared transaction and therefore the same
-bidirectional textual snapshot used by sealing. No magic spelling exists for
+The resulting `PreparedBootstrapTransaction` has private invariant-bearing fields
+and read-only accessors, so stores can accept only a validated value. Untrusted
+parts remain a `PreparedBootstrapDraft` until `validate_draft` succeeds. The writer
+consumes its exact transition and uses the after snapshot in both directions. No
+magic spelling exists for
 file kinds, primitives, Shapes, roles, Stream, or StreamIdentity: every visible
 projection comes from metadata attached to a typed prior identity.
 
@@ -44,9 +50,15 @@ The active file laws remain:
 - recursive type expressions consisting only of a nominal reference, an
   exact-arity Shape application, or a nonempty guillemet Trait requirement.
 
-The root orders live once in a typed root-schema registry. Planning, sealing,
-and writing iterate that registry; their only kind-specific operation is the
-final construction/projection of the purpose-built body carrier.
+The root orders live once in a typed root-schema registry. Planning, assembly,
+semantic projection, and writing all consult that registry. The order is exposed
+read-only for tools that need to render the provisional bootstrap surface.
+
+Body lookup is namespace-first. File-kind and Interface-role priors never enter
+nominal, Trait, Shape, or Nomos reference candidates. Ambiguity is refused within
+the syntactically applicable namespace before exact role data is checked. Shape
+and Nomos heads are closed over typed prior-vocabulary identities; an imported
+object cannot become language syntax merely by registering a Shape or Nomos role.
 
 ## Stream transaction
 
@@ -64,15 +76,26 @@ prepares, without storing:
 - exactly Input, Output, Input role relations in that order.
 
 The `BootstrapPriorVocabulary::runtime_stream_contract` explicitly seats the
-one-argument Stream and StreamIdentity runtime Shape contracts. Live registries,
-routing, termination behavior, and storage commitment remain outside Ethos.
+one-argument Stream and StreamIdentity Shapes. Strict runtime carriers model the
+query initiation value, a `RuntimeStream<Event>` containing its typed
+`RuntimeStreamIdentity<Event>`, and termination containing the same handle.
+Live registries, routing behavior, and storage commitment remain outside Ethos.
 
 ## Identity and archive boundary
 
 Grammar document and syntax identities are both injected explicitly. The reader
-derives no hierarchical encoded identity. Authored and generated assignments must
-be Universal, fresh against all existing metadata/schema identities, and mutually
-collision-free.
+derives no hierarchical encoded identity and reconstructs no ordering from an
+identity carrier. `CanonicalIdentityOrder` is supplied by identity authority for
+every catalog object; each New disposition supplies the bytes for its object.
+Every unordered named semantic collection is normalized by those bytes while
+positional struct fields, method parameters, and Shape arguments retain authored
+order.
+
+Authored and generated assignments must be Universal and mutually collision-free.
+`New` identities must be absent from metadata, schemas, and canonical authority;
+`Existing` identities must already exist with the exact reusable schema role.
+This makes unchanged rereads and stable rename/move/delete edits survive a
+persisted restart without reminting identities.
 
 Semantic archiving intentionally reports `BootstrapArchiveStatus::NotYetArchived`.
 Archiving now would freeze the current chain-shaped `VocabularyEncodedId` carrier

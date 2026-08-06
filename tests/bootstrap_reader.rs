@@ -1,58 +1,39 @@
+use std::collections::BTreeMap;
+
 use core_ethos::bootstrap::*;
 use encoded_name_table::LocalEncodedId;
 use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 
 fn id(local: u16) -> VocabularyEncodedId {
     VocabularyEncodedId::new(VocabularyRoot::Universal, vec![LocalEncodedId::new(local)])
-        .expect("nonempty test identity")
+        .expect("nonempty identity")
 }
 
 fn rust_id(local: u16) -> VocabularyEncodedId {
     VocabularyEncodedId::new(VocabularyRoot::Rust, vec![LocalEncodedId::new(local)])
-        .expect("nonempty test identity")
+        .expect("nonempty identity")
 }
 
-#[derive(Clone)]
-struct Labels {
-    interface: &'static str,
-    nexus: &'static str,
-    sema: &'static str,
-    string: &'static str,
-    integer: &'static str,
-    boolean: &'static str,
-    unit: &'static str,
-    vector: &'static str,
-    option: &'static str,
-    map: &'static str,
-    result: &'static str,
-    stream: &'static str,
-    stream_identity: &'static str,
+fn authority_bytes(local: u16) -> Vec<u8> {
+    let mut bytes = vec![0x51];
+    bytes.extend_from_slice(&local.to_be_bytes());
+    bytes
 }
 
-impl Default for Labels {
-    fn default() -> Self {
-        Self {
-            interface: "Interface",
-            nexus: "Nexus",
-            sema: "Sema",
-            string: "String",
-            integer: "Integer",
-            boolean: "Boolean",
-            unit: "Unit",
-            vector: "Vector",
-            option: "Option",
-            map: "Map",
-            result: "Result",
-            stream: "Stream",
-            stream_identity: "StreamIdentity",
-        }
+fn record(
+    module: &[&str],
+    owner: Option<VocabularyEncodedId>,
+    name: &str,
+    identity: VocabularyEncodedId,
+) -> TextualMetadataRecord {
+    TextualMetadataRecord {
+        address: TextualProjectionAddress {
+            module_path: module.iter().map(|part| (*part).to_owned()).collect(),
+            lexical_owner: owner,
+            visible_name: name.to_owned(),
+        },
+        encoded_name: identity,
     }
-}
-
-struct Fixture {
-    reader: BootstrapReader,
-    base_snapshot: TextualMetadataSnapshot,
-    base_schemas: IdentitySchemaCatalog,
 }
 
 fn prior_identities() -> BootstrapPriorIdentities {
@@ -77,19 +58,29 @@ fn prior_identities() -> BootstrapPriorIdentities {
     }
 }
 
-fn make_fixture(labels: Labels, extra: Vec<(TextualMetadataRecord, IdentitySchema)>) -> Fixture {
-    let prior_entries = vec![
+#[derive(Clone)]
+struct Extra {
+    metadata: TextualMetadataRecord,
+    schema: IdentitySchema,
+    canonical_bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct Fixture {
+    reader: BootstrapReader,
+    snapshot: TextualMetadataSnapshot,
+    schemas: IdentitySchemaCatalog,
+}
+
+fn make_fixture(current_module: &[&str], extras: Vec<Extra>) -> Fixture {
+    let prior_specs = [
         (
             1,
-            labels.interface,
+            "Interface",
             vec![SchemaRole::FileKind(EthosKind::Interface)],
         ),
-        (
-            2,
-            labels.nexus,
-            vec![SchemaRole::FileKind(EthosKind::Nexus)],
-        ),
-        (3, labels.sema, vec![SchemaRole::FileKind(EthosKind::Sema)]),
+        (2, "Nexus", vec![SchemaRole::FileKind(EthosKind::Nexus)]),
+        (3, "Sema", vec![SchemaRole::FileKind(EthosKind::Sema)]),
         (
             4,
             "Input",
@@ -105,71 +96,63 @@ fn make_fixture(labels: Labels, extra: Vec<(TextualMetadataRecord, IdentitySchem
             "Refusal",
             vec![SchemaRole::InterfaceRole(InterfaceRole::Refusal)],
         ),
-        (
-            7,
-            labels.string,
-            vec![SchemaRole::Nominal { persistent: true }],
-        ),
-        (
-            8,
-            labels.integer,
-            vec![SchemaRole::Nominal { persistent: true }],
-        ),
-        (
-            9,
-            labels.boolean,
-            vec![SchemaRole::Nominal { persistent: true }],
-        ),
-        (
-            10,
-            labels.unit,
-            vec![SchemaRole::Nominal { persistent: true }],
-        ),
-        (11, labels.vector, vec![SchemaRole::Shape { arity: 1 }]),
-        (12, labels.option, vec![SchemaRole::Shape { arity: 1 }]),
-        (13, labels.map, vec![SchemaRole::Shape { arity: 2 }]),
-        (14, labels.result, vec![SchemaRole::Shape { arity: 2 }]),
+        (7, "String", vec![SchemaRole::Nominal { persistent: true }]),
+        (8, "Integer", vec![SchemaRole::Nominal { persistent: true }]),
+        (9, "Boolean", vec![SchemaRole::Nominal { persistent: true }]),
+        (10, "Unit", vec![SchemaRole::Nominal { persistent: true }]),
+        (11, "Vector", vec![SchemaRole::Shape { arity: 1 }]),
+        (12, "Option", vec![SchemaRole::Shape { arity: 1 }]),
+        (13, "Map", vec![SchemaRole::Shape { arity: 2 }]),
+        (14, "Result", vec![SchemaRole::Shape { arity: 2 }]),
         (
             15,
-            labels.stream,
+            "Stream",
             vec![
                 SchemaRole::Shape { arity: 1 },
                 SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
             ],
         ),
-        (
-            16,
-            labels.stream_identity,
-            vec![SchemaRole::Shape { arity: 1 }],
-        ),
+        (16, "StreamIdentity", vec![SchemaRole::Shape { arity: 1 }]),
     ];
     let mut records = Vec::new();
     let mut schemas = Vec::new();
-    for (local, spelling, roles) in prior_entries {
+    let mut ordering = Vec::new();
+    for (local, name, roles) in prior_specs {
         let identity = id(local);
-        records.push(TextualMetadataRecord {
-            module_path: vec!["builtin".into()],
-            visible_name: spelling.into(),
-            encoded_name: identity.clone(),
-        });
-        schemas.push(IdentitySchema::new(identity, roles).expect("prior schema"));
+        records.push(record(&["builtin"], None, name, identity.clone()));
+        schemas.push(IdentitySchema::new(identity.clone(), roles).unwrap());
+        ordering.push((identity, authority_bytes(local)));
     }
-    for (record, schema) in extra {
-        records.push(record);
-        schemas.push(schema);
+    for extra in extras {
+        ordering.push((extra.metadata.encoded_name.clone(), extra.canonical_bytes));
+        records.push(extra.metadata);
+        schemas.push(extra.schema);
     }
-    let base_snapshot = TextualMetadataSnapshot::new(records).expect("base metadata");
-    let schemas = IdentitySchemaCatalog::new(schemas).expect("schema catalog");
-    let priors = BootstrapPriorVocabulary::new(prior_identities(), &schemas, &base_snapshot)
-        .expect("typed priors");
+    let snapshot = TextualMetadataSnapshot::new(records).unwrap();
+    let schemas = IdentitySchemaCatalog::new(schemas).unwrap();
+    let order = CanonicalIdentityOrder::new(ordering).unwrap();
+    fixture_from_parts(current_module, snapshot, schemas, order)
+}
+
+fn fixture_from_parts(
+    current_module: &[&str],
+    snapshot: TextualMetadataSnapshot,
+    schemas: IdentitySchemaCatalog,
+    order: CanonicalIdentityOrder,
+) -> Fixture {
+    let priors = BootstrapPriorVocabulary::new(prior_identities(), &schemas, &snapshot).unwrap();
     let catalog = BootstrapCatalog::new(
-        vec!["app".into()],
-        base_snapshot.clone(),
+        current_module
+            .iter()
+            .map(|part| (*part).to_owned())
+            .collect(),
+        snapshot.clone(),
         schemas.clone(),
         priors,
         BootstrapVersionPolicy::exact(EthosVersion::new(1, 0, 0)),
+        order.clone(),
     )
-    .expect("reader catalog");
+    .unwrap();
     let reader = BootstrapReader::build(
         BootstrapGrammarIdentities {
             document: id(900),
@@ -177,662 +160,1232 @@ fn make_fixture(labels: Labels, extra: Vec<(TextualMetadataRecord, IdentitySchem
         },
         catalog,
     )
-    .expect("shared reader");
+    .unwrap();
     Fixture {
         reader,
-        base_snapshot,
-        base_schemas: schemas,
+        snapshot,
+        schemas,
     }
 }
 
+fn restarted(
+    prior: &Fixture,
+    transaction: &PreparedBootstrapTransaction,
+    current_module: &[&str],
+) -> Fixture {
+    let schemas = IdentitySchemaCatalog::new(
+        prior
+            .schemas
+            .entries()
+            .chain(transaction.schema_additions().entries())
+            .cloned()
+            .collect(),
+    )
+    .unwrap();
+    fixture_from_parts(
+        current_module,
+        transaction.naming_transition().after().clone(),
+        schemas,
+        transaction.canonical_order().clone(),
+    )
+}
+
+#[derive(Clone)]
 struct SealInputs {
     assignments: NamingAssignments,
     generated: GeneratedStreamAssignments,
-    snapshot: TextualMetadataSnapshot,
-    authored_ids: Vec<VocabularyEncodedId>,
-    generated_ids: Vec<(VocabularyEncodedId, VocabularyEncodedId)>,
+    transition: TextualMetadataTransition,
+    authored: Vec<VocabularyEncodedId>,
+    stream_generated: BTreeMap<VocabularyEncodedId, (VocabularyEncodedId, VocabularyEncodedId)>,
 }
 
-fn inputs_for(plan: &BootstrapReadPlan, base: &TextualMetadataSnapshot) -> SealInputs {
-    let mut records = base.records().to_vec();
-    let mut authored_ids = Vec::new();
-    let mut assignments = Vec::new();
-    let mut generated = Vec::new();
-    let mut generated_ids = Vec::new();
-    let mut next_generated = 500u16;
+fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> SealInputs {
+    let mut records = before.records().to_vec();
+    let mut identity_by_occurrence = BTreeMap::new();
+    let mut authored = Vec::new();
+    let mut raw_assignments = Vec::new();
     for (index, declaration) in plan.declarations().iter().enumerate() {
-        let encoded_name = id(100 + index as u16);
-        records.push(TextualMetadataRecord {
-            module_path: vec!["app".into()],
-            visible_name: declaration.spelling().into(),
-            encoded_name: encoded_name.clone(),
-        });
-        assignments.push(NamingAssignment {
+        let identity = id(100 + index as u16);
+        identity_by_occurrence.insert(declaration.occurrence(), identity.clone());
+        authored.push(identity.clone());
+        raw_assignments.push(NamingAssignment {
             occurrence: declaration.occurrence(),
-            encoded_name: encoded_name.clone(),
+            encoded_name: identity,
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x80, index as u8],
+            },
         });
-        authored_ids.push(encoded_name);
-        if declaration.purpose() == DeclarationPurpose::StreamInitiation {
-            let initiation = id(next_generated);
-            let termination = id(next_generated + 1);
-            next_generated += 2;
-            records.extend([
-                TextualMetadataRecord {
-                    module_path: vec!["app".into()],
-                    visible_name: format!("PreparedStart{index}"),
-                    encoded_name: initiation.clone(),
-                },
-                TextualMetadataRecord {
-                    module_path: vec!["app".into()],
-                    visible_name: format!("PreparedStop{index}"),
-                    encoded_name: termination.clone(),
-                },
-            ]);
-            generated.push(GeneratedStreamAssignment {
-                source: declaration.occurrence(),
-                initiation: initiation.clone(),
-                termination: termination.clone(),
-            });
-            generated_ids.push((initiation, termination));
-        }
     }
+    for (declaration, assignment) in plan.declarations().iter().zip(&raw_assignments) {
+        let owner = match declaration.scope() {
+            PlannedScope::Module => None,
+            PlannedScope::Enum(owner) | PlannedScope::Trait(owner) => {
+                Some(identity_by_occurrence[&owner].clone())
+            }
+        };
+        records.push(record(
+            &["app"],
+            owner,
+            declaration.spelling(),
+            assignment.encoded_name.clone(),
+        ));
+    }
+    let mut generated = Vec::new();
+    let mut stream_generated = BTreeMap::new();
+    let mut next = 500u16;
+    for declaration in plan
+        .declarations()
+        .iter()
+        .filter(|item| item.purpose() == DeclarationPurpose::StreamInitiation)
+    {
+        let output = identity_by_occurrence[&declaration.occurrence()].clone();
+        let initiation = id(next);
+        let termination = id(next + 1);
+        next += 2;
+        records.extend([
+            record(
+                &["app"],
+                None,
+                &format!("Start{}", declaration.spelling()),
+                initiation.clone(),
+            ),
+            record(
+                &["app"],
+                None,
+                &format!("Stop{}", declaration.spelling()),
+                termination.clone(),
+            ),
+        ]);
+        generated.push(GeneratedStreamAssignment {
+            source: declaration.occurrence(),
+            initiation: AssignedIdentity {
+                encoded_name: initiation.clone(),
+                disposition: IdentityDisposition::New {
+                    canonical_bytes: vec![0x90, (next - 2) as u8],
+                },
+            },
+            termination: AssignedIdentity {
+                encoded_name: termination.clone(),
+                disposition: IdentityDisposition::New {
+                    canonical_bytes: vec![0x90, (next - 1) as u8],
+                },
+            },
+        });
+        stream_generated.insert(output, (initiation, termination));
+    }
+    let after = TextualMetadataSnapshot::new(records).unwrap();
     SealInputs {
-        assignments: NamingAssignments::new(assignments).expect("authored assignments"),
-        generated: GeneratedStreamAssignments::new(generated).expect("generated assignments"),
-        snapshot: TextualMetadataSnapshot::new(records).expect("post-operation snapshot"),
-        authored_ids,
-        generated_ids,
+        assignments: NamingAssignments::new(raw_assignments).unwrap(),
+        generated: GeneratedStreamAssignments::new(generated).unwrap(),
+        transition: TextualMetadataTransition::new(before.clone(), after),
+        authored,
+        stream_generated,
     }
 }
 
-fn seal(
+fn existing_inputs(
+    plan: &BootstrapReadPlan,
+    before: &TextualMetadataSnapshot,
+    after: TextualMetadataSnapshot,
+    module: &[&str],
+    generated_by_output: &BTreeMap<VocabularyEncodedId, (VocabularyEncodedId, VocabularyEncodedId)>,
+) -> SealInputs {
+    let module = module
+        .iter()
+        .map(|part| (*part).to_owned())
+        .collect::<Vec<_>>();
+    let mut identity_by_occurrence = BTreeMap::new();
+    let mut authored = Vec::new();
+    let mut raw = Vec::new();
+    for declaration in plan.declarations() {
+        let owner = match declaration.scope() {
+            PlannedScope::Module => None,
+            PlannedScope::Enum(owner) | PlannedScope::Trait(owner) => {
+                Some(&identity_by_occurrence[&owner])
+            }
+        };
+        let identity = after
+            .identity_at(&module, owner, declaration.spelling())
+            .unwrap()
+            .clone();
+        identity_by_occurrence.insert(declaration.occurrence(), identity.clone());
+        authored.push(identity.clone());
+        raw.push(NamingAssignment {
+            occurrence: declaration.occurrence(),
+            encoded_name: identity,
+            disposition: IdentityDisposition::Existing,
+        });
+    }
+    let generated = plan
+        .declarations()
+        .iter()
+        .filter(|item| item.purpose() == DeclarationPurpose::StreamInitiation)
+        .map(|declaration| {
+            let output = &identity_by_occurrence[&declaration.occurrence()];
+            let (initiation, termination) = &generated_by_output[output];
+            GeneratedStreamAssignment {
+                source: declaration.occurrence(),
+                initiation: AssignedIdentity {
+                    encoded_name: initiation.clone(),
+                    disposition: IdentityDisposition::Existing,
+                },
+                termination: AssignedIdentity {
+                    encoded_name: termination.clone(),
+                    disposition: IdentityDisposition::Existing,
+                },
+            }
+        })
+        .collect();
+    SealInputs {
+        assignments: NamingAssignments::new(raw).unwrap(),
+        generated: GeneratedStreamAssignments::new(generated).unwrap(),
+        transition: TextualMetadataTransition::new(before.clone(), after),
+        authored,
+        stream_generated: generated_by_output.clone(),
+    }
+}
+
+fn seal_new(
     fixture: &Fixture,
     source: &str,
 ) -> (BootstrapReadPlan, SealInputs, PreparedBootstrapTransaction) {
-    let plan = fixture.reader.plan(source).expect("plan");
-    let inputs = inputs_for(&plan, &fixture.base_snapshot);
+    let plan = fixture.reader.plan(source).unwrap();
+    let inputs = new_inputs(&plan, &fixture.snapshot);
     let transaction = fixture
         .reader
         .seal(
             &plan,
             &inputs.assignments,
             &inputs.generated,
-            &inputs.snapshot,
+            &inputs.transition,
         )
-        .expect("seal");
+        .unwrap();
     (plan, inputs, transaction)
 }
 
-fn reseal_with_same_ids(
-    fixture: &Fixture,
-    source: &str,
-    authored_ids: &[VocabularyEncodedId],
-    generated_ids: &[(VocabularyEncodedId, VocabularyEncodedId)],
-    snapshot: &TextualMetadataSnapshot,
-) -> PreparedBootstrapTransaction {
-    let plan = fixture.reader.plan(source).expect("replan canonical text");
-    assert_eq!(plan.declarations().len(), authored_ids.len());
-    let assignments = NamingAssignments::new(
-        plan.declarations()
-            .iter()
-            .zip(authored_ids)
-            .map(|(declaration, identity)| NamingAssignment {
-                occurrence: declaration.occurrence(),
-                encoded_name: identity.clone(),
-            })
-            .collect(),
-    )
-    .expect("same authored identities");
-    let generated = GeneratedStreamAssignments::new(
-        plan.declarations()
-            .iter()
-            .filter(|declaration| declaration.purpose() == DeclarationPurpose::StreamInitiation)
-            .zip(generated_ids)
-            .map(
-                |(declaration, (initiation, termination))| GeneratedStreamAssignment {
-                    source: declaration.occurrence(),
-                    initiation: initiation.clone(),
-                    termination: termination.clone(),
-                },
-            )
-            .collect(),
-    )
-    .expect("same generated identities");
-    fixture
+#[test]
+fn stable_edits_rename_move_delete_and_restart_without_reminting() {
+    let base = make_fixture(&["app"], vec![]);
+    let source =
+        "Interface.{1 0 0}\n[]\n{[] [] [] [Keep.String Drop.Integer Flow.Stream.(String Integer)]}";
+    let (_, first_inputs, first) = seal_new(&base, source);
+    assert!(
+        first
+            .identity_dispositions()
+            .values()
+            .all(|disposition| matches!(disposition, IdentityDisposition::New { .. }))
+    );
+
+    let committed = restarted(&base, &first, &["app"]);
+    let canonical = base.reader.write(&first).unwrap();
+    let unchanged_plan = committed.reader.plan(&canonical).unwrap();
+    let unchanged_inputs = existing_inputs(
+        &unchanged_plan,
+        &committed.snapshot,
+        committed.snapshot.clone(),
+        &["app"],
+        &first_inputs.stream_generated,
+    );
+    let unchanged = committed
         .reader
-        .seal(&plan, &assignments, &generated, snapshot)
-        .expect("semantic reseal")
+        .seal(
+            &unchanged_plan,
+            &unchanged_inputs.assignments,
+            &unchanged_inputs.generated,
+            &unchanged_inputs.transition,
+        )
+        .unwrap();
+    assert_eq!(unchanged.decoded(), first.decoded());
+    assert_eq!(unchanged.schema_additions().entries().count(), 0);
+    assert!(
+        unchanged
+            .identity_dispositions()
+            .values()
+            .all(|disposition| disposition == &IdentityDisposition::Existing)
+    );
+
+    let keep = first_inputs.authored[0].clone();
+    let drop_id = first_inputs.authored[1].clone();
+    let flow = first_inputs.authored[2].clone();
+    let mut renamed_records = committed.snapshot.records().to_vec();
+    for metadata in &mut renamed_records {
+        if metadata.encoded_name == keep {
+            metadata.address.visible_name = "Renamed".into();
+        }
+    }
+    let renamed_snapshot = TextualMetadataSnapshot::new(renamed_records).unwrap();
+    let renamed_plan = committed
+        .reader
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Renamed.String Drop.Integer Flow.Stream.(String Integer)]}")
+        .unwrap();
+    let renamed_inputs = existing_inputs(
+        &renamed_plan,
+        &committed.snapshot,
+        renamed_snapshot,
+        &["app"],
+        &first_inputs.stream_generated,
+    );
+    let renamed = committed
+        .reader
+        .seal(
+            &renamed_plan,
+            &renamed_inputs.assignments,
+            &renamed_inputs.generated,
+            &renamed_inputs.transition,
+        )
+        .unwrap();
+    assert_eq!(
+        renamed_inputs.authored,
+        vec![keep.clone(), drop_id.clone(), flow]
+    );
+
+    let renamed_committed = restarted(&committed, &renamed, &["moved"]);
+    let mut moved_records = renamed.naming_transition().after().records().to_vec();
+    for metadata in &mut moved_records {
+        if metadata.address.module_path == ["app"]
+            && renamed
+                .identity_dispositions()
+                .contains_key(&metadata.encoded_name)
+        {
+            metadata.address.module_path = vec!["moved".into()];
+        }
+    }
+    moved_records.retain(|metadata| metadata.encoded_name != drop_id);
+    let moved_after = TextualMetadataSnapshot::new(moved_records).unwrap();
+    let moved_plan = renamed_committed
+        .reader
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Renamed.String Flow.Stream.(String Integer)]}")
+        .unwrap();
+    let moved_inputs = existing_inputs(
+        &moved_plan,
+        renamed.naming_transition().after(),
+        moved_after,
+        &["moved"],
+        &first_inputs.stream_generated,
+    );
+    let moved = renamed_committed
+        .reader
+        .seal(
+            &moved_plan,
+            &moved_inputs.assignments,
+            &moved_inputs.generated,
+            &moved_inputs.transition,
+        )
+        .unwrap();
+    assert!(moved.naming_transition().after().record(&drop_id).is_none());
+    assert!(
+        moved
+            .identity_dispositions()
+            .values()
+            .all(|disposition| disposition == &IdentityDisposition::Existing)
+    );
 }
 
 #[test]
-fn interface_stream_is_authored_nomos_and_prepares_exact_atomic_relations() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    let source = include_str!("fixtures/bootstrap/interface.ethos");
-    let (plan, inputs, transaction) = seal(&fixture, source);
-    assert_eq!(plan.declarations().len(), 5);
-    assert_eq!(
-        plan.declarations()
-            .iter()
-            .filter(|item| item.purpose() == DeclarationPurpose::StreamInitiation)
-            .count(),
-        1
-    );
-    assert_eq!(transaction.generated_streams.len(), 1);
-    let BootstrapBody::Interface(body) = &transaction.decoded.document.body else {
-        panic!("Interface")
-    };
-    let Declaration::Nomos(NomosDeclaration::StreamInitiation(authored)) = &body.types[2] else {
-        panic!("authored Stream Nomos")
-    };
-    let prepared = &transaction.generated_streams[0];
-    assert_eq!(prepared.output.name, authored.name);
-    assert_eq!(prepared.initiation.query, authored.query);
-    assert_eq!(
-        prepared.output.stream_of_event.arguments.as_slice(),
-        std::slice::from_ref(&authored.event)
-    );
-    assert_eq!(prepared.termination.stream_handle, authored.name);
-    assert_eq!(
-        prepared
-            .role_relations
-            .iter()
-            .map(|relation| relation.role)
-            .collect::<Vec<_>>(),
-        [
-            InterfaceRole::Input,
-            InterfaceRole::Output,
-            InterfaceRole::Input
-        ]
-    );
-    assert_eq!(
-        transaction.archive_status(),
-        BootstrapArchiveStatus::NotYetArchived
-    );
+fn exact_projection_addresses_are_unique_while_nested_siblings_reuse_spellings() {
+    let first = id(70);
+    let second = id(71);
+    assert!(matches!(
+        TextualMetadataSnapshot::new(vec![
+            record(&["dep"], None, "Same", first),
+            record(&["dep"], None, "Same", second),
+        ]),
+        Err(BootstrapReadError::DuplicateMetadataProjectionAddress {
+            module_path,
+            lexical_owner: None,
+            name,
+        }) if module_path == ["dep"] && name == "Same"
+    ));
 
-    let canonical = fixture
-        .reader
-        .write(&transaction)
-        .expect("canonical writer");
-    let resealed = reseal_with_same_ids(
+    let fixture = make_fixture(&["app"], vec![]);
+    let (_, _, transaction) = seal_new(
         &fixture,
-        &canonical,
-        &inputs.authored_ids,
-        &inputs.generated_ids,
-        &inputs.snapshot,
+        "Nexus.{1 0 0}\n[]\n{[First.{same.{Unit}} Second.{same.{Unit}}] [One.[Same] Two.[Same]]}",
     );
-    assert_eq!(resealed, transaction);
+    let snapshot = transaction.naming_transition().after();
+    let nested_same = snapshot
+        .records()
+        .iter()
+        .filter(|metadata| metadata.address.visible_name == "Same")
+        .collect::<Vec<_>>();
+    assert_eq!(nested_same.len(), 2);
+    assert_ne!(
+        nested_same[0].address.lexical_owner,
+        nested_same[1].address.lexical_owner
+    );
+    let nested_methods = snapshot
+        .records()
+        .iter()
+        .filter(|metadata| metadata.address.visible_name == "same")
+        .collect::<Vec<_>>();
+    assert_eq!(nested_methods.len(), 2);
+    assert_ne!(
+        nested_methods[0].address.lexical_owner,
+        nested_methods[1].address.lexical_owner
+    );
 }
 
 #[test]
-fn textual_ambiguity_is_refused_before_schema_class_can_forge_a_choice() {
-    let nominal = id(70);
-    let trait_id = id(71);
-    let extra = vec![
-        (
-            TextualMetadataRecord {
-                module_path: vec!["dep".into()],
-                visible_name: "Clash".into(),
-                encoded_name: nominal.clone(),
+fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
+    let left = id(70);
+    let right = id(71);
+    let fixture = make_fixture(
+        &["app"],
+        vec![
+            Extra {
+                metadata: record(&["left"], None, "Clash", left.clone()),
+                schema: IdentitySchema::new(left, [SchemaRole::Nominal { persistent: false }])
+                    .unwrap(),
+                canonical_bytes: vec![0x21],
             },
-            IdentitySchema::new(nominal, [SchemaRole::Nominal { persistent: false }]).unwrap(),
-        ),
-        (
-            TextualMetadataRecord {
-                module_path: vec!["dep".into()],
-                visible_name: "Clash".into(),
-                encoded_name: trait_id.clone(),
+            Extra {
+                metadata: record(&["right"], None, "Clash", right.clone()),
+                schema: IdentitySchema::new(right, [SchemaRole::Nominal { persistent: false }])
+                    .unwrap(),
+                canonical_bytes: vec![0x22],
             },
-            IdentitySchema::new(trait_id, [SchemaRole::Trait]).unwrap(),
-        ),
-    ];
-    let fixture = make_fixture(Labels::default(), extra);
-    let error = fixture
+        ],
+    );
+    let plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[dep.[Clash]]\n{[Clash] [] [] []}")
-        .expect_err("path/name ambiguity is not class-filtered");
+        .plan("Interface.{1 0 0}\n[left.[Clash] right.[Clash]]\n{[Clash] [] [] []}")
+        .unwrap();
+    let inputs = new_inputs(&plan, &fixture.snapshot);
     assert!(matches!(
-        error,
-        BootstrapReadError::AmbiguousReference { .. }
+        fixture.reader.seal(
+            &plan,
+            &inputs.assignments,
+            &inputs.generated,
+            &inputs.transition,
+        ),
+        Err(BootstrapReadError::AmbiguousReference { name, identities })
+            if name == "Clash" && identities == vec![id(70), id(71)]
+    ));
+
+    let kind_collision = id(72);
+    let fixture = make_fixture(
+        &["app"],
+        vec![Extra {
+            metadata: record(&["dep"], None, "Interface", kind_collision.clone()),
+            schema: IdentitySchema::new(
+                kind_collision,
+                [SchemaRole::Nominal { persistent: false }],
+            )
+            .unwrap(),
+            canonical_bytes: vec![0x23],
+        }],
+    );
+    seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[dep.[Interface]]\n{[Interface] [] [] []}",
+    );
+}
+
+#[test]
+fn shapes_and_nomos_heads_are_closed_prior_vocabulary() {
+    let imported_shape = id(70);
+    let imported_nomos = id(71);
+    let fixture = make_fixture(
+        &["app"],
+        vec![
+            Extra {
+                metadata: record(&["dep"], None, "ForeignShape", imported_shape.clone()),
+                schema: IdentitySchema::new(
+                    imported_shape.clone(),
+                    [SchemaRole::Shape { arity: 1 }],
+                )
+                .unwrap(),
+                canonical_bytes: vec![0x31],
+            },
+            Extra {
+                metadata: record(&["dep"], None, "ForeignNomos", imported_nomos.clone()),
+                schema: IdentitySchema::new(
+                    imported_nomos.clone(),
+                    [SchemaRole::Nomos(NomosSchema::StreamInitiation {
+                        arity: 2,
+                    })],
+                )
+                .unwrap(),
+                canonical_bytes: vec![0x32],
+            },
+        ],
+    );
+    assert!(matches!(
+        fixture.reader.plan(
+            "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String>]}"
+        ),
+        Err(BootstrapReadError::NonPriorShapeIdentity { identity }) if identity == imported_shape
+    ));
+    assert!(matches!(
+        fixture.reader.plan(
+            "Interface.{1 0 0}\n[dep.[ForeignNomos]]\n{[] [] [] [Bad.ForeignNomos.(String String)]}"
+        ),
+        Err(BootstrapReadError::NonPriorNomosIdentity { identity }) if identity == imported_nomos
     ));
 }
 
 #[test]
-fn schema_and_prior_catalogs_enforce_role_family_data_and_every_typed_prior() {
+fn schema_roles_use_an_explicit_allowlist_and_priors_have_exact_relationships() {
     assert!(matches!(
-        IdentitySchema::new(
-            id(40),
-            [
-                SchemaRole::Shape { arity: 1 },
-                SchemaRole::Shape { arity: 2 }
-            ]
-        ),
-        Err(BootstrapReadError::ConflictingSchemaRoles { .. })
+        CanonicalIdentityOrder::new([(id(80), vec![1]), (id(81), vec![1])]),
+        Err(BootstrapReadError::DuplicateCanonicalIdentityBytes { first, second })
+            if first == id(80) && second == id(81)
     ));
-    let fixture = make_fixture(Labels::default(), vec![]);
+    for roles in [
+        vec![SchemaRole::Nominal { persistent: false }, SchemaRole::Trait],
+        vec![SchemaRole::Shape { arity: 1 }, SchemaRole::Trait],
+        vec![
+            SchemaRole::Shape { arity: 1 },
+            SchemaRole::Shape { arity: 2 },
+        ],
+    ] {
+        assert!(matches!(
+            IdentitySchema::new(id(70), roles),
+            Err(BootstrapReadError::IncompatibleSchemaRoles { identity, .. }) if identity == id(70)
+        ));
+    }
+    IdentitySchema::new(
+        id(70),
+        [
+            SchemaRole::Shape { arity: 1 },
+            SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
+        ],
+    )
+    .unwrap();
+
+    let fixture = make_fixture(&["app"], vec![]);
     let mut wrong = prior_identities();
-    wrong.string_type = id(11);
+    wrong.stream_nomos = id(14);
     assert!(matches!(
-        BootstrapPriorVocabulary::new(wrong, &fixture.base_schemas, &fixture.base_snapshot),
+        BootstrapPriorVocabulary::new(wrong, &fixture.schemas, &fixture.snapshot),
         Err(BootstrapReadError::InvalidPriorRole {
-            position: "string_type",
+            position: "stream_nomos",
+            ..
+        }) | Err(BootstrapReadError::InvalidPriorIdentityRelationship(_))
+    ));
+    let mut duplicate = prior_identities();
+    duplicate.option_shape = duplicate.vector_shape.clone();
+    assert!(matches!(
+        BootstrapPriorVocabulary::new(duplicate, &fixture.schemas, &fixture.snapshot),
+        Err(BootstrapReadError::DuplicatePriorIdentity {
+            first: "vector_shape",
+            second: "option_shape",
             ..
         })
     ));
+}
+
+#[test]
+fn authority_bytes_canonicalize_every_unordered_named_collection() {
+    let alpha = id(70);
+    let beta = id(71);
+    let fixture = make_fixture(
+        &["app"],
+        vec![
+            Extra {
+                metadata: record(&["traits"], None, "Alpha", alpha.clone()),
+                schema: IdentitySchema::new(alpha.clone(), [SchemaRole::Trait]).unwrap(),
+                canonical_bytes: vec![0x42],
+            },
+            Extra {
+                metadata: record(&["traits"], None, "Beta", beta.clone()),
+                schema: IdentitySchema::new(beta.clone(), [SchemaRole::Trait]).unwrap(),
+                canonical_bytes: vec![0x41],
+            },
+        ],
+    );
+    let first = "Nexus.{1 0 0}\n[traits.[Alpha Beta]]\n{[Behavior.{z.{«Alpha Beta»} a.{Unit}}] [Second.[Y X] First.String]}";
+    let second = "Nexus.{1 0 0}\n[traits.[Beta Alpha]]\n{[Behavior.{a.{Unit} z.{«Beta Alpha»}}] [First.String Second.[X Y]]}";
+    let plan_a = fixture.reader.plan(first).unwrap();
+    let plan_b = fixture.reader.plan(second).unwrap();
+
+    let stable = [
+        ("Behavior", id(100), vec![0x70]),
+        ("z", id(101), vec![0x74]),
+        ("a", id(102), vec![0x73]),
+        ("Second", id(103), vec![0x72]),
+        ("Y", id(104), vec![0x76]),
+        ("X", id(105), vec![0x75]),
+        ("First", id(106), vec![0x71]),
+    ];
+    let make = |plan: &BootstrapReadPlan| {
+        let mut owner_by_occurrence = BTreeMap::new();
+        let mut assignments = Vec::new();
+        let mut records = fixture.snapshot.records().to_vec();
+        for declaration in plan.declarations() {
+            let (_, identity, bytes) = stable
+                .iter()
+                .find(|(name, _, _)| *name == declaration.spelling())
+                .unwrap();
+            owner_by_occurrence.insert(declaration.occurrence(), identity.clone());
+            assignments.push(NamingAssignment {
+                occurrence: declaration.occurrence(),
+                encoded_name: identity.clone(),
+                disposition: IdentityDisposition::New {
+                    canonical_bytes: bytes.clone(),
+                },
+            });
+        }
+        for declaration in plan.declarations() {
+            let identity = &owner_by_occurrence[&declaration.occurrence()];
+            let owner = match declaration.scope() {
+                PlannedScope::Module => None,
+                PlannedScope::Enum(owner) | PlannedScope::Trait(owner) => {
+                    Some(owner_by_occurrence[&owner].clone())
+                }
+            };
+            records.push(record(
+                &["app"],
+                owner,
+                declaration.spelling(),
+                identity.clone(),
+            ));
+        }
+        (
+            NamingAssignments::new(assignments).unwrap(),
+            TextualMetadataTransition::new(
+                fixture.snapshot.clone(),
+                TextualMetadataSnapshot::new(records).unwrap(),
+            ),
+        )
+    };
+    let (assignments_a, transition_a) = make(&plan_a);
+    let (assignments_b, transition_b) = make(&plan_b);
+    assert_eq!(transition_a.after(), transition_b.after());
+    let empty = GeneratedStreamAssignments::new(vec![]).unwrap();
+    let transaction_a = fixture
+        .reader
+        .seal(&plan_a, &assignments_a, &empty, &transition_a)
+        .unwrap();
+    let transaction_b = fixture
+        .reader
+        .seal(&plan_b, &assignments_b, &empty, &transition_b)
+        .unwrap();
+    assert_eq!(transaction_a, transaction_b);
+    let BootstrapBody::Nexus(body) = &transaction_a.decoded().document.body else {
+        panic!("Nexus")
+    };
     assert_eq!(
-        fixture.reader.archive_status(),
-        BootstrapArchiveStatus::NotYetArchived
+        body.types[0].clone(),
+        Declaration::Type(TypeDeclaration {
+            name: id(106),
+            body: TypeBody::Newtype(TypeExpression::Reference(id(7))),
+        })
+    );
+    assert_eq!(body.traits[0].methods[0].name, id(102));
+    let Declaration::Type(second) = &body.types[1] else {
+        panic!("Second")
+    };
+    let TypeBody::Enum(variants) = &second.body else {
+        panic!("enum")
+    };
+    assert_eq!(
+        variants
+            .iter()
+            .map(|item| item.name.clone())
+            .collect::<Vec<_>>(),
+        vec![id(105), id(104)]
     );
 }
 
 #[test]
-fn all_prior_and_root_spellings_are_metadata_driven() {
-    let labels = Labels {
-        interface: "Contract",
-        nexus: "Behavior",
-        sema: "Storage",
-        string: "Text",
-        integer: "Whole",
-        boolean: "Truth",
-        unit: "Void",
-        vector: "Sequence",
-        option: "Maybe",
-        map: "Dictionary",
-        result: "Outcome",
-        stream: "Flow",
-        stream_identity: "FlowIdentity",
-    };
-    let fixture = make_fixture(labels, vec![]);
-    let source =
-        "Contract.{1 0 0}\n[]\n{[] [] [] [Thing.Text Observer.Flow.(Thing Sequence<Thing>)]}";
-    let (_, _, transaction) = seal(&fixture, source);
-    let canonical = fixture.reader.write(&transaction).expect("renamed writer");
-    assert!(canonical.starts_with("Contract.{1 0 0}"));
-    assert!(canonical.contains("Thing.Text"));
-    assert!(canonical.contains("Observer.Flow.(Thing Sequence<Thing>)"));
-    assert!(!canonical.contains("Interface"));
-    assert!(!canonical.contains("String"));
-    assert!(!canonical.contains("Stream"));
+fn role_entry_keeps_plain_types_and_references_but_nomos_only_support_types() {
+    let fixture = make_fixture(&["app"], vec![]);
+    seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[]\n{[Inline.String] [Inline] [] [Flow.Stream.(String Integer)]}",
+    );
+    assert!(matches!(
+        fixture
+            .reader
+            .plan("Interface.{1 0 0}\n[]\n{[Flow.Stream.(String Integer)] [] [] []}"),
+        Err(BootstrapReadError::StreamOutsideInterfaceTypes)
+    ));
 }
 
 #[test]
-fn assignments_must_be_universal_fresh_and_collision_free_across_both_channels() {
-    let fixture = make_fixture(Labels::default(), vec![]);
+fn exact_plan_errors_cover_method_stream_shape_table_and_versions() {
+    let fixture = make_fixture(&["app"], vec![]);
+    assert!(matches!(
+        fixture
+            .reader
+            .plan("Nexus.{1 0 0}\n[]\n{[Bad.{call.{}}] []}"),
+        Err(BootstrapReadError::UnexpectedStructure {
+            expected: "mandatory method return",
+            ..
+        })
+    ));
+    assert!(matches!(
+        fixture.reader.plan(
+            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Stream.(String)]}"
+        ),
+        Err(BootstrapReadError::NomosArity {
+            identity,
+            expected: 2,
+            found: 1,
+        }) if identity == id(15)
+    ));
+    assert!(matches!(
+        fixture.reader.plan(
+            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Map<String>]}"
+        ),
+        Err(BootstrapReadError::ShapeArity {
+            identity,
+            expected: 2,
+            found: 1,
+        }) if identity == id(13)
+    ));
+    assert!(matches!(
+        fixture.reader.plan(
+            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Stream<String Integer>]}"
+        ),
+        Err(BootstrapReadError::ShapeArity {
+            identity,
+            expected: 1,
+            found: 2,
+        }) if identity == id(15)
+    ));
+    assert!(matches!(
+        fixture
+            .reader
+            .plan("Nexus.{1 0 0}\n[]\n{[] [Bad.Stream.(String Integer)]}"),
+        Err(BootstrapReadError::StreamOutsideInterfaceTypes)
+    ));
+    assert!(matches!(
+        fixture.reader.plan("Sema.{1 0 0}\n[]\n{[] [bad.{String}]}"),
+        Err(BootstrapReadError::UnexpectedStructure {
+            expected: "exactly RecordType then KeyType",
+            ..
+        })
+    ));
+    assert!(matches!(
+        fixture.reader.plan("Interface.{2 0 0}\n[]\n{[] [] [] []}"),
+        Err(BootstrapReadError::UnsupportedVersion {
+            found: EthosVersion {
+                major: 2,
+                minor: 0,
+                patch: 0
+            },
+            ..
+        })
+    ));
+    assert!(matches!(
+        fixture
+            .reader
+            .plan("Interface.{01 0 0}\n[]\n{[] [] [] []}"),
+        Err(BootstrapReadError::InvalidVersionComponent(component)) if component == "01"
+    ));
+    assert!(matches!(
+        fixture.reader.plan("Interface.{1 0}\n[]\n{[] [] [] []}"),
+        Err(BootstrapReadError::UnexpectedStructure {
+            expected: "exactly three version components",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn table_leaves_are_exactly_persistent_nominals() {
+    let shape = id(70);
+    let fixture = make_fixture(
+        &["app"],
+        vec![Extra {
+            metadata: record(&["dep"], None, "ShapeOnly", shape.clone()),
+            schema: IdentitySchema::new(shape, [SchemaRole::Shape { arity: 1 }]).unwrap(),
+            canonical_bytes: vec![0x33],
+        }],
+    );
+    let plan = fixture
+        .reader
+        .plan("Sema.{1 0 0}\n[dep.[ShapeOnly]]\n{[Record.String] [bad.{Record ShapeOnly}]}")
+        .unwrap();
+    let inputs = new_inputs(&plan, &fixture.snapshot);
+    assert!(matches!(
+        fixture.reader.seal(
+            &plan,
+            &inputs.assignments,
+            &inputs.generated,
+            &inputs.transition,
+        ),
+        Err(BootstrapReadError::UnresolvedReference { name }) if name == "ShapeOnly"
+    ));
+}
+
+#[test]
+fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
+    let fixture = make_fixture(&["app"], vec![]);
     let plan = fixture
         .reader
         .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Thing.String]}")
         .unwrap();
-    let assignment = |identity| {
+    let inputs = new_inputs(&plan, &fixture.snapshot);
+    let empty = NamingAssignments::new(vec![]).unwrap();
+    assert!(matches!(
+        fixture
+            .reader
+            .seal(&plan, &empty, &inputs.generated, &inputs.transition,),
+        Err(BootstrapReadError::MissingAssignment(0))
+    ));
+    let duplicate = NamingAssignments::new(vec![
+        NamingAssignment {
+            occurrence: plan.declarations()[0].occurrence(),
+            encoded_name: id(100),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![1],
+            },
+        },
+        NamingAssignment {
+            occurrence: plan.declarations()[0].occurrence(),
+            encoded_name: id(101),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![2],
+            },
+        },
+    ]);
+    assert!(matches!(
+        duplicate,
+        Err(BootstrapReadError::DuplicateAssignment(0))
+    ));
+
+    let foreign_plan = fixture
+        .reader
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Foreign.String]}")
+        .unwrap();
+    let extra_assignment = NamingAssignments::new(vec![
+        NamingAssignment {
+            occurrence: plan.declarations()[0].occurrence(),
+            encoded_name: id(100),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x80, 0],
+            },
+        },
+        NamingAssignment {
+            occurrence: foreign_plan.declarations()[0].occurrence(),
+            encoded_name: id(101),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x80, 1],
+            },
+        },
+    ])
+    .unwrap();
+    assert!(matches!(
+        fixture.reader.seal(
+            &plan,
+            &extra_assignment,
+            &inputs.generated,
+            &inputs.transition,
+        ),
+        Err(BootstrapReadError::ExtraAssignment)
+    ));
+
+    let assignment = |identity, disposition| {
         NamingAssignments::new(vec![NamingAssignment {
             occurrence: plan.declarations()[0].occurrence(),
             encoded_name: identity,
+            disposition,
         }])
         .unwrap()
     };
-    let empty_generated = GeneratedStreamAssignments::new(vec![]).unwrap();
-    let mut records = fixture.base_snapshot.records().to_vec();
-    records.push(TextualMetadataRecord {
-        module_path: vec!["app".into()],
-        visible_name: "Thing".into(),
-        encoded_name: rust_id(40),
-    });
-    let rust_snapshot = TextualMetadataSnapshot::new(records).unwrap();
     assert!(matches!(
         fixture.reader.seal(
             &plan,
-            &assignment(rust_id(40)),
-            &empty_generated,
-            &rust_snapshot
+            &assignment(
+                id(100),
+                IdentityDisposition::Existing,
+            ),
+            &inputs.generated,
+            &inputs.transition,
         ),
-        Err(BootstrapReadError::NonUniversalAssignment { .. })
+        Err(BootstrapReadError::ExistingAssignmentMissing { identity }) if identity == id(100)
     ));
-
     assert!(matches!(
         fixture.reader.seal(
             &plan,
-            &assignment(id(7)),
-            &empty_generated,
-            &fixture.base_snapshot
+            &assignment(
+                id(7),
+                IdentityDisposition::New { canonical_bytes: vec![0x99] },
+            ),
+            &inputs.generated,
+            &inputs.transition,
         ),
-        Err(BootstrapReadError::AssignedIdentityCollision { .. })
-            | Err(BootstrapReadError::MetadataProjectionMismatch { .. })
+        Err(BootstrapReadError::NewAssignmentAlreadyExists { identity }) if identity == id(7)
+    ));
+    let prior_existing_records = inputs.transition.after().records().to_vec();
+    let prior_existing_transition = TextualMetadataTransition::new(
+        fixture.snapshot.clone(),
+        TextualMetadataSnapshot::new(prior_existing_records).unwrap(),
+    );
+    assert!(matches!(
+        fixture.reader.seal(
+            &plan,
+            &assignment(id(7), IdentityDisposition::Existing),
+            &inputs.generated,
+            &prior_existing_transition,
+        ),
+        Err(BootstrapReadError::ExistingAssignmentNotReusable {
+            identity,
+            required: SchemaRole::Nominal { persistent: false },
+        }) if identity == id(7)
+    ));
+    let mut rust_records = fixture.snapshot.records().to_vec();
+    rust_records.push(record(&["app"], None, "Thing", rust_id(40)));
+    let rust_transition = TextualMetadataTransition::new(
+        fixture.snapshot.clone(),
+        TextualMetadataSnapshot::new(rust_records).unwrap(),
+    );
+    assert!(matches!(
+        fixture.reader.seal(
+            &plan,
+            &assignment(
+                rust_id(40),
+                IdentityDisposition::New {
+                    canonical_bytes: vec![0x98]
+                },
+            ),
+            &inputs.generated,
+            &rust_transition,
+        ),
+        Err(BootstrapReadError::NonUniversalAssignment { occurrence: 0, .. })
     ));
 
     let stream_plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Observer.Stream.(String String)]}")
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Flow.Stream.(String Integer)]}")
         .unwrap();
-    let mut stream_inputs = inputs_for(&stream_plan, &fixture.base_snapshot);
+    let stream_inputs = new_inputs(&stream_plan, &fixture.snapshot);
+    assert!(matches!(
+        fixture.reader.seal(
+            &stream_plan,
+            &stream_inputs.assignments,
+            &GeneratedStreamAssignments::new(vec![]).unwrap(),
+            &stream_inputs.transition,
+        ),
+        Err(BootstrapReadError::MissingGeneratedStreamAssignment(0))
+    ));
     let source = stream_plan.declarations()[0].occurrence();
-    stream_inputs.generated = GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
+    let (initiation, termination) = stream_inputs.stream_generated.values().next().unwrap();
+    let generated_assignment = GeneratedStreamAssignment {
         source,
-        initiation: stream_inputs.authored_ids[0].clone(),
-        termination: id(501),
+        initiation: AssignedIdentity {
+            encoded_name: initiation.clone(),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x90, 0xf4],
+            },
+        },
+        termination: AssignedIdentity {
+            encoded_name: termination.clone(),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x90, 0xf5],
+            },
+        },
+    };
+    assert!(matches!(
+        GeneratedStreamAssignments::new(vec![generated_assignment.clone(), generated_assignment,]),
+        Err(BootstrapReadError::DuplicateGeneratedStreamAssignment(0))
+    ));
+    let non_universal_generated =
+        GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
+            source,
+            initiation: AssignedIdentity {
+                encoded_name: rust_id(500),
+                disposition: IdentityDisposition::New {
+                    canonical_bytes: vec![0xa0],
+                },
+            },
+            termination: AssignedIdentity {
+                encoded_name: termination.clone(),
+                disposition: IdentityDisposition::New {
+                    canonical_bytes: vec![0x90, 0xf5],
+                },
+            },
+        }])
+        .unwrap();
+    assert!(matches!(
+        fixture.reader.seal(
+            &stream_plan,
+            &stream_inputs.assignments,
+            &non_universal_generated,
+            &stream_inputs.transition,
+        ),
+        Err(BootstrapReadError::NonUniversalAssignment {
+            occurrence: 0,
+            identity,
+        }) if identity == rust_id(500)
+    ));
+
+    let other_plan = fixture
+        .reader
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Other.String]}")
+        .unwrap();
+    let other_inputs = new_inputs(&other_plan, &fixture.snapshot);
+    let extra_generated = GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
+        source: other_plan.declarations()[0].occurrence(),
+        initiation: AssignedIdentity {
+            encoded_name: id(700),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0xa1],
+            },
+        },
+        termination: AssignedIdentity {
+            encoded_name: id(701),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0xa2],
+            },
+        },
+    }])
+    .unwrap();
+    assert!(matches!(
+        fixture.reader.seal(
+            &other_plan,
+            &other_inputs.assignments,
+            &extra_generated,
+            &other_inputs.transition,
+        ),
+        Err(BootstrapReadError::ExtraGeneratedStreamAssignment)
+    ));
+
+    let collision = GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
+        source,
+        initiation: AssignedIdentity {
+            encoded_name: stream_inputs.authored[0].clone(),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0xa3],
+            },
+        },
+        termination: AssignedIdentity {
+            encoded_name: termination.clone(),
+            disposition: IdentityDisposition::New {
+                canonical_bytes: vec![0x90, 0xf5],
+            },
+        },
     }])
     .unwrap();
     assert!(matches!(
         fixture.reader.seal(
             &stream_plan,
             &stream_inputs.assignments,
-            &stream_inputs.generated,
-            &stream_inputs.snapshot
+            &collision,
+            &stream_inputs.transition,
         ),
-        Err(BootstrapReadError::AssignedIdentityCollision { .. })
+        Err(BootstrapReadError::AssignedIdentityCollision { identity })
+            if identity == stream_inputs.authored[0]
     ));
+}
 
-    let external = id(70);
-    let fixture_with_import = make_fixture(
-        Labels::default(),
-        vec![(
-            TextualMetadataRecord {
-                module_path: vec!["dep".into()],
-                visible_name: "Existing".into(),
-                encoded_name: external.clone(),
-            },
-            IdentitySchema::new(
-                external.clone(),
-                [SchemaRole::Nominal { persistent: false }],
-            )
-            .unwrap(),
-        )],
-    );
-    let collision_plan = fixture_with_import
+#[test]
+fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
+    let fixture = make_fixture(&["app"], vec![]);
+    let plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[dep.[Existing]]\n{[] [] [] [Thing.Existing]}")
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Thing.String]}")
         .unwrap();
-    let collision_assignment = NamingAssignments::new(vec![NamingAssignment {
-        occurrence: collision_plan.declarations()[0].occurrence(),
-        encoded_name: external,
-    }])
-    .unwrap();
-    assert!(matches!(
-        fixture_with_import.reader.seal(
-            &collision_plan,
-            &collision_assignment,
-            &GeneratedStreamAssignments::new(vec![]).unwrap(),
-            &fixture_with_import.base_snapshot,
-        ),
-        Err(BootstrapReadError::AssignedIdentityCollision { .. })
-    ));
-}
-
-#[test]
-fn scopes_allow_sibling_reuse_but_refuse_duplicates_in_the_exact_scope() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    let valid =
-        "Nexus.{1 0 0}\n[]\n{[First.{same.{Unit}} Second.{same.{Unit}}] [One.[Same] Two.[Same]]}";
-    fixture.reader.plan(valid).expect("sibling scope reuse");
-    for source in [
-        "Interface.{1 0 0}\n[]\n{[Thing.String] [] [] [Thing.String]}",
-        "Nexus.{1 0 0}\n[]\n{[Trait.{same.{Unit} same.{Unit}}] []}",
-        "Interface.{1 0 0}\n[]\n{[] [] [] [One.[Same Same]]}",
-    ] {
-        assert!(matches!(
-            fixture.reader.plan(source),
-            Err(BootstrapReadError::DuplicateDeclaration { .. })
-        ));
-    }
-}
-
-#[test]
-fn trait_vectors_normalize_by_explicit_encoded_bytes_and_named_binders_survive_roundtrip() {
-    let a = id(80);
-    let b = id(79);
-    let extra = vec![
-        (
-            TextualMetadataRecord {
-                module_path: vec!["traits".into()],
-                visible_name: "Alpha".into(),
-                encoded_name: a.clone(),
-            },
-            IdentitySchema::new(a.clone(), [SchemaRole::Trait]).unwrap(),
-        ),
-        (
-            TextualMetadataRecord {
-                module_path: vec!["traits".into()],
-                visible_name: "Beta".into(),
-                encoded_name: b.clone(),
-            },
-            IdentitySchema::new(b.clone(), [SchemaRole::Trait]).unwrap(),
-        ),
-    ];
-    let fixture = make_fixture(Labels::default(), extra);
-    let source = "Nexus.{1 0 0}\n[traits.[Alpha Beta]]\n{[] [Pair.{«Left.Alpha Beta» «Right.Beta Alpha» «Alpha Beta» «Beta Alpha»}]}";
-    let (_, inputs, transaction) = seal(&fixture, source);
-    let BootstrapBody::Nexus(body) = &transaction.decoded.document.body else {
-        panic!("Nexus")
-    };
-    let Declaration::Type(pair) = &body.types[0] else {
-        panic!("Pair")
-    };
-    let TypeBody::Struct(fields) = &pair.body else {
-        panic!("Pair struct")
-    };
-    let requirements = fields
-        .iter()
-        .map(|field| match field {
-            TypeExpression::TraitRequirement(requirement) => requirement,
-            _ => panic!("requirement"),
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(requirements[0].required_traits(), [b.clone(), a.clone()]);
-    assert_ne!(
-        requirements[0].binder().parameter(),
-        requirements[1].binder().parameter()
-    );
-    assert_eq!(
-        requirements[2].binder().parameter(),
-        requirements[3].binder().parameter()
-    );
-    let canonical = fixture.reader.write(&transaction).unwrap();
-    assert!(canonical.contains("«Left.Beta Alpha»"));
-    assert!(canonical.contains("«Right.Beta Alpha»"));
-    let resealed = reseal_with_same_ids(
-        &fixture,
-        &canonical,
-        &inputs.authored_ids,
-        &inputs.generated_ids,
-        &inputs.snapshot,
-    );
-    assert_eq!(resealed, transaction);
-
-    assert!(matches!(
-        fixture
-            .reader
-            .plan("Nexus.{1 0 0}\n[traits.[Alpha]]\n{[] [Bad.{«Alpha Alpha»}]}"),
-        Err(BootstrapReadError::DuplicateTraitProjection(_))
-    ));
-}
-
-#[test]
-fn interface_reference_membership_is_root_owned_and_one_type_can_have_multiple_roles() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    let source = "Interface.{1 0 0}\n[]\n{[Shared] [Shared] [] [Shared.String]}";
-    let (_, _, transaction) = seal(&fixture, source);
-    let BootstrapBody::Interface(body) = &transaction.decoded.document.body else {
-        panic!("Interface")
-    };
-    assert_eq!(body.memberships.len(), 2);
-    assert_eq!(body.memberships[0].target, body.memberships[1].target);
-    assert_eq!(body.memberships[0].role, InterfaceRole::Input);
-    assert_eq!(body.memberships[1].role, InterfaceRole::Output);
-}
-
-#[test]
-fn nexus_requires_one_final_return_and_sema_requires_persistent_nominal_leaves() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    assert!(
-        fixture
-            .reader
-            .plan("Nexus.{1 0 0}\n[]\n{[Broken.{call.{}}] []}")
-            .is_err()
-    );
-    seal(
-        &fixture,
-        "Nexus.{1 0 0}\n[]\n{[Marker.{} Valid.{call.{Unit}}] []}",
-    );
-
-    let shape = id(70);
-    let external = id(71);
-    let fixture = make_fixture(
-        Labels::default(),
-        vec![
-            (
-                TextualMetadataRecord {
-                    module_path: vec!["dep".into()],
-                    visible_name: "ShapeOnly".into(),
-                    encoded_name: shape.clone(),
-                },
-                IdentitySchema::new(shape, [SchemaRole::Shape { arity: 1 }]).unwrap(),
-            ),
-            (
-                TextualMetadataRecord {
-                    module_path: vec!["dep".into()],
-                    visible_name: "ExternalRecord".into(),
-                    encoded_name: external.clone(),
-                },
-                IdentitySchema::new(external, [SchemaRole::Nominal { persistent: true }]).unwrap(),
-            ),
-        ],
-    );
-    let source = "Sema.{1 0 0}\n[dep.[ShapeOnly ExternalRecord]]\n{[Key.Integer] [bad.{ExternalRecord ShapeOnly}]}";
-    let plan = fixture.reader.plan(source).expect("table structure plans");
-    let inputs = inputs_for(&plan, &fixture.base_snapshot);
+    let inputs = new_inputs(&plan, &fixture.snapshot);
+    let foreign_before = TextualMetadataSnapshot::new(vec![]).unwrap();
+    let wrong_transition =
+        TextualMetadataTransition::new(foreign_before, inputs.transition.after().clone());
     assert!(matches!(
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
             &inputs.generated,
-            &inputs.snapshot
+            &wrong_transition,
         ),
-        Err(BootstrapReadError::WrongSchemaRole { .. })
+        Err(BootstrapReadError::MetadataTransitionBeforeMismatch)
     ));
-    assert!(matches!(
-        fixture
-            .reader
-            .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Map<String>]}"),
-        Err(BootstrapReadError::ShapeArity {
-            expected: 2,
-            found: 1,
-            ..
-        })
-    ));
-    assert!(matches!(
-        fixture
-            .reader
-            .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Bad.StreamIdentity<String String>]}"),
-        Err(BootstrapReadError::ShapeArity {
-            expected: 1,
-            found: 2,
-            ..
-        })
-    ));
+    let transaction = fixture
+        .reader
+        .seal(
+            &plan,
+            &inputs.assignments,
+            &inputs.generated,
+            &inputs.transition,
+        )
+        .unwrap();
+    let written = fixture.reader.write(&transaction).unwrap();
+    assert!(written.contains("Thing.String"));
 }
 
 #[test]
-fn stream_wrong_forms_and_generated_assignment_cardinality_are_refused() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    for source in [
-        "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Stream.(String)]}",
-        "Interface.{1 0 0}\n[]\n{[Bad.Stream.(String String)] [] [] []}",
-        "Nexus.{1 0 0}\n[]\n{[] [Bad.Stream.(String String)]}",
-    ] {
-        assert!(fixture.reader.plan(source).is_err(), "{source}");
-    }
-    let source = "Interface.{1 0 0}\n[]\n{[] [] [] [Good.Stream.(String String)]}";
-    let plan = fixture.reader.plan(source).unwrap();
-    let inputs = inputs_for(&plan, &fixture.base_snapshot);
+fn seal_refuses_an_after_snapshot_that_makes_an_imported_reference_invisible() {
+    let external = id(70);
+    let fixture = make_fixture(
+        &["app"],
+        vec![Extra {
+            metadata: record(&["dep"], None, "External", external.clone()),
+            schema: IdentitySchema::new(external, [SchemaRole::Nominal { persistent: false }])
+                .unwrap(),
+            canonical_bytes: vec![0x35],
+        }],
+    );
+    let plan = fixture
+        .reader
+        .plan("Interface.{1 0 0}\n[dep.[External]]\n{[] [] [] [Thing.External]}")
+        .unwrap();
+    let mut inputs = new_inputs(&plan, &fixture.snapshot);
+    let after = TextualMetadataSnapshot::new(
+        inputs
+            .transition
+            .after()
+            .records()
+            .iter()
+            .filter(|metadata| metadata.address.visible_name != "External")
+            .cloned()
+            .collect(),
+    )
+    .unwrap();
+    inputs.transition = TextualMetadataTransition::new(fixture.snapshot.clone(), after);
     assert!(matches!(
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &GeneratedStreamAssignments::new(vec![]).unwrap(),
-            &inputs.snapshot
+            &inputs.generated,
+            &inputs.transition,
         ),
-        Err(BootstrapReadError::MissingGeneratedStreamAssignment(0))
-    ));
-    let other = fixture
-        .reader
-        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Other.Stream.(String String)]}")
-        .unwrap();
-    let extra = GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
-        source: other.declarations()[0].occurrence(),
-        initiation: id(600),
-        termination: id(601),
-    }])
-    .unwrap();
-    assert!(matches!(
-        fixture
-            .reader
-            .seal(&plan, &inputs.assignments, &extra, &inputs.snapshot),
-        Err(BootstrapReadError::MissingGeneratedStreamAssignment(0))
-            | Err(BootstrapReadError::ExtraGeneratedStreamAssignment)
+        Err(BootstrapReadError::MissingTextualLookup { module_path, name })
+            if module_path == ["dep"] && name == "External"
     ));
 }
 
 #[test]
-fn writer_revalidates_header_memberships_stream_anatomy_and_named_binders() {
-    let fixture = make_fixture(Labels::default(), vec![]);
-    let (_, _, transaction) = seal(&fixture, include_str!("fixtures/bootstrap/interface.ethos"));
+fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
+    let hidden = id(70);
+    let fixture = make_fixture(
+        &["app"],
+        vec![Extra {
+            metadata: record(&["hidden"], None, "Hidden", hidden.clone()),
+            schema: IdentitySchema::new(
+                hidden.clone(),
+                [SchemaRole::Nominal { persistent: false }],
+            )
+            .unwrap(),
+            canonical_bytes: vec![0x36],
+        }],
+    );
+    let (_, _, transaction) = seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[]\n{[Shared] [] [] [Shared.String Flow.Stream.(String Integer)]}",
+    );
 
-    let mut wrong_header = transaction.clone();
+    let mut wrong_header = transaction.to_draft();
     wrong_header.decoded.document.header.kind = EthosKind::Nexus;
-    assert!(fixture.reader.write(&wrong_header).is_err());
+    assert!(matches!(
+        fixture.reader.validate_draft(wrong_header),
+        Err(BootstrapReadError::HeaderBodyMismatch {
+            header: EthosKind::Nexus,
+            body: EthosKind::Interface,
+        })
+    ));
 
-    let mut wrong_memberships = transaction.clone();
-    let BootstrapBody::Interface(body) = &mut wrong_memberships.decoded.document.body else {
-        unreachable!()
+    let mut wrong_membership = transaction.to_draft();
+    let BootstrapBody::Interface(body) = &mut wrong_membership.decoded.document.body else {
+        panic!("Interface")
     };
-    body.memberships.pop();
-    assert!(fixture.reader.write(&wrong_memberships).is_err());
+    body.memberships.clear();
+    assert!(matches!(
+        fixture.reader.validate_draft(wrong_membership),
+        Err(BootstrapReadError::InvalidPreparedModel(
+            "Interface memberships do not exactly equal role entries"
+        ))
+    ));
 
-    let mut wrong_stream = transaction.clone();
+    let mut wrong_stream = transaction.to_draft();
     wrong_stream.generated_streams[0]
         .output
         .stream_of_event
         .arguments
         .clear();
-    assert!(fixture.reader.write(&wrong_stream).is_err());
+    assert!(matches!(
+        fixture.reader.validate_draft(wrong_stream),
+        Err(BootstrapReadError::InvalidPreparedModel(
+            "generated Stream declaration anatomy"
+        ))
+    ));
 
-    let traits = id(70);
-    let fixture = make_fixture(
-        Labels::default(),
-        vec![(
-            TextualMetadataRecord {
-                module_path: vec!["dep".into()],
-                visible_name: "Quality".into(),
-                encoded_name: traits.clone(),
-            },
-            IdentitySchema::new(traits, [SchemaRole::Trait]).unwrap(),
-        )],
-    );
-    let (_, inputs, transaction) = seal(
-        &fixture,
-        "Nexus.{1 0 0}\n[dep.[Quality]]\n{[] [Thing.{«Named.Quality»}]}",
-    );
-    let canonical = fixture.reader.write(&transaction).unwrap();
-    assert!(canonical.contains("«Named.Quality»"));
-    let resealed = reseal_with_same_ids(
-        &fixture,
-        &canonical,
-        &inputs.authored_ids,
-        &inputs.generated_ids,
-        &inputs.snapshot,
-    );
-    assert_eq!(resealed, transaction);
+    let mut invisible = transaction.to_draft();
+    let BootstrapBody::Interface(body) = &mut invisible.decoded.document.body else {
+        panic!("Interface")
+    };
+    let Some(Declaration::Type(shared)) = body.types.iter_mut().find(|declaration| {
+        matches!(declaration, Declaration::Type(declaration) if matches!(declaration.body, TypeBody::Newtype(_)))
+    }) else {
+        panic!("Shared")
+    };
+    shared.body = TypeBody::Newtype(TypeExpression::Reference(hidden.clone()));
+    assert!(matches!(
+        fixture.reader.validate_draft(invisible),
+        Err(BootstrapReadError::InvisibleOrNonRoundTrippingReference {
+            identity,
+            name,
+        }) if identity == hidden && name == "Hidden"
+    ));
 }
 
 #[test]
-fn version_policy_is_explicit_and_reports_unsupported_versions() {
-    let fixture = make_fixture(Labels::default(), vec![]);
+fn root_registry_is_the_observable_section_order() {
+    let fixture = make_fixture(&["app"], vec![]);
+    assert_eq!(
+        fixture.reader.section_order(EthosKind::Interface),
+        [
+            BootstrapSectionSchema::Role(InterfaceRole::Input),
+            BootstrapSectionSchema::Role(InterfaceRole::Output),
+            BootstrapSectionSchema::Role(InterfaceRole::Refusal),
+            BootstrapSectionSchema::Declarations { admit_nomos: true },
+        ]
+    );
+    assert_eq!(
+        fixture.reader.section_order(EthosKind::Nexus),
+        [
+            BootstrapSectionSchema::Traits,
+            BootstrapSectionSchema::Declarations { admit_nomos: false },
+        ]
+    );
+    assert_eq!(
+        fixture.reader.section_order(EthosKind::Sema),
+        [
+            BootstrapSectionSchema::PersistentDeclarations,
+            BootstrapSectionSchema::Tables,
+        ]
+    );
+}
+
+#[test]
+fn runtime_stream_values_enforce_universal_and_same_typed_handle() {
+    let handle = RuntimeStreamIdentity::<String>::new(id(70)).unwrap();
+    let stream = RuntimeStream::new(handle.clone(), vec!["event".to_owned()]);
+    let values =
+        RuntimeStreamValues::new(RuntimeStreamInitiation::new(42u64), stream, handle).unwrap();
+    assert_eq!(values.initiation().query(), &42);
+    assert_eq!(values.stream().events(), ["event"]);
+    assert_eq!(
+        values.stream().identity().encoded_name(),
+        values.termination().identity().encoded_name()
+    );
     assert!(matches!(
-        fixture.reader.plan("Interface.{2 0 0}\n[]\n{[] [] [] []}"),
-        Err(BootstrapReadError::UnsupportedVersion { .. })
+        RuntimeStreamIdentity::<String>::new(rust_id(70)),
+        Err(RuntimeStreamValueError::NonUniversalHandle(identity)) if identity == rust_id(70)
     ));
-    for source in [
-        "Interface.{01 0 0}\n[]\n{[] [] [] []}",
-        "Interface.{1 0}\n[]\n{[] [] [] []}",
-        "Interface.{1 -1 0}\n[]\n{[] [] [] []}",
-    ] {
-        assert!(fixture.reader.plan(source).is_err());
-    }
+    let stream = RuntimeStream::new(
+        RuntimeStreamIdentity::<String>::new(id(70)).unwrap(),
+        vec![],
+    );
+    assert!(matches!(
+        RuntimeStreamValues::new(
+            RuntimeStreamInitiation::new(()),
+            stream,
+            RuntimeStreamIdentity::new(id(71)).unwrap(),
+        ),
+        Err(RuntimeStreamValueError::MismatchedTerminationHandle {
+            stream,
+            termination,
+        }) if stream == id(70) && termination == id(71)
+    ));
+}
+
+#[test]
+fn archive_boundary_remains_explicitly_deferred() {
+    let fixture = make_fixture(&["app"], vec![]);
+    assert_eq!(
+        fixture.reader.archive_status(),
+        BootstrapArchiveStatus::NotYetArchived
+    );
 }

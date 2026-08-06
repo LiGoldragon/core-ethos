@@ -52,16 +52,27 @@ pub enum BootstrapReadError {
     EmptyImportSelectors,
     #[error("textual snapshot contains more than one record for identity {0:?}")]
     DuplicateMetadataIdentity(VocabularyEncodedId),
+    #[error(
+        "textual projection address {module_path:?}/{lexical_owner:?}:{name} names more than one identity"
+    )]
+    DuplicateMetadataProjectionAddress {
+        module_path: Vec<String>,
+        lexical_owner: Option<VocabularyEncodedId>,
+        name: String,
+    },
+    #[error("textual identity {identity:?} has missing or self lexical owner {owner:?}")]
+    InvalidMetadataLexicalOwner {
+        identity: VocabularyEncodedId,
+        owner: VocabularyEncodedId,
+    },
     #[error("textual snapshot is missing identity {0:?}")]
     MissingMetadataIdentity(VocabularyEncodedId),
     #[error(
         "textual snapshot record for identity {identity:?} does not equal the required module/name projection"
     )]
     MetadataProjectionMismatch { identity: VocabularyEncodedId },
-    #[error(
-        "the sealing snapshot does not preserve the reader catalog's record for identity {0:?}"
-    )]
-    MetadataSnapshotDoesNotExtend(VocabularyEncodedId),
+    #[error("the authority transition's before snapshot is not the reader catalog snapshot")]
+    MetadataTransitionBeforeMismatch,
     #[error("the sealing snapshot adds unrelated identity {0:?}")]
     ExtraMetadataIdentity(VocabularyEncodedId),
     #[error("textual lookup {module_path:?}:{name} has no identity")]
@@ -83,11 +94,10 @@ pub enum BootstrapReadError {
         identity: VocabularyEncodedId,
         required: SchemaRole,
     },
-    #[error("identity {identity:?} registers incompatible roles {first:?} and {second:?}")]
-    ConflictingSchemaRoles {
+    #[error("identity {identity:?} registers a role set outside the explicit allowlist: {roles:?}")]
+    IncompatibleSchemaRoles {
         identity: VocabularyEncodedId,
-        first: SchemaRole,
-        second: SchemaRole,
+        roles: Vec<SchemaRole>,
     },
     #[error("schema catalog contains identity {0:?} more than once")]
     DuplicateSchemaIdentity(VocabularyEncodedId),
@@ -100,6 +110,14 @@ pub enum BootstrapReadError {
         position: &'static str,
         identity: VocabularyEncodedId,
         required: SchemaRole,
+    },
+    #[error("bootstrap prior relationship is invalid: {0}")]
+    InvalidPriorIdentityRelationship(&'static str),
+    #[error("bootstrap priors {first} and {second} unexpectedly share identity {identity:?}")]
+    DuplicatePriorIdentity {
+        first: &'static str,
+        second: &'static str,
+        identity: VocabularyEncodedId,
     },
     #[error("file-kind prior projections are not distinct")]
     DuplicateFileKindProjection,
@@ -118,6 +136,26 @@ pub enum BootstrapReadError {
     },
     #[error("assigned identity {identity:?} collides with existing or newly assigned object")]
     AssignedIdentityCollision { identity: VocabularyEncodedId },
+    #[error("assignment marks existing identity {identity:?}, but authority has no such object")]
+    ExistingAssignmentMissing { identity: VocabularyEncodedId },
+    #[error("assignment marks new identity {identity:?}, but authority already has that object")]
+    NewAssignmentAlreadyExists { identity: VocabularyEncodedId },
+    #[error("existing identity {identity:?} cannot be reused as schema role {required:?}")]
+    ExistingAssignmentNotReusable {
+        identity: VocabularyEncodedId,
+        required: SchemaRole,
+    },
+    #[error("identity {0:?} has no authority-supplied canonical ordering bytes")]
+    MissingCanonicalIdentity(VocabularyEncodedId),
+    #[error("identity {0:?} has empty canonical ordering bytes")]
+    EmptyCanonicalIdentityBytes(VocabularyEncodedId),
+    #[error("canonical ordering contains identity {0:?} more than once")]
+    DuplicateCanonicalIdentity(VocabularyEncodedId),
+    #[error("canonical ordering bytes are shared by identities {first:?} and {second:?}")]
+    DuplicateCanonicalIdentityBytes {
+        first: VocabularyEncodedId,
+        second: VocabularyEncodedId,
+    },
     #[error("generated Stream assignment for occurrence {0} appears more than once")]
     DuplicateGeneratedStreamAssignment(u32),
     #[error("Stream occurrence {0} has no exact generated initiation/termination assignment")]
@@ -136,6 +174,10 @@ pub enum BootstrapReadError {
         expected: u16,
         found: usize,
     },
+    #[error("Shape identity {identity:?} is not seated in the closed prior vocabulary")]
+    NonPriorShapeIdentity { identity: VocabularyEncodedId },
+    #[error("Nomos identity {identity:?} is not seated in the closed prior vocabulary")]
+    NonPriorNomosIdentity { identity: VocabularyEncodedId },
     #[error("local parameter {name:?} is reused with incompatible Trait requirements")]
     ConflictingNamedParameter { name: String },
     #[error("one Trait requirement repeats Trait identity {0:?}")]
@@ -148,6 +190,13 @@ pub enum BootstrapReadError {
     NonPersistentDeclaration,
     #[error("prepared transaction model is invalid: {0}")]
     InvalidPreparedModel(&'static str),
+    #[error(
+        "referenced identity {identity:?} with spelling {name:?} is not uniquely visible in its syntactic namespace"
+    )]
+    InvisibleOrNonRoundTrippingReference {
+        identity: VocabularyEncodedId,
+        name: String,
+    },
 }
 
 impl From<structural_codec::DecodeError<signal_sema_translator::VocabularyRoot>>

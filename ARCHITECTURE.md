@@ -11,7 +11,8 @@ typed priors + version policy ─────┘       │
                                            ├─ authored occurrences
 external NamingAssignments ────────────────┤
 external Stream generated assignments ─────┤
-complete post-operation name snapshot ─────┘
+authorized metadata before→after ──────────┤
+authority canonical identity bytes ────────┘
                                            │
                                            v
                               PreparedBootstrapTransaction
@@ -20,22 +21,32 @@ complete post-operation name snapshot ─────┘
 
 ### Textual authority
 
-`TextualMetadataRecord` contains exactly module path, visible name, and encoded
-identity. `TextualMetadataSnapshot` indexes the same immutable records in both
-directions and refuses more than one record for an identity. Several objects may
-share a visible projection; resolving a path/name or visible body reference must
-first produce exactly one identity or refuse ambiguity.
+`TextualMetadataRecord` contains exactly a projection address and encoded identity.
+The address is module path, optional lexical-owner identity, and visible name.
+`TextualMetadataSnapshot` indexes the same immutable records in both directions,
+refuses multiple records for an identity, and refuses multiple identities at an
+exact address. Lexical owners let sibling enum variants and Trait methods reuse a
+spelling without colliding.
 
-Semantic class is never used to pick among ambiguous textual candidates. Only
-after one identity is known does the reader query `IdentitySchemaCatalog`.
+`TextualMetadataTransition` is an authority proof containing exact before and
+after snapshots. It can preserve, add, rename, move, or remove identities. Seal
+requires its before snapshot to equal the reader catalog and validates the after
+snapshot against assignments and semantic visibility. The reader never authors
+the transition.
+
+Candidate collection is first restricted to the syntactically applicable
+namespace. Fixed file-kind/role vocabulary never enters body-reference lookup.
+Within the applicable nominal, Trait, Shape, or Nomos namespace, ambiguity is
+refused before exact schema data is validated. Two imports can therefore be
+ambiguous only through distinct valid projection addresses, such as two module
+paths selecting the same local spelling.
 
 ### Schema authority
 
-`IdentitySchemaCatalog` is identity-keyed. `IdentitySchema` carries a set of
-compatible typed `SchemaRole`s. Role families with data—file kind, Interface role,
-nominality/persistence, Shape arity, and concrete Nomos schema—admit exactly one
-value per family. Distinct families may coexist, so the same Stream identity can
-be both an exact one-argument Shape and the exact two-argument audited Nomos head.
+`IdentitySchemaCatalog` is identity-keyed. `IdentitySchema` accepts only an
+explicit role-set allowlist: a single exact role, or the designed Stream pairing
+of one-argument Shape with two-argument Stream-initiation Nomos. Negative
+same-family inference cannot accidentally admit a new cross-role combination.
 
 `BootstrapPriorVocabulary` validates every prior identity against both the schema
 catalog and textual snapshot. The prior type seats:
@@ -44,6 +55,11 @@ catalog and textual snapshot. The prior type seats:
 - persistent primitive nominals;
 - exact Vector/Option/Map/Result arities;
 - exact Stream Nomos and Stream/StreamIdentity Shape contracts.
+
+The Stream Nomos and Stream Shape positions must be the same identity.
+StreamIdentity is distinct, and every other typed prior position is pairwise
+distinct. Shape and Nomos syntax resolves only to these prior seats; imported
+schema roles cannot extend bootstrap syntax.
 
 Visible names are never embedded in the prior type or parser.
 
@@ -64,8 +80,8 @@ never appears in encoded meaning.
 - Nexus: Traits, Declarations(Nomos refused)
 - Sema: PersistentDeclarations, Tables
 
-Planning, sealing, and writing iterate those section descriptors. Limited final
-assembly/projection into purpose-built Rust body types is intentionally isolated.
+Planning, assembly, semantic projection, and writing iterate those descriptors.
+There is no second per-kind section-order table.
 
 ## Planning and scopes
 
@@ -88,19 +104,31 @@ extras even if their ordinals coincide.
 ## Sealing and generated work
 
 Sealing requires an exact authored assignment set and an exact generated Stream
-assignment set. Every identity must be Universal, fresh against every existing
-metadata/schema identity, and unique across authored plus generated identities.
-The supplied complete name snapshot must preserve every old record and add exactly
-one current-module record for each new object.
+assignment set. Every assignment has an authority disposition. `New` means the
+Universal identity is absent from metadata, schema, and canonical-order authority;
+`Existing` means the object already exists, is not fixed prior vocabulary, and
+admits exactly the declaration role being reused. All authored and generated
+identities remain mutually unique.
 
-All top-level declarations are installed in a transient schema overlay before
+The prepared transaction records the dispositions and exact metadata transition.
+Its fields are private and exposed read-only. Public untrusted parts remain a
+`PreparedBootstrapDraft` until `validate_draft` constructs the wrapper. After persistence, a new reader can
+be built from the after snapshot, merged schemas, and canonical order; a reread
+then uses `Existing` dispositions and produces no schema additions. Rename, move,
+and deletion similarly reuse identities instead of reminting them.
+
+All New declarations are installed in a transient schema overlay before
 body resolution, making source order irrelevant. Visible resolution collects
-local, import, and typed-prior candidates, deduplicates by identity, refuses zero
-or several candidates, then checks the selected identity's schema role.
+local, import, and namespace-applicable typed-prior candidates, refuses zero or
+several candidates, then checks the selected identity's exact schema data.
 
-Trait requirements sort resolved identities using an explicit canonical byte
-projection—root tag followed by big-endian table-local components—not the carrier's
-incidental `Ord`. Equal inferred vectors co-refer within one owner. Named binders
+`CanonicalIdentityOrder` supplies opaque authoritative bytes for every existing
+identity, and every New disposition supplies its bytes. No chain/tag anatomy is
+reconstructed. Traits, top-level declarations, Interface role entries and
+memberships, methods, enum variants, tables, generated Stream sets, and import
+selectors are normalized by these bytes. Positional struct fields, method
+parameters, Shape arguments, and the fixed Stream relation anatomy preserve their
+meaningful order. Equal inferred Trait vectors co-refer within one owner. Named binders
 carry their validated local projection inside the semantic binder form; the field
 is not publicly mutable, and exhaustive transaction validation refuses owner
 escape, incompatible reuse, named/inferred collapse, or noncanonical vectors.
@@ -122,11 +150,20 @@ Every seal and write performs exhaustive validation:
 - Stream identity distinctness, output Shape/arity/event equality, termination
   reference, and exact role relations;
 - safe and complete textual projection records;
-- no unrelated metadata or schema addition.
+- exact authorized metadata transition and schema additions;
+- visibility and same-identity textual round-trip for every nominal, Trait, Shape,
+  and relation reference through the local/import/prior environment;
+- canonical ordering of every unordered named collection.
 
-The writer uses the prepared transaction's own snapshot. A write, new plan, and
-reseal with the same assignments/snapshot reproduces equal semantic meaning and
-prepared generation.
+The writer accepts only the validated wrapper and revalidates it. It uses the
+prepared transition's after snapshot for every emitted spelling and for reverse
+visibility checks. A write, persisted restart, new plan, and reseal with Existing
+assignments reproduces equal semantic meaning without new schema objects.
+
+Runtime values have strict typed carriers: initiation contains Query, the
+`RuntimeStream<Event>` contains `RuntimeStreamIdentity<Event>`, and termination is
+constructed only with the same typed handle. Non-Universal and mismatched handles
+are typed refusals.
 
 ## Archive and transitional boundary
 

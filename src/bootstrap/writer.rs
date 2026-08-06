@@ -7,7 +7,7 @@ use super::catalog::TextualMetadataSnapshot;
 use super::error::BootstrapWriteError;
 use super::model::*;
 use super::reader::{BootstrapReader, PreparedBootstrapTransaction};
-use super::root::SectionSchema;
+use super::root::{BootstrapSectionSchema as SectionSchema, RootSemanticSectionRef};
 
 impl BootstrapReader {
     /// Validate and write one canonical authored projection. Generated Stream
@@ -18,8 +18,8 @@ impl BootstrapReader {
         transaction: &PreparedBootstrapTransaction,
     ) -> Result<String, BootstrapWriteError> {
         self.validate_prepared(transaction)?;
-        let decoded = &transaction.decoded;
-        let snapshot = &transaction.naming_snapshot;
+        let decoded = transaction.decoded();
+        let snapshot = transaction.naming_transition().after();
         let root = self.roots().for_kind(decoded.document.header.kind);
         let mut output = format!(
             "{}.{{{} {} {}}}\n",
@@ -39,7 +39,7 @@ impl BootstrapReader {
             output.push(']');
         }
         output.push_str("]\n{\n");
-        let sections = semantic_sections(&decoded.document.body);
+        let sections = root.semantic_sections(&decoded.document.body)?;
         for (index, (schema, section)) in root.sections.iter().zip(sections).enumerate() {
             if index > 0 {
                 output.push('\n');
@@ -57,43 +57,16 @@ impl BootstrapReader {
     }
 }
 
-enum SemanticSectionRef<'a> {
-    Role(&'a [RoleEntry]),
-    Declarations(&'a [Declaration]),
-    Traits(&'a [TraitDeclaration]),
-    PersistentDeclarations(&'a [TypeDeclaration]),
-    Tables(&'a [TableDeclaration]),
-}
-
-fn semantic_sections(body: &BootstrapBody) -> Vec<SemanticSectionRef<'_>> {
-    match body {
-        BootstrapBody::Interface(body) => vec![
-            SemanticSectionRef::Role(&body.inputs),
-            SemanticSectionRef::Role(&body.outputs),
-            SemanticSectionRef::Role(&body.refusals),
-            SemanticSectionRef::Declarations(&body.types),
-        ],
-        BootstrapBody::Nexus(body) => vec![
-            SemanticSectionRef::Traits(&body.traits),
-            SemanticSectionRef::Declarations(&body.types),
-        ],
-        BootstrapBody::Sema(body) => vec![
-            SemanticSectionRef::PersistentDeclarations(&body.record_types),
-            SemanticSectionRef::Tables(&body.tables),
-        ],
-    }
-}
-
 fn write_section(
     output: &mut String,
     schema: SectionSchema,
-    section: SemanticSectionRef<'_>,
+    section: RootSemanticSectionRef<'_>,
     snapshot: &TextualMetadataSnapshot,
     stream_nomos: VocabularyEncodedId,
 ) -> Result<(), BootstrapWriteError> {
     output.push_str("  [");
     match (schema, section) {
-        (SectionSchema::Role(_), SemanticSectionRef::Role(entries)) => {
+        (SectionSchema::Role(_), RootSemanticSectionRef::Role(entries)) => {
             write_separated(output, entries, |output, entry| match entry {
                 RoleEntry::Declaration(declaration) => {
                     write_type_declaration(output, declaration, snapshot)
@@ -104,25 +77,28 @@ fn write_section(
                 }
             })?;
         }
-        (SectionSchema::Declarations { .. }, SemanticSectionRef::Declarations(declarations)) => {
+        (
+            SectionSchema::Declarations { .. },
+            RootSemanticSectionRef::Declarations(declarations),
+        ) => {
             write_separated(output, declarations, |output, declaration| {
                 write_declaration(output, declaration, snapshot, &stream_nomos)
             })?;
         }
-        (SectionSchema::Traits, SemanticSectionRef::Traits(traits)) => {
+        (SectionSchema::Traits, RootSemanticSectionRef::Traits(traits)) => {
             write_separated(output, traits, |output, declaration| {
                 write_trait(output, declaration, snapshot)
             })?;
         }
         (
             SectionSchema::PersistentDeclarations,
-            SemanticSectionRef::PersistentDeclarations(declarations),
+            RootSemanticSectionRef::PersistentDeclarations(declarations),
         ) => {
             write_separated(output, declarations, |output, declaration| {
                 write_type_declaration(output, declaration, snapshot)
             })?;
         }
-        (SectionSchema::Tables, SemanticSectionRef::Tables(tables)) => {
+        (SectionSchema::Tables, RootSemanticSectionRef::Tables(tables)) => {
             write_separated(output, tables, |output, table| {
                 output.push_str(spelling(snapshot, &table.name)?);
                 output.push_str(".{");

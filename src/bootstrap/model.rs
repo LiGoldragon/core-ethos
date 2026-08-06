@@ -1,6 +1,8 @@
 //! Purpose-built semantic carriers for the bootstrap Ethos file kinds.
 
-use signal_sema_translator::VocabularyEncodedId;
+use std::marker::PhantomData;
+
+use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 
 /// One compatibility version written as three canonical decimal components.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -90,7 +92,10 @@ pub enum InterfaceRole {
     Refusal,
 }
 
-/// A role position either declares its nominal type inline or references one.
+/// A role position either declares a plain nominal type inline or references
+/// one. Authored Stream/Nomos declarations deliberately remain exclusive to
+/// Interface support Types: applying a Stream initiation declaration directly
+/// as Input/Output/Refusal has no coherent role-position semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoleEntry {
     Declaration(TypeDeclaration),
@@ -302,13 +307,138 @@ pub struct TableDeclaration {
     pub key_type: VocabularyEncodedId,
 }
 
-/// Runtime Stream value anatomy remains a catalog contract at this stage.
+/// Catalog identities underlying the validated runtime Stream carriers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStreamSchemaContract {
     pub stream_shape: VocabularyEncodedId,
     pub stream_identity_shape: VocabularyEncodedId,
     pub stream_shape_arity: u16,
     pub stream_identity_shape_arity: u16,
+}
+
+/// A runtime Stream handle indexed by its Event type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStreamIdentity<Event> {
+    encoded_name: VocabularyEncodedId,
+    event: PhantomData<fn() -> Event>,
+}
+
+impl<Event> RuntimeStreamIdentity<Event> {
+    pub fn new(encoded_name: VocabularyEncodedId) -> Result<Self, RuntimeStreamValueError> {
+        if encoded_name.root_variant() != &VocabularyRoot::Universal {
+            return Err(RuntimeStreamValueError::NonUniversalHandle(encoded_name));
+        }
+        Ok(Self {
+            encoded_name,
+            event: PhantomData,
+        })
+    }
+
+    pub const fn encoded_name(&self) -> &VocabularyEncodedId {
+        &self.encoded_name
+    }
+}
+
+/// The query value consumed by Stream initiation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStreamInitiation<Query> {
+    query: Query,
+}
+
+impl<Query> RuntimeStreamInitiation<Query> {
+    pub const fn new(query: Query) -> Self {
+        Self { query }
+    }
+
+    pub const fn query(&self) -> &Query {
+        &self.query
+    }
+}
+
+/// A `Stream<Event>` value necessarily contains its `StreamIdentity<Event>`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStream<Event> {
+    identity: RuntimeStreamIdentity<Event>,
+    events: Vec<Event>,
+}
+
+impl<Event> RuntimeStream<Event> {
+    pub fn new(identity: RuntimeStreamIdentity<Event>, events: Vec<Event>) -> Self {
+        Self { identity, events }
+    }
+
+    pub const fn identity(&self) -> &RuntimeStreamIdentity<Event> {
+        &self.identity
+    }
+
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+}
+
+/// Termination carries the same typed handle as the Stream value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStreamTermination<Event> {
+    identity: RuntimeStreamIdentity<Event>,
+}
+
+impl<Event> RuntimeStreamTermination<Event> {
+    pub const fn identity(&self) -> &RuntimeStreamIdentity<Event> {
+        &self.identity
+    }
+}
+
+/// One validated initiation/output/termination runtime value family.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStreamValues<Query, Event> {
+    initiation: RuntimeStreamInitiation<Query>,
+    stream: RuntimeStream<Event>,
+    termination: RuntimeStreamTermination<Event>,
+}
+
+impl<Query, Event> RuntimeStreamValues<Query, Event> {
+    pub fn new(
+        initiation: RuntimeStreamInitiation<Query>,
+        stream: RuntimeStream<Event>,
+        termination_identity: RuntimeStreamIdentity<Event>,
+    ) -> Result<Self, RuntimeStreamValueError> {
+        if stream.identity.encoded_name != termination_identity.encoded_name {
+            return Err(RuntimeStreamValueError::MismatchedTerminationHandle {
+                stream: stream.identity.encoded_name.clone(),
+                termination: termination_identity.encoded_name,
+            });
+        }
+        Ok(Self {
+            initiation,
+            stream,
+            termination: RuntimeStreamTermination {
+                identity: termination_identity,
+            },
+        })
+    }
+
+    pub const fn initiation(&self) -> &RuntimeStreamInitiation<Query> {
+        &self.initiation
+    }
+
+    pub const fn stream(&self) -> &RuntimeStream<Event> {
+        &self.stream
+    }
+
+    pub const fn termination(&self) -> &RuntimeStreamTermination<Event> {
+        &self.termination
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RuntimeStreamValueError {
+    #[error("runtime Stream handle {0:?} must use the Universal vocabulary root")]
+    NonUniversalHandle(VocabularyEncodedId),
+    #[error("termination handle {termination:?} differs from Stream handle {stream:?}")]
+    MismatchedTerminationHandle {
+        stream: VocabularyEncodedId,
+        termination: VocabularyEncodedId,
+    },
 }
 
 /// Archiving is deliberately deferred until the random EncodedName substrate is
