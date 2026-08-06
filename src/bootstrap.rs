@@ -14,10 +14,11 @@ mod root;
 mod writer;
 
 pub use catalog::{
-    BootstrapCatalog, BootstrapPriorIdentities, BootstrapPriorVocabulary, BootstrapVersionPolicy,
-    CanonicalIdentityOrder, IdentitySchema, IdentitySchemaCatalog, NomosSchema, SchemaRole,
-    TextualMetadataRecord, TextualMetadataSnapshot, TextualMetadataTransition,
-    TextualProjectionAddress,
+    BootstrapCatalog, BootstrapPriorDefinition, BootstrapPriorIdentities, BootstrapPriorRole,
+    BootstrapPriorSlot, BootstrapPriorVocabulary, BootstrapVersionPolicy, CanonicalIdentityOrder,
+    IdentitySchema, IdentitySchemaCatalog, NomosSchema, SchemaRole, TextualMetadataRecord,
+    TextualMetadataSnapshot, TextualMetadataTransition, TextualProjectionAddress,
+    bootstrap_prior_definitions,
 };
 pub use error::{BootstrapBuildError, BootstrapReadError, BootstrapWriteError};
 pub use grammar::BootstrapGrammarIdentities;

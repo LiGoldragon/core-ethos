@@ -8,6 +8,169 @@ use name_table::{EncodedName, TextualName};
 use super::error::BootstrapReadError;
 use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaContract};
 
+/// Bootstrap-local address of one closed prior definition.
+///
+/// This is construction metadata, not an identity. The Sema authority mints
+/// opaque [`EncodedName`] values for these positions before it builds a
+/// [`BootstrapCatalog`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BootstrapPriorSlot {
+    InterfaceKind,
+    NexusKind,
+    SemaKind,
+    InputRole,
+    OutputRole,
+    RefusalRole,
+    StringType,
+    IntegerType,
+    BooleanType,
+    UnitType,
+    VectorShape,
+    OptionShape,
+    MapShape,
+    ResultShape,
+    Stream,
+    StreamIdentityShape,
+}
+
+/// One identity-free role in the closed bootstrap seed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootstrapPriorRole {
+    FileKind(EthosKind),
+    InterfaceRole(InterfaceRole),
+    Nominal { persistent: bool },
+    Shape { arity: u16 },
+    Nomos(NomosSchema),
+}
+
+impl BootstrapPriorRole {
+    /// Materialize this identity-free seed role for the catalog it builds.
+    pub const fn schema_role(self) -> SchemaRole {
+        match self {
+            Self::FileKind(kind) => SchemaRole::FileKind(kind),
+            Self::InterfaceRole(role) => SchemaRole::InterfaceRole(role),
+            Self::Nominal { persistent } => SchemaRole::Nominal { persistent },
+            Self::Shape { arity } => SchemaRole::Shape { arity },
+            Self::Nomos(nomos) => SchemaRole::Nomos(nomos),
+        }
+    }
+}
+
+/// One closed bootstrap prior before the authority assigns its opaque name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootstrapPriorDefinition {
+    pub slot: BootstrapPriorSlot,
+    pub textual_name: &'static str,
+    pub roles: &'static [BootstrapPriorRole],
+}
+
+const INTERFACE_KIND_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::FileKind(EthosKind::Interface)];
+const NEXUS_KIND_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::FileKind(EthosKind::Nexus)];
+const SEMA_KIND_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::FileKind(EthosKind::Sema)];
+const INPUT_ROLE_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Input)];
+const OUTPUT_ROLE_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Output)];
+const REFUSAL_ROLE_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Refusal)];
+const PERSISTENT_NOMINAL_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::Nominal { persistent: true }];
+const UNARY_SHAPE_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::Shape { arity: 1 }];
+const BINARY_SHAPE_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::Shape { arity: 2 }];
+const STREAM_ROLES: &[BootstrapPriorRole] = &[
+    BootstrapPriorRole::Shape { arity: 1 },
+    BootstrapPriorRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
+];
+
+const BOOTSTRAP_PRIOR_DEFINITIONS: &[BootstrapPriorDefinition] = &[
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::InterfaceKind,
+        textual_name: "Interface",
+        roles: INTERFACE_KIND_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::NexusKind,
+        textual_name: "Nexus",
+        roles: NEXUS_KIND_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::SemaKind,
+        textual_name: "Sema",
+        roles: SEMA_KIND_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::InputRole,
+        textual_name: "Input",
+        roles: INPUT_ROLE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::OutputRole,
+        textual_name: "Output",
+        roles: OUTPUT_ROLE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::RefusalRole,
+        textual_name: "Refusal",
+        roles: REFUSAL_ROLE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::StringType,
+        textual_name: "String",
+        roles: PERSISTENT_NOMINAL_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::IntegerType,
+        textual_name: "Integer",
+        roles: PERSISTENT_NOMINAL_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::BooleanType,
+        textual_name: "Boolean",
+        roles: PERSISTENT_NOMINAL_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::UnitType,
+        textual_name: "Unit",
+        roles: PERSISTENT_NOMINAL_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::VectorShape,
+        textual_name: "Vector",
+        roles: UNARY_SHAPE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::OptionShape,
+        textual_name: "Option",
+        roles: UNARY_SHAPE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::MapShape,
+        textual_name: "Map",
+        roles: BINARY_SHAPE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::ResultShape,
+        textual_name: "Result",
+        roles: BINARY_SHAPE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::Stream,
+        textual_name: "Stream",
+        roles: STREAM_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::StreamIdentityShape,
+        textual_name: "StreamIdentity",
+        roles: UNARY_SHAPE_ROLES,
+    },
+];
+
+/// The exact existing closed bootstrap prior definitions, without identities.
+pub fn bootstrap_prior_definitions() -> &'static [BootstrapPriorDefinition] {
+    BOOTSTRAP_PRIOR_DEFINITIONS
+}
+
 /// The exact lexical address of one textual projection. Nested declarations
 /// use their owning encoded identity, so equal sibling spellings never occupy
 /// the same address.
