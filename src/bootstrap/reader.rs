@@ -733,7 +733,10 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         schemas: SchemaView<'_>,
     ) -> Result<(), BootstrapReadError> {
         let snapshot = transaction.naming_transition().after();
-        let mut authored_local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        let mut authored_local = top_level_module_identities(
+            self.catalog.metadata(),
+            self.catalog.current_module_path(),
+        );
         match &transaction.decoded.document.body {
             BootstrapBody::Interface(body) => {
                 for entry in body
@@ -1728,6 +1731,7 @@ fn parse_imports(
 }
 
 struct ExistingVisibleEnvironment<'a> {
+    local: BTreeMap<String, Vec<VocabularyEncodedId>>,
     imported: BTreeMap<String, Vec<VocabularyEncodedId>>,
     catalog: &'a BootstrapCatalog,
 }
@@ -1753,7 +1757,11 @@ impl<'a> ExistingVisibleEnvironment<'a> {
                     .push(identity.clone());
             }
         }
-        Ok(Self { imported, catalog })
+        Ok(Self {
+            local: top_level_module_identities(catalog.metadata(), catalog.current_module_path()),
+            imported,
+            catalog,
+        })
     }
 
     fn resolve_identity(
@@ -1763,7 +1771,7 @@ impl<'a> ExistingVisibleEnvironment<'a> {
     ) -> Result<VocabularyEncodedId, BootstrapReadError> {
         resolve_visible_identity(
             spelling,
-            std::iter::empty(),
+            self.local.get(spelling).into_iter().flatten().cloned(),
             &self.imported,
             namespace,
             ResolutionAuthority {
@@ -2245,7 +2253,8 @@ impl<'a> ResolutionEnvironment<'a> {
         schemas: SchemaView<'a>,
         canonical_order: &'a CanonicalIdentityOrder,
     ) -> Result<Self, BootstrapReadError> {
-        let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        let existing = ExistingVisibleEnvironment::new(&plan.imports, catalog)?;
+        let mut local = existing.local;
         for declaration in &plan.declarations {
             if declaration.scope == PlannedScope::Module {
                 local.entry(declaration.spelling.clone()).or_default().push(
@@ -2257,10 +2266,9 @@ impl<'a> ResolutionEnvironment<'a> {
                 );
             }
         }
-        let imported = ExistingVisibleEnvironment::new(&plan.imports, catalog)?.imported;
         Ok(Self {
             local,
-            imported,
+            imported: existing.imported,
             snapshot,
             priors: catalog.priors(),
             schemas,
@@ -2345,6 +2353,22 @@ fn seat_local_identity(
             .push(identity.clone());
     }
     Ok(())
+}
+
+fn top_level_module_identities(
+    snapshot: &TextualMetadataSnapshot,
+    current_module: &[String],
+) -> BTreeMap<String, Vec<VocabularyEncodedId>> {
+    let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+    for record in snapshot.records() {
+        if record.address.module_path == current_module && record.address.lexical_owner.is_none() {
+            local
+                .entry(record.address.visible_name.clone())
+                .or_default()
+                .push(record.encoded_name.clone());
+        }
+    }
+    local
 }
 
 fn require_schema<'a>(

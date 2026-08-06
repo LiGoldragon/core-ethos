@@ -700,6 +700,7 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
     let imported_nomos = id(71);
     let imported_nominal = id(72);
     let imported_trait = id(73);
+    let local_shape = id(74);
     let fixture = make_fixture(
         &["app"],
         vec![
@@ -737,6 +738,12 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
                 schema: IdentitySchema::new(imported_trait, [SchemaRole::Trait]).unwrap(),
                 canonical_bytes: vec![0x34],
             },
+            Extra {
+                metadata: record(&["app"], None, "LocalShape", local_shape.clone()),
+                schema: IdentitySchema::new(local_shape.clone(), [SchemaRole::Shape { arity: 1 }])
+                    .unwrap(),
+                canonical_bytes: vec![0x35],
+            },
         ],
     );
     let (_, inputs, transaction) = seal_new(
@@ -756,6 +763,28 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
     };
     assert_eq!(shape, &imported_shape);
     assert_eq!(arguments, &[TypeExpression::Reference(id(7))]);
+
+    let (_, _, local_transaction) = seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[]\n{[] [] [] [Local.LocalShape<String>]}",
+    );
+    let BootstrapBody::Interface(local_body) = &local_transaction.decoded().document.body else {
+        panic!("planned local-Shape Interface changed kind")
+    };
+    assert!(matches!(
+        &local_body.types[0],
+        Declaration::Type(TypeDeclaration {
+            body: TypeBody::Newtype(TypeExpression::ShapeApplication(ShapeApplication {
+                shape,
+                arguments,
+            })),
+            ..
+        }) if shape == &local_shape && arguments == &[TypeExpression::Reference(id(7))]
+    ));
+    assert_eq!(
+        fixture.reader.write(&local_transaction).unwrap(),
+        "Interface.{1 0 0}\n[]\n{\n  []\n  []\n  []\n  [Local.LocalShape<String>]\n}\n"
+    );
     let canonical = fixture.reader.write(&transaction).unwrap();
     let committed = restarted(&fixture, &transaction, &["app"]);
     let reseal_plan = committed.reader.plan(&canonical).unwrap();
