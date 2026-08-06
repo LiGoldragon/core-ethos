@@ -4,8 +4,9 @@ use std::cmp::Ordering as CompareOrdering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use content_identity::ArchiveError;
+use name_table::{EncodedName, TrueName, TrueNamed};
 use raw_discovery::SourceBound;
-use signal_sema_translator::VocabularyEncodedId;
 
 use super::catalog::*;
 use super::error::{BootstrapBuildError, BootstrapReadError};
@@ -110,7 +111,7 @@ impl BootstrapReadPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingAssignment {
     pub occurrence: DeclarationOccurrence,
-    pub encoded_name: VocabularyEncodedId,
+    pub encoded_name: EncodedName,
     pub disposition: IdentityDisposition,
 }
 
@@ -125,7 +126,7 @@ pub enum IdentityDisposition {
 /// One authority disposition for a generated identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AssignedIdentity {
-    pub encoded_name: VocabularyEncodedId,
+    pub encoded_name: EncodedName,
     pub disposition: IdentityDisposition,
 }
 
@@ -138,7 +139,7 @@ pub struct PreparedBootstrapDraft {
     pub generated_streams: Vec<PreparedStreamGeneration>,
     pub schema_additions: IdentitySchemaCatalog,
     pub naming_transition: TextualMetadataTransition,
-    pub identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    pub identity_dispositions: BTreeMap<EncodedName, IdentityDisposition>,
     pub canonical_order: CanonicalIdentityOrder,
 }
 
@@ -157,9 +158,7 @@ impl BootstrapNamingAuthorityRequest<'_> {
         &self.transaction.naming_transition
     }
 
-    pub const fn identity_dispositions(
-        &self,
-    ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+    pub const fn identity_dispositions(&self) -> &BTreeMap<EncodedName, IdentityDisposition> {
         &self.transaction.identity_dispositions
     }
 }
@@ -247,7 +246,7 @@ impl GeneratedStreamAssignments {
 fn identity_dispositions(
     assignments: &NamingAssignments,
     generated: &GeneratedStreamAssignments,
-) -> BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+) -> BTreeMap<EncodedName, IdentityDisposition> {
     assignments
         .by_occurrence
         .values()
@@ -269,7 +268,7 @@ fn identity_dispositions(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct VerifiedNamingAuthorization<Receipt> {
     transition: TextualMetadataTransition,
-    identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    identity_dispositions: BTreeMap<EncodedName, IdentityDisposition>,
     receipt: Receipt,
 }
 
@@ -321,12 +320,18 @@ impl<Authority: BootstrapNamingAuthority> PartialEq for PreparedBootstrapTransac
 impl<Authority: BootstrapNamingAuthority> Eq for PreparedBootstrapTransaction<Authority> {}
 
 impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority> {
-    pub const fn archive_status(&self) -> BootstrapArchiveStatus {
-        BootstrapArchiveStatus::NotYetArchived
-    }
-
     pub const fn decoded(&self) -> &DecodedBootstrap {
         &self.decoded
+    }
+
+    /// Derive the content identity of the strict validated kind body itself.
+    /// Textual projection and authority receipts are intentionally outside it.
+    pub fn body_true_name(&self) -> Result<TrueName, ArchiveError> {
+        match &self.decoded.document.body {
+            BootstrapBody::Interface(body) => body.true_name(),
+            BootstrapBody::Nexus(body) => body.true_name(),
+            BootstrapBody::Sema(body) => body.true_name(),
+        }
     }
 
     pub fn generated_streams(&self) -> &[PreparedStreamGeneration] {
@@ -341,9 +346,7 @@ impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority
         &self.naming_authorization.transition
     }
 
-    pub const fn identity_dispositions(
-        &self,
-    ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+    pub const fn identity_dispositions(&self) -> &BTreeMap<EncodedName, IdentityDisposition> {
         &self.naming_authorization.identity_dispositions
     }
 
@@ -555,10 +558,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         self.validate_prepared(transaction)
     }
 
-    pub fn archive_status(&self) -> BootstrapArchiveStatus {
-        BootstrapArchiveStatus::NotYetArchived
-    }
-
     pub fn section_order(&self, kind: EthosKind) -> &[super::root::BootstrapSectionSchema] {
         self.roots.section_order(kind)
     }
@@ -607,7 +606,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 return Err(BootstrapReadError::EmptyImportSelectors);
             }
             for name in &import.imported_names {
-                validate_visible_name(name)?;
+                validate_textual_name(name)?;
                 snapshot
                     .identity_at(&import.module_path, None, name)
                     .ok_or_else(|| BootstrapReadError::MissingTextualLookup {
@@ -662,7 +661,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
     fn validate_prepared_dispositions(
         &self,
         transaction: &PreparedBootstrapTransaction<Authority>,
-        declared_identities: &BTreeSet<VocabularyEncodedId>,
+        declared_identities: &BTreeSet<EncodedName>,
     ) -> Result<(), BootstrapReadError> {
         let disposition_identities = transaction
             .identity_dispositions()
@@ -808,7 +807,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             )?;
         }
 
-        let mut imported = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        let mut imported = BTreeMap::<String, Vec<EncodedName>>::new();
         for import in &transaction.decoded.source.imports {
             for name in &import.imported_names {
                 let identity = snapshot
@@ -861,9 +860,9 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
 
     fn validate_visible_references(
         &self,
-        references: Vec<(VocabularyEncodedId, ReferenceNamespace)>,
-        local: &BTreeMap<String, Vec<VocabularyEncodedId>>,
-        imported: &BTreeMap<String, Vec<VocabularyEncodedId>>,
+        references: Vec<(EncodedName, ReferenceNamespace)>,
+        local: &BTreeMap<String, Vec<EncodedName>>,
+        imported: &BTreeMap<String, Vec<EncodedName>>,
         snapshot: &TextualMetadataSnapshot,
         schemas: SchemaView<'_>,
         canonical_order: &CanonicalIdentityOrder,
@@ -1006,7 +1005,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             };
             if record.address.module_path != self.catalog.current_module_path()
                 || record.address.lexical_owner != lexical_owner
-                || record.address.visible_name != declaration.spelling
+                || record.address.textual_name.as_str() != declaration.spelling
             {
                 return Err(BootstrapReadError::MetadataProjectionMismatch {
                     identity: identity.clone(),
@@ -1046,12 +1045,12 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
 
     fn validate_authority_assignment(
         &self,
-        identity: &VocabularyEncodedId,
+        identity: &EncodedName,
         disposition: &IdentityDisposition,
         required: SchemaRole,
-        used_ids: &mut BTreeSet<VocabularyEncodedId>,
-        new_ids: &mut BTreeSet<VocabularyEncodedId>,
-        canonical_additions: &mut Vec<(VocabularyEncodedId, Vec<u8>)>,
+        used_ids: &mut BTreeSet<EncodedName>,
+        new_ids: &mut BTreeSet<EncodedName>,
+        canonical_additions: &mut Vec<(EncodedName, Vec<u8>)>,
     ) -> Result<(), BootstrapReadError> {
         if !used_ids.insert(identity.clone()) {
             return Err(BootstrapReadError::AssignedIdentityCollision {
@@ -1130,12 +1129,12 @@ struct PreparedModelValidator<'a> {
     schemas: SchemaView<'a>,
     snapshot: &'a TextualMetadataSnapshot,
     current_module: &'a [String],
-    expected_additions: BTreeMap<VocabularyEncodedId, SchemaRole>,
-    seen_existing: BTreeSet<VocabularyEncodedId>,
-    streams: BTreeMap<VocabularyEncodedId, StreamInitiationDeclaration>,
+    expected_additions: BTreeMap<EncodedName, SchemaRole>,
+    seen_existing: BTreeSet<EncodedName>,
+    streams: BTreeMap<EncodedName, StreamInitiationDeclaration>,
     canonical_order: &'a CanonicalIdentityOrder,
     priors: &'a BootstrapPriorVocabulary,
-    new_identities: BTreeSet<VocabularyEncodedId>,
+    new_identities: BTreeSet<EncodedName>,
 }
 
 impl PreparedModelValidator<'_> {
@@ -1438,9 +1437,9 @@ impl PreparedModelValidator<'_> {
 
     fn expect_declaration(
         &mut self,
-        identity: &VocabularyEncodedId,
+        identity: &EncodedName,
         role: SchemaRole,
-        lexical_owner: Option<&VocabularyEncodedId>,
+        lexical_owner: Option<&EncodedName>,
     ) -> Result<(), BootstrapReadError> {
         let schema = self
             .schemas
@@ -1510,10 +1509,7 @@ impl PreparedModelValidator<'_> {
         Ok(())
     }
 
-    fn strictly_sorted(
-        &self,
-        identities: &[VocabularyEncodedId],
-    ) -> Result<bool, BootstrapReadError> {
+    fn strictly_sorted(&self, identities: &[EncodedName]) -> Result<bool, BootstrapReadError> {
         for pair in identities.windows(2) {
             if self.canonical_order.compare(&pair[0], &pair[1])? != CompareOrdering::Less {
                 return Ok(false);
@@ -1525,7 +1521,7 @@ impl PreparedModelValidator<'_> {
     fn require_sorted_by_identity<T>(
         &self,
         values: &[T],
-        identity: impl Fn(&T) -> &VocabularyEncodedId,
+        identity: impl Fn(&T) -> &EncodedName,
     ) -> Result<(), BootstrapReadError> {
         for pair in values.windows(2) {
             if self
@@ -1567,7 +1563,7 @@ impl PreparedModelValidator<'_> {
 }
 
 struct BinderValidation<'a> {
-    owner: VocabularyEncodedId,
+    owner: EncodedName,
     by_parameter: BTreeMap<LocalParameter, (Option<String>, Vec<u8>)>,
     inferred: BTreeMap<Vec<u8>, LocalParameter>,
     named: BTreeMap<String, (Vec<u8>, LocalParameter)>,
@@ -1575,7 +1571,7 @@ struct BinderValidation<'a> {
 }
 
 impl<'a> BinderValidation<'a> {
-    fn new(owner: &VocabularyEncodedId, canonical_order: &'a CanonicalIdentityOrder) -> Self {
+    fn new(owner: &EncodedName, canonical_order: &'a CanonicalIdentityOrder) -> Self {
         Self {
             owner: owner.clone(),
             by_parameter: BTreeMap::new(),
@@ -1596,7 +1592,7 @@ impl<'a> BinderValidation<'a> {
         let name = match &requirement.binder {
             ParameterBinder::Inferred(_) => None,
             ParameterBinder::Named { local_name, .. } => {
-                validate_visible_name(local_name)?;
+                validate_textual_name(local_name)?;
                 Some(local_name.clone())
             }
         };
@@ -1712,7 +1708,7 @@ fn parse_imports(
                 .iter()
                 .map(|node| {
                     let (name, _) = expect_atom(node, "imported visible name")?;
-                    validate_visible_name(name)?;
+                    validate_textual_name(name)?;
                     match metadata.identity_at(&module_path, None, name) {
                         None => Err(BootstrapReadError::MissingTextualLookup {
                             module_path: module_path.clone(),
@@ -1731,8 +1727,8 @@ fn parse_imports(
 }
 
 struct ExistingVisibleEnvironment<'a> {
-    local: BTreeMap<String, Vec<VocabularyEncodedId>>,
-    imported: BTreeMap<String, Vec<VocabularyEncodedId>>,
+    local: BTreeMap<String, Vec<EncodedName>>,
+    imported: BTreeMap<String, Vec<EncodedName>>,
     catalog: &'a BootstrapCatalog,
 }
 
@@ -1741,7 +1737,7 @@ impl<'a> ExistingVisibleEnvironment<'a> {
         imports: &[ImportEntry],
         catalog: &'a BootstrapCatalog,
     ) -> Result<Self, BootstrapReadError> {
-        let mut imported = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+        let mut imported = BTreeMap::<String, Vec<EncodedName>>::new();
         for import in imports {
             for name in &import.imported_names {
                 let identity = catalog
@@ -1768,7 +1764,7 @@ impl<'a> ExistingVisibleEnvironment<'a> {
         &self,
         spelling: &str,
         namespace: ReferenceNamespace,
-    ) -> Result<VocabularyEncodedId, BootstrapReadError> {
+    ) -> Result<EncodedName, BootstrapReadError> {
         resolve_visible_identity(
             spelling,
             self.local.get(spelling).into_iter().flatten().cloned(),
@@ -1786,10 +1782,7 @@ impl<'a> ExistingVisibleEnvironment<'a> {
         )
     }
 
-    fn schema(
-        &self,
-        identity: &VocabularyEncodedId,
-    ) -> Result<&IdentitySchema, BootstrapReadError> {
+    fn schema(&self, identity: &EncodedName) -> Result<&IdentitySchema, BootstrapReadError> {
         self.catalog
             .schemas()
             .get(identity)
@@ -1826,7 +1819,7 @@ impl OccurrencePlanner {
         scope: ScopeKey,
         purpose: DeclarationPurpose,
     ) -> Result<DeclarationOccurrence, BootstrapReadError> {
-        validate_visible_name(&spelling)?;
+        validate_textual_name(&spelling)?;
         let occurrence = DeclarationOccurrence {
             plan: self.plan,
             ordinal: self.declarations.len() as u32,
@@ -1873,7 +1866,7 @@ impl OccurrencePlanner {
             SectionSchema::Role(_) => {
                 for entry in items {
                     match entry {
-                        SyntaxNode::Atom { text, .. } => validate_visible_name(text)?,
+                        SyntaxNode::Atom { text, .. } => validate_textual_name(text)?,
                         _ if is_nomos_declaration(entry) => {
                             return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
                         }
@@ -2148,7 +2141,7 @@ fn validate_type_expression_plan(
     environment: &ExistingVisibleEnvironment<'_>,
 ) -> Result<(), BootstrapReadError> {
     match node {
-        SyntaxNode::Atom { text, .. } => validate_visible_name(text),
+        SyntaxNode::Atom { text, .. } => validate_textual_name(text),
         SyntaxNode::AngleApplication {
             head, arguments, ..
         } => {
@@ -2187,7 +2180,7 @@ fn validate_type_expression_plan(
                 let trait_name = match item {
                     SyntaxNode::Atom { text, .. } => text.as_str(),
                     SyntaxNode::Application { head, payload, .. } if index == 0 => {
-                        validate_visible_name(head)?;
+                        validate_textual_name(head)?;
                         expect_atom(payload, "Trait after named local binder")?.0
                     }
                     _ => {
@@ -2197,7 +2190,7 @@ fn validate_type_expression_plan(
                         ));
                     }
                 };
-                validate_visible_name(trait_name)?;
+                validate_textual_name(trait_name)?;
                 if !names.insert(trait_name.to_owned()) {
                     return Err(BootstrapReadError::DuplicateTraitProjection(
                         trait_name.to_owned(),
@@ -2220,7 +2213,7 @@ struct SchemaView<'a> {
 }
 
 impl<'a> SchemaView<'a> {
-    fn get(&self, identity: &VocabularyEncodedId) -> Option<&'a IdentitySchema> {
+    fn get(&self, identity: &EncodedName) -> Option<&'a IdentitySchema> {
         self.additions
             .get(identity)
             .or_else(|| self.existing.get(identity))
@@ -2236,8 +2229,8 @@ struct ResolutionAuthority<'a> {
 }
 
 struct ResolutionEnvironment<'a> {
-    local: BTreeMap<String, Vec<VocabularyEncodedId>>,
-    imported: BTreeMap<String, Vec<VocabularyEncodedId>>,
+    local: BTreeMap<String, Vec<EncodedName>>,
+    imported: BTreeMap<String, Vec<EncodedName>>,
     snapshot: &'a TextualMetadataSnapshot,
     priors: &'a BootstrapPriorVocabulary,
     schemas: SchemaView<'a>,
@@ -2280,7 +2273,7 @@ impl<'a> ResolutionEnvironment<'a> {
         &self,
         spelling: &str,
         namespace: ReferenceNamespace,
-    ) -> Result<VocabularyEncodedId, BootstrapReadError> {
+    ) -> Result<EncodedName, BootstrapReadError> {
         resolve_visible_identity(
             spelling,
             self.local
@@ -2302,7 +2295,7 @@ impl<'a> ResolutionEnvironment<'a> {
         &self,
         spelling: &str,
         expected: ExpectedSchema,
-    ) -> Result<VocabularyEncodedId, BootstrapReadError> {
+    ) -> Result<EncodedName, BootstrapReadError> {
         let identity = self.resolve_identity(spelling, expected.namespace())?;
         require_schema(self.schemas, &identity, expected)?;
         Ok(identity)
@@ -2338,8 +2331,8 @@ enum ReferenceNamespace {
 }
 
 fn seat_local_identity(
-    local: &mut BTreeMap<String, Vec<VocabularyEncodedId>>,
-    identity: &VocabularyEncodedId,
+    local: &mut BTreeMap<String, Vec<EncodedName>>,
+    identity: &EncodedName,
     snapshot: &TextualMetadataSnapshot,
     current_module: &[String],
 ) -> Result<(), BootstrapReadError> {
@@ -2348,7 +2341,7 @@ fn seat_local_identity(
         .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
     if record.address.module_path == current_module && record.address.lexical_owner.is_none() {
         local
-            .entry(record.address.visible_name.clone())
+            .entry(record.address.textual_name.as_str().to_owned())
             .or_default()
             .push(identity.clone());
     }
@@ -2358,12 +2351,12 @@ fn seat_local_identity(
 fn top_level_module_identities(
     snapshot: &TextualMetadataSnapshot,
     current_module: &[String],
-) -> BTreeMap<String, Vec<VocabularyEncodedId>> {
-    let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
+) -> BTreeMap<String, Vec<EncodedName>> {
+    let mut local = BTreeMap::<String, Vec<EncodedName>>::new();
     for record in snapshot.records() {
         if record.address.module_path == current_module && record.address.lexical_owner.is_none() {
             local
-                .entry(record.address.visible_name.clone())
+                .entry(record.address.textual_name.as_str().to_owned())
                 .or_default()
                 .push(record.encoded_name.clone());
         }
@@ -2373,7 +2366,7 @@ fn top_level_module_identities(
 
 fn require_schema<'a>(
     schemas: SchemaView<'a>,
-    identity: &VocabularyEncodedId,
+    identity: &EncodedName,
     expected: ExpectedSchema,
 ) -> Result<&'a IdentitySchema, BootstrapReadError> {
     let schema = schemas
@@ -2416,11 +2409,11 @@ fn require_schema<'a>(
 
 fn resolve_visible_identity(
     spelling: &str,
-    local: impl IntoIterator<Item = VocabularyEncodedId>,
-    imported: &BTreeMap<String, Vec<VocabularyEncodedId>>,
+    local: impl IntoIterator<Item = EncodedName>,
+    imported: &BTreeMap<String, Vec<EncodedName>>,
     namespace: ReferenceNamespace,
     authority: ResolutionAuthority<'_>,
-) -> Result<VocabularyEncodedId, BootstrapReadError> {
+) -> Result<EncodedName, BootstrapReadError> {
     let mut candidates = local.into_iter().collect::<Vec<_>>();
     candidates.extend(imported.get(spelling).into_iter().flatten().cloned());
     let prior_candidates = match namespace {
@@ -2521,7 +2514,7 @@ impl<'a> AssignmentCursor<'a> {
         &mut self,
         spelling: &str,
         purpose: DeclarationPurpose,
-    ) -> Result<(VocabularyEncodedId, DeclarationOccurrence), BootstrapReadError> {
+    ) -> Result<(EncodedName, DeclarationOccurrence), BootstrapReadError> {
         let Some(planned) = self.declarations.get(self.next) else {
             return Err(BootstrapReadError::MissingAssignment(self.next as u32));
         };
@@ -3078,7 +3071,7 @@ fn reify_table(
 }
 
 struct ParameterScope {
-    owner: VocabularyEncodedId,
+    owner: EncodedName,
     next: u32,
     inferred: BTreeMap<Vec<u8>, LocalParameter>,
     named: BTreeMap<String, (Vec<u8>, LocalParameter)>,
@@ -3086,7 +3079,7 @@ struct ParameterScope {
 }
 
 impl ParameterScope {
-    fn new(owner: VocabularyEncodedId, canonical_order: &CanonicalIdentityOrder) -> Self {
+    fn new(owner: EncodedName, canonical_order: &CanonicalIdentityOrder) -> Self {
         Self {
             owner,
             next: 0,
@@ -3099,11 +3092,11 @@ impl ParameterScope {
     fn binder(
         &mut self,
         name: Option<&str>,
-        traits: &[VocabularyEncodedId],
+        traits: &[EncodedName],
     ) -> Result<ParameterBinder, BootstrapReadError> {
         let key = normalized_trait_key(traits, &self.canonical_order)?;
         if let Some(name) = name {
-            validate_visible_name(name)?;
+            validate_textual_name(name)?;
             if let Some((prior, parameter)) = self.named.get(name) {
                 if prior != &key {
                     return Err(BootstrapReadError::ConflictingNamedParameter {
@@ -3141,7 +3134,7 @@ impl ParameterScope {
 }
 
 fn normalized_trait_key(
-    traits: &[VocabularyEncodedId],
+    traits: &[EncodedName],
     canonical_order: &CanonicalIdentityOrder,
 ) -> Result<Vec<u8>, BootstrapReadError> {
     let mut key = Vec::new();
@@ -3273,7 +3266,7 @@ fn schema_role_for_purpose(purpose: DeclarationPurpose) -> SchemaRole {
     }
 }
 
-fn declaration_identity(declaration: &Declaration) -> &VocabularyEncodedId {
+fn declaration_identity(declaration: &Declaration) -> &EncodedName {
     match declaration {
         Declaration::Type(declaration) => &declaration.name,
         Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => &declaration.name,
@@ -3314,7 +3307,7 @@ fn canonicalize_imports(
 
 fn collect_document_references(
     body: &BootstrapBody,
-    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+    references: &mut Vec<(EncodedName, ReferenceNamespace)>,
 ) {
     match body {
         BootstrapBody::Interface(body) => {
@@ -3380,7 +3373,7 @@ fn collect_document_references(
 
 fn collect_type_declaration_references(
     declaration: &TypeDeclaration,
-    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+    references: &mut Vec<(EncodedName, ReferenceNamespace)>,
 ) {
     match &declaration.body {
         TypeBody::Newtype(expression) => collect_expression_references(expression, references),
@@ -3409,7 +3402,7 @@ fn collect_type_declaration_references(
 
 fn collect_expression_references(
     expression: &TypeExpression,
-    references: &mut Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+    references: &mut Vec<(EncodedName, ReferenceNamespace)>,
 ) {
     match expression {
         TypeExpression::Reference(identity) => {
@@ -3434,7 +3427,7 @@ fn collect_expression_references(
 }
 
 fn sort_identities(
-    identities: &mut [VocabularyEncodedId],
+    identities: &mut [EncodedName],
     canonical_order: &CanonicalIdentityOrder,
 ) -> Result<(), BootstrapReadError> {
     for identity in identities.iter() {
@@ -3453,7 +3446,7 @@ fn sort_identities(
 
 fn sort_by_identity<T>(
     values: &mut [T],
-    identity: impl Fn(&T) -> &VocabularyEncodedId,
+    identity: impl Fn(&T) -> &EncodedName,
     canonical_order: &CanonicalIdentityOrder,
 ) -> Result<(), BootstrapReadError> {
     for value in values.iter() {

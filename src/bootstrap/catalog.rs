@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use signal_sema_translator::VocabularyEncodedId;
+use name_table::{EncodedName, TextualName};
 
 use super::error::BootstrapReadError;
 use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaContract};
@@ -14,23 +14,23 @@ use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaCo
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TextualProjectionAddress {
     pub module_path: Vec<String>,
-    pub lexical_owner: Option<VocabularyEncodedId>,
-    pub visible_name: String,
+    pub lexical_owner: Option<EncodedName>,
+    pub textual_name: TextualName,
 }
 
 /// One textual projection record. It carries no semantic class information.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextualMetadataRecord {
     pub address: TextualProjectionAddress,
-    pub encoded_name: VocabularyEncodedId,
+    pub encoded_name: EncodedName,
 }
 
 /// An immutable bidirectional one-record-per-object textual snapshot.
 #[derive(Clone, Debug)]
 pub struct TextualMetadataSnapshot {
     records: Vec<TextualMetadataRecord>,
-    by_identity: BTreeMap<VocabularyEncodedId, usize>,
-    by_projection: BTreeMap<TextualProjectionAddress, VocabularyEncodedId>,
+    by_identity: BTreeMap<EncodedName, usize>,
+    by_projection: BTreeMap<TextualProjectionAddress, EncodedName>,
 }
 
 impl PartialEq for TextualMetadataSnapshot {
@@ -52,7 +52,7 @@ impl TextualMetadataSnapshot {
         let mut by_projection = BTreeMap::new();
         for (index, record) in records.iter().enumerate() {
             validate_module_path(&record.address.module_path)?;
-            validate_visible_name(&record.address.visible_name)?;
+            validate_textual_name(record.address.textual_name.as_str())?;
             if by_identity
                 .insert(record.encoded_name.clone(), index)
                 .is_some()
@@ -68,7 +68,7 @@ impl TextualMetadataSnapshot {
                 return Err(BootstrapReadError::DuplicateMetadataProjectionAddress {
                     module_path: record.address.module_path.clone(),
                     lexical_owner: record.address.lexical_owner.clone(),
-                    name: record.address.visible_name.clone(),
+                    name: record.address.textual_name.as_str().to_owned(),
                 });
             }
         }
@@ -93,31 +93,31 @@ impl TextualMetadataSnapshot {
         &self.records
     }
 
-    pub fn record(&self, identity: &VocabularyEncodedId) -> Option<&TextualMetadataRecord> {
+    pub fn record(&self, identity: &EncodedName) -> Option<&TextualMetadataRecord> {
         self.by_identity
             .get(identity)
             .map(|index| &self.records[*index])
     }
 
-    pub fn spelling(&self, identity: &VocabularyEncodedId) -> Option<&str> {
+    pub fn spelling(&self, identity: &EncodedName) -> Option<&str> {
         self.record(identity)
-            .map(|record| record.address.visible_name.as_str())
+            .map(|record| record.address.textual_name.as_str())
     }
 
     pub fn identity_at(
         &self,
         module_path: &[String],
-        lexical_owner: Option<&VocabularyEncodedId>,
-        visible_name: &str,
-    ) -> Option<&VocabularyEncodedId> {
+        lexical_owner: Option<&EncodedName>,
+        textual_name: &str,
+    ) -> Option<&EncodedName> {
         self.by_projection.get(&TextualProjectionAddress {
             module_path: module_path.to_vec(),
             lexical_owner: lexical_owner.cloned(),
-            visible_name: visible_name.to_owned(),
+            textual_name: TextualName::new(textual_name),
         })
     }
 
-    pub(crate) fn identities(&self) -> impl Iterator<Item = &VocabularyEncodedId> {
+    pub(crate) fn identities(&self) -> impl Iterator<Item = &EncodedName> {
         self.by_identity.keys()
     }
 }
@@ -148,15 +148,15 @@ impl TextualMetadataTransition {
 /// anatomy participates in semantic ordering.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalIdentityOrder {
-    by_identity: BTreeMap<VocabularyEncodedId, Vec<u8>>,
+    by_identity: BTreeMap<EncodedName, Vec<u8>>,
 }
 
 impl CanonicalIdentityOrder {
     pub fn new(
-        entries: impl IntoIterator<Item = (VocabularyEncodedId, Vec<u8>)>,
+        entries: impl IntoIterator<Item = (EncodedName, Vec<u8>)>,
     ) -> Result<Self, BootstrapReadError> {
         let mut by_identity = BTreeMap::new();
-        let mut identities_by_bytes = BTreeMap::<Vec<u8>, VocabularyEncodedId>::new();
+        let mut identities_by_bytes = BTreeMap::<Vec<u8>, EncodedName>::new();
         for (identity, bytes) in entries {
             if bytes.is_empty() {
                 return Err(BootstrapReadError::EmptyCanonicalIdentityBytes(identity));
@@ -177,11 +177,11 @@ impl CanonicalIdentityOrder {
         Ok(Self { by_identity })
     }
 
-    pub fn bytes(&self, identity: &VocabularyEncodedId) -> Option<&[u8]> {
+    pub fn bytes(&self, identity: &EncodedName) -> Option<&[u8]> {
         self.by_identity.get(identity).map(Vec::as_slice)
     }
 
-    pub fn entries(&self) -> impl Iterator<Item = (&VocabularyEncodedId, &[u8])> {
+    pub fn entries(&self) -> impl Iterator<Item = (&EncodedName, &[u8])> {
         self.by_identity
             .iter()
             .map(|(identity, bytes)| (identity, bytes.as_slice()))
@@ -189,8 +189,8 @@ impl CanonicalIdentityOrder {
 
     pub fn compare(
         &self,
-        left: &VocabularyEncodedId,
-        right: &VocabularyEncodedId,
+        left: &EncodedName,
+        right: &EncodedName,
     ) -> Result<Ordering, BootstrapReadError> {
         let left = self
             .bytes(left)
@@ -201,13 +201,13 @@ impl CanonicalIdentityOrder {
         Ok(left.cmp(right))
     }
 
-    pub(crate) fn contains(&self, identity: &VocabularyEncodedId) -> bool {
+    pub(crate) fn contains(&self, identity: &EncodedName) -> bool {
         self.by_identity.contains_key(identity)
     }
 
     pub(crate) fn extended(
         &self,
-        additions: impl IntoIterator<Item = (VocabularyEncodedId, Vec<u8>)>,
+        additions: impl IntoIterator<Item = (EncodedName, Vec<u8>)>,
     ) -> Result<Self, BootstrapReadError> {
         let mut entries = self
             .by_identity
@@ -243,13 +243,13 @@ pub enum SchemaRole {
 /// intentional; a Stream identity can be both Shape and audited Nomos head.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentitySchema {
-    identity: VocabularyEncodedId,
+    identity: EncodedName,
     roles: BTreeSet<SchemaRole>,
 }
 
 impl IdentitySchema {
     pub fn new(
-        identity: VocabularyEncodedId,
+        identity: EncodedName,
         roles: impl IntoIterator<Item = SchemaRole>,
     ) -> Result<Self, BootstrapReadError> {
         let roles = roles.into_iter().collect::<BTreeSet<_>>();
@@ -262,7 +262,7 @@ impl IdentitySchema {
         Ok(Self { identity, roles })
     }
 
-    pub fn identity(&self) -> &VocabularyEncodedId {
+    pub fn identity(&self) -> &EncodedName {
         &self.identity
     }
 
@@ -303,7 +303,7 @@ fn admitted_role_set(roles: &BTreeSet<SchemaRole>) -> bool {
 /// Identity-keyed semantic schema authority.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IdentitySchemaCatalog {
-    entries: BTreeMap<VocabularyEncodedId, IdentitySchema>,
+    entries: BTreeMap<EncodedName, IdentitySchema>,
 }
 
 impl IdentitySchemaCatalog {
@@ -320,7 +320,7 @@ impl IdentitySchemaCatalog {
         })
     }
 
-    pub fn get(&self, identity: &VocabularyEncodedId) -> Option<&IdentitySchema> {
+    pub fn get(&self, identity: &EncodedName) -> Option<&IdentitySchema> {
         self.entries.get(identity)
     }
 
@@ -328,7 +328,7 @@ impl IdentitySchemaCatalog {
         self.entries.values()
     }
 
-    pub(crate) fn contains(&self, identity: &VocabularyEncodedId) -> bool {
+    pub(crate) fn contains(&self, identity: &EncodedName) -> bool {
         self.entries.contains_key(identity)
     }
 }
@@ -336,23 +336,23 @@ impl IdentitySchemaCatalog {
 /// Typed identities for the closed bootstrap prior vocabulary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootstrapPriorIdentities {
-    pub interface_kind: VocabularyEncodedId,
-    pub nexus_kind: VocabularyEncodedId,
-    pub sema_kind: VocabularyEncodedId,
-    pub input_role: VocabularyEncodedId,
-    pub output_role: VocabularyEncodedId,
-    pub refusal_role: VocabularyEncodedId,
-    pub string_type: VocabularyEncodedId,
-    pub integer_type: VocabularyEncodedId,
-    pub boolean_type: VocabularyEncodedId,
-    pub unit_type: VocabularyEncodedId,
-    pub vector_shape: VocabularyEncodedId,
-    pub option_shape: VocabularyEncodedId,
-    pub map_shape: VocabularyEncodedId,
-    pub result_shape: VocabularyEncodedId,
-    pub stream_nomos: VocabularyEncodedId,
-    pub stream_shape: VocabularyEncodedId,
-    pub stream_identity_shape: VocabularyEncodedId,
+    pub interface_kind: EncodedName,
+    pub nexus_kind: EncodedName,
+    pub sema_kind: EncodedName,
+    pub input_role: EncodedName,
+    pub output_role: EncodedName,
+    pub refusal_role: EncodedName,
+    pub string_type: EncodedName,
+    pub integer_type: EncodedName,
+    pub boolean_type: EncodedName,
+    pub unit_type: EncodedName,
+    pub vector_shape: EncodedName,
+    pub option_shape: EncodedName,
+    pub map_shape: EncodedName,
+    pub result_shape: EncodedName,
+    pub stream_nomos: EncodedName,
+    pub stream_shape: EncodedName,
+    pub stream_identity_shape: EncodedName,
 }
 
 /// Validated typed seating of all bootstrap priors.
@@ -536,7 +536,7 @@ impl BootstrapPriorVocabulary {
         }
     }
 
-    pub(crate) fn body_nominal_identities(&self) -> [&VocabularyEncodedId; 4] {
+    pub(crate) fn body_nominal_identities(&self) -> [&EncodedName; 4] {
         let ids = &self.identities;
         [
             &ids.string_type,
@@ -546,7 +546,7 @@ impl BootstrapPriorVocabulary {
         ]
     }
 
-    pub(crate) fn shape_identities(&self) -> [&VocabularyEncodedId; 6] {
+    pub(crate) fn shape_identities(&self) -> [&EncodedName; 6] {
         let ids = &self.identities;
         [
             &ids.vector_shape,
@@ -558,7 +558,7 @@ impl BootstrapPriorVocabulary {
         ]
     }
 
-    pub(crate) fn role_identity(&self, role: InterfaceRole) -> &VocabularyEncodedId {
+    pub(crate) fn role_identity(&self, role: InterfaceRole) -> &EncodedName {
         match role {
             InterfaceRole::Input => &self.identities.input_role,
             InterfaceRole::Output => &self.identities.output_role,
@@ -566,11 +566,11 @@ impl BootstrapPriorVocabulary {
         }
     }
 
-    pub(crate) fn is_fixed_identity(&self, identity: &VocabularyEncodedId) -> bool {
+    pub(crate) fn is_fixed_identity(&self, identity: &EncodedName) -> bool {
         self.fixed_identities().contains(&identity)
     }
 
-    pub(crate) fn fixed_identities(&self) -> [&VocabularyEncodedId; 16] {
+    pub(crate) fn fixed_identities(&self) -> [&EncodedName; 16] {
         let ids = &self.identities;
         [
             &ids.interface_kind,
@@ -703,11 +703,11 @@ pub(crate) fn validate_module_path(path: &[String]) -> Result<(), BootstrapReadE
     Ok(())
 }
 
-pub(crate) fn validate_visible_name(name: &str) -> Result<(), BootstrapReadError> {
+pub(crate) fn validate_textual_name(name: &str) -> Result<(), BootstrapReadError> {
     if is_safe_bare_name(name) {
         Ok(())
     } else {
-        Err(BootstrapReadError::InvalidVisibleName(name.to_owned()))
+        Err(BootstrapReadError::InvalidTextualName(name.to_owned()))
     }
 }
 

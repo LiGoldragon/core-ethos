@@ -1,6 +1,6 @@
 //! The one registry seating provisional root/order choices.
 
-use signal_sema_translator::VocabularyEncodedId;
+use name_table::EncodedName;
 
 use super::catalog::{BootstrapPriorVocabulary, TextualMetadataSnapshot};
 use super::error::BootstrapReadError;
@@ -21,7 +21,7 @@ pub enum BootstrapSectionSchema {
 #[derive(Clone, Debug)]
 pub(crate) struct RootSchema {
     pub(crate) kind: EthosKind,
-    pub(crate) kind_identity: VocabularyEncodedId,
+    pub(crate) kind_identity: EncodedName,
     pub(crate) sections: Vec<BootstrapSectionSchema>,
 }
 

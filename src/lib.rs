@@ -1,3 +1,5 @@
+#![allow(clippy::clone_on_copy)] // Legacy generic call sites intentionally accept opaque names.
+
 //! # core-ethos
 //!
 //! Strict bootstrap Ethos reading for the Protos language family.

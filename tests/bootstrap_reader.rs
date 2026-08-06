@@ -1,17 +1,23 @@
+#![allow(clippy::clone_on_copy)] // Fixtures duplicate opaque archive references deliberately.
+
 use std::collections::BTreeMap;
 
 use core_ethos::bootstrap::*;
-use encoded_name_table::LocalEncodedId;
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
+use name_table::{EncodedName, TextualName};
 
-fn id(local: u16) -> VocabularyEncodedId {
-    VocabularyEncodedId::new(VocabularyRoot::Universal, vec![LocalEncodedId::new(local)])
-        .expect("nonempty identity")
+fn id(local: u16) -> EncodedName {
+    opaque_name(0, local)
 }
 
-fn rust_id(local: u16) -> VocabularyEncodedId {
-    VocabularyEncodedId::new(VocabularyRoot::Rust, vec![LocalEncodedId::new(local)])
-        .expect("nonempty identity")
+fn rust_id(local: u16) -> EncodedName {
+    opaque_name(1, local)
+}
+
+fn opaque_name(namespace: u8, local: u16) -> EncodedName {
+    let mut bytes = [0; 16];
+    bytes[0] = namespace;
+    bytes[1..3].copy_from_slice(&local.to_le_bytes());
+    EncodedName::from_archive_bytes(bytes)
 }
 
 fn authority_bytes(local: u16) -> Vec<u8> {
@@ -117,15 +123,15 @@ type PreparedTransaction = PreparedBootstrapTransaction<FakeAuthority>;
 
 fn record(
     module: &[&str],
-    owner: Option<VocabularyEncodedId>,
+    owner: Option<EncodedName>,
     name: &str,
-    identity: VocabularyEncodedId,
+    identity: EncodedName,
 ) -> TextualMetadataRecord {
     TextualMetadataRecord {
         address: TextualProjectionAddress {
             module_path: module.iter().map(|part| (*part).to_owned()).collect(),
             lexical_owner: owner,
-            visible_name: name.to_owned(),
+            textual_name: TextualName::new(name),
         },
         encoded_name: identity,
     }
@@ -303,8 +309,8 @@ struct SealInputs {
     assignments: NamingAssignments,
     generated: GeneratedStreamAssignments,
     transition: TextualMetadataTransition,
-    authored: Vec<VocabularyEncodedId>,
-    stream_generated: BTreeMap<VocabularyEncodedId, (VocabularyEncodedId, VocabularyEncodedId)>,
+    authored: Vec<EncodedName>,
+    stream_generated: BTreeMap<EncodedName, (EncodedName, EncodedName)>,
 }
 
 fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> SealInputs {
@@ -396,7 +402,7 @@ fn existing_inputs(
     before: &TextualMetadataSnapshot,
     after: TextualMetadataSnapshot,
     module: &[&str],
-    generated_by_output: &BTreeMap<VocabularyEncodedId, (VocabularyEncodedId, VocabularyEncodedId)>,
+    generated_by_output: &BTreeMap<EncodedName, (EncodedName, EncodedName)>,
 ) -> SealInputs {
     let module = module
         .iter()
@@ -520,7 +526,7 @@ fn stable_edits_rename_move_delete_and_restart_without_reminting() {
     let mut renamed_records = committed.snapshot.records().to_vec();
     for metadata in &mut renamed_records {
         if metadata.encoded_name == keep {
-            metadata.address.visible_name = "Renamed".into();
+            metadata.address.textual_name = TextualName::new("Renamed");
         }
     }
     let renamed_snapshot = TextualMetadataSnapshot::new(renamed_records).unwrap();
@@ -618,7 +624,7 @@ fn exact_projection_addresses_are_unique_while_nested_siblings_reuse_spellings()
     let nested_same = snapshot
         .records()
         .iter()
-        .filter(|metadata| metadata.address.visible_name == "Same")
+        .filter(|metadata| metadata.address.textual_name.as_str() == "Same")
         .collect::<Vec<_>>();
     assert_eq!(nested_same.len(), 2);
     assert_ne!(
@@ -628,7 +634,7 @@ fn exact_projection_addresses_are_unique_while_nested_siblings_reuse_spellings()
     let nested_methods = snapshot
         .records()
         .iter()
-        .filter(|metadata| metadata.address.visible_name == "same")
+        .filter(|metadata| metadata.address.textual_name.as_str() == "same")
         .collect::<Vec<_>>();
     assert_eq!(nested_methods.len(), 2);
     assert_ne!(
@@ -1500,7 +1506,7 @@ fn seal_refuses_an_after_snapshot_that_makes_an_imported_reference_invisible() {
             .after()
             .records()
             .iter()
-            .filter(|metadata| metadata.address.visible_name != "External")
+            .filter(|metadata| metadata.address.textual_name.as_str() != "External")
             .cloned()
             .collect(),
     )
@@ -1723,10 +1729,13 @@ fn runtime_stream_values_use_registered_identity_and_the_same_stream_handle() {
 }
 
 #[test]
-fn archive_boundary_remains_explicitly_deferred() {
+fn validated_kind_body_has_a_direct_portable_true_name() {
     let fixture = make_fixture(&["app"], vec![]);
-    assert_eq!(
-        fixture.reader.archive_status(),
-        BootstrapArchiveStatus::NotYetArchived
+    let (_, _, transaction) = seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[]\n{[Request.String] [] [] []}",
     );
+    let first = transaction.body_true_name().unwrap();
+    let second = transaction.body_true_name().unwrap();
+    assert_eq!(first, second);
 }

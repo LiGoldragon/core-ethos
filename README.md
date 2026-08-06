@@ -99,18 +99,16 @@ order.
 
 Authored and generated assignments must be admitted by the injected naming
 authority and remain mutually collision-free. Bootstrap code never inspects an
-encoded identity's root/tag/chain anatomy. `New` identities must be absent from
+encoded identity's internal anatomy. `New` identities must be absent from
 metadata, schemas, and canonical authority; `Existing` identities must already
 exist with the exact reusable schema role. This makes unchanged rereads and
 stable rename/move/delete edits survive a persisted restart without reminting
 identities.
 
-Semantic archiving intentionally reports `BootstrapArchiveStatus::NotYetArchived`.
-Archiving now would freeze the current chain-shaped `VocabularyEncodedId` carrier
-before the random EncodedName substrate is settled. Source-only imports and
-textual projections are already excluded from semantic meaning; a validated
-archive/content-identity boundary belongs immediately after the identity substrate
-is stable.
+Each validated Interface, Nexus, or Sema body is its own portable rkyv value.
+`PreparedBootstrapTransaction::body_true_name` derives its `TrueName` directly
+from that strict body; source imports, textual projections, receipts, and
+authority state remain outside the content identity.
 
 ## Build and test
 

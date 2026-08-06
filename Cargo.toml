@@ -13,10 +13,10 @@ name = "core_ethos"
 path = "src/lib.rs"
 
 [dependencies]
-encoded-name-table       = { package = "name-table", git = "https://github.com/LiGoldragon/name-table.git", rev = "a22f48d8040ab9235f3552ad8654ff8e27b8157d" }
+content-identity         = { git = "https://github.com/LiGoldragon/content-identity.git", rev = "df1d25c7cd9e822ae03255e04ede59a00b78480b" }
+name-table               = { git = "https://github.com/LiGoldragon/name-table.git", rev = "7dd5db15c16b4246c83d049c759415d3252a7d43" }
 raw-discovery            = { git = "https://github.com/LiGoldragon/raw-discovery.git", rev = "25c2003ca02c5c2a7047ccd5629abfb698a90459" }
-structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "70ef879bc99eb247b7661169794ee189d45c62ff" }
-signal-sema-translator   = { git = "https://github.com/LiGoldragon/signal-sema-translator.git", rev = "3f41813dd63904c7e2b3da4382eff64ed1bf12fe" }
+structural-codec         = { git = "https://github.com/LiGoldragon/structural-codec.git", rev = "a3ff4dd1ff34" }
 rkyv                     = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                = "2"
 

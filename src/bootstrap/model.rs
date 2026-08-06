@@ -2,12 +2,24 @@
 
 use std::marker::PhantomData;
 
-use signal_sema_translator::VocabularyEncodedId;
+use name_table::{EncodedName, TrueNamed};
 
 use super::catalog::CanonicalIdentityOrder;
 
 /// One compatibility version written as three canonical decimal components.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
 pub struct EthosVersion {
     pub major: u64,
     pub minor: u64,
@@ -26,42 +38,75 @@ impl EthosVersion {
 }
 
 /// The closed set of provisional bootstrap roots.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
 pub enum EthosKind {
     Interface,
     Nexus,
     Sema,
 }
 
+/// Compile-time marker for the bootstrap grammar's structural vocabulary.
+///
+/// It carries no identity or hierarchy: every semantic reference is an
+/// opaque [`EncodedName`].
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub struct BootstrapLanguage;
+
 /// Retained compatibility metadata for one decoded file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EthosHeader {
     pub kind: EthosKind,
     pub version: EthosVersion,
 }
 
 /// A source-only import path and its nonempty selector vector.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ImportEntry {
     pub module_path: Vec<String>,
     pub imported_names: Vec<String>,
 }
 
 /// Source-only information needed to reproduce the authored projection.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(
+    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Default, Eq, PartialEq,
+)]
 pub struct BootstrapSourceProjection {
     pub imports: Vec<ImportEntry>,
 }
 
 /// A semantically decoded bootstrap document plus source-only projection data.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct DecodedBootstrap {
     pub document: BootstrapDocument,
     pub source: BootstrapSourceProjection,
 }
 
 /// The common envelope with a typed, kind-selected body.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct BootstrapDocument {
     pub header: EthosHeader,
     pub body: BootstrapBody,
@@ -69,7 +114,7 @@ pub struct BootstrapDocument {
 
 /// The three provisional root schemas. The enum is an implementation boundary,
 /// not a language-ontology claim.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum BootstrapBody {
     Interface(InterfaceBody),
     Nexus(NexusBody),
@@ -87,7 +132,19 @@ impl BootstrapBody {
 }
 
 /// One Interface-owned universal role.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
 pub enum InterfaceRole {
     Input,
     Output,
@@ -98,14 +155,14 @@ pub enum InterfaceRole {
 /// one. Authored Stream/Nomos declarations deliberately remain exclusive to
 /// Interface support Types: applying a Stream initiation declaration directly
 /// as Input/Output/Refusal has no coherent role-position semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum RoleEntry {
     Declaration(TypeDeclaration),
-    Reference(VocabularyEncodedId),
+    Reference(EncodedName),
 }
 
 impl RoleEntry {
-    pub(crate) fn target(&self) -> &VocabularyEncodedId {
+    pub(crate) fn target(&self) -> &EncodedName {
         match self {
             Self::Declaration(declaration) => &declaration.name,
             Self::Reference(reference) => reference,
@@ -114,14 +171,14 @@ impl RoleEntry {
 }
 
 /// A relation owned by the Interface root; it never mutates the target type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct InterfaceRoleMembership {
     pub role: InterfaceRole,
-    pub target: VocabularyEncodedId,
+    pub target: EncodedName,
 }
 
 /// Roles first, support declarations last.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct InterfaceBody {
     pub inputs: Vec<RoleEntry>,
     pub outputs: Vec<RoleEntry>,
@@ -133,80 +190,108 @@ pub struct InterfaceBody {
 }
 
 /// Traits first, signature-supporting declarations last.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct NexusBody {
     pub traits: Vec<TraitDeclaration>,
     pub types: Vec<Declaration>,
 }
 
 /// Persistent nominal declarations followed by their keyed tables.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct SemaBody {
     pub record_types: Vec<TypeDeclaration>,
     pub tables: Vec<TableDeclaration>,
 }
 
+// These are the strict, validated per-kind values. Their content identity is
+// the portable rkyv archive of the value itself; there is no projection or
+// wrapper body between validation and persistence.
+impl TrueNamed for InterfaceBody {}
+impl TrueNamed for NexusBody {}
+impl TrueNamed for SemaBody {}
+
 /// The deliberately closed bootstrap authored declaration algebra.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum Declaration {
     Type(TypeDeclaration),
     Nomos(NomosDeclaration),
 }
 
 /// Audited purpose-built Nomos alternatives.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum NomosDeclaration {
     StreamInitiation(StreamInitiationDeclaration),
 }
 
 /// The authored meaning of `Name.Stream.(Query Event)`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct StreamInitiationDeclaration {
     /// The authored name designates the eventual direct Stream output identity.
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub query: TypeExpression,
     pub event: TypeExpression,
 }
 
 /// A named plain nominal declaration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TypeDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub body: TypeBody,
 }
 
 /// Structural alternatives selected by the authored delimiter.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
+#[rkyv(
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
+)]
 pub enum TypeBody {
-    Newtype(TypeExpression),
-    Struct(Vec<TypeExpression>),
-    Enum(Vec<VariantDeclaration>),
+    Newtype(#[rkyv(omit_bounds)] TypeExpression),
+    Struct(#[rkyv(omit_bounds)] Vec<TypeExpression>),
+    Enum(#[rkyv(omit_bounds)] Vec<VariantDeclaration>),
 }
 
 /// A declaration scoped by its owning enum.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct VariantDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub body: VariantBody,
 }
 
 /// The strict unit, unary, and nonempty product variant alternatives.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
+#[rkyv(
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
+)]
 pub enum VariantBody {
     Unit,
-    Unary(TypeExpression),
-    Product(Vec<TypeExpression>),
+    Unary(#[rkyv(omit_bounds)] TypeExpression),
+    Product(#[rkyv(omit_bounds)] Vec<TypeExpression>),
 }
 
 /// A parameter identity local to one containing type or method declaration.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
 pub struct LocalParameter {
-    pub owner: VocabularyEncodedId,
+    pub owner: EncodedName,
     pub ordinal: u32,
 }
 
 /// The binder form is semantic and cannot be omitted from named requirements.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum ParameterBinder {
     Inferred(LocalParameter),
     Named {
@@ -224,25 +309,36 @@ impl ParameterBinder {
 }
 
 /// The strict recursive type-expression algebra.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
+#[rkyv(
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
+)]
 pub enum TypeExpression {
-    Reference(VocabularyEncodedId),
-    ShapeApplication(ShapeApplication),
+    Reference(EncodedName),
+    ShapeApplication(#[rkyv(omit_bounds)] ShapeApplication),
     TraitRequirement(TraitRequirement),
 }
 
 /// An identity registered as a Shape, applied at its catalog-defined arity.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
+#[rkyv(
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)),
+)]
 pub struct ShapeApplication {
-    pub shape: VocabularyEncodedId,
+    pub shape: EncodedName,
+    #[rkyv(omit_bounds)]
     pub arguments: Vec<TypeExpression>,
 }
 
 /// One local parameter constrained by a normalized, nonempty Trait vector.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TraitRequirement {
     pub(crate) binder: ParameterBinder,
-    pub(crate) required_traits: Vec<VocabularyEncodedId>,
+    pub(crate) required_traits: Vec<EncodedName>,
 }
 
 impl TraitRequirement {
@@ -250,35 +346,35 @@ impl TraitRequirement {
         &self.binder
     }
 
-    pub fn required_traits(&self) -> &[VocabularyEncodedId] {
+    pub fn required_traits(&self) -> &[EncodedName] {
         &self.required_traits
     }
 }
 
 /// The prepared generated declaration whose value is the query value.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct StreamInitiationInterfaceDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub query: TypeExpression,
 }
 
 /// The prepared direct `Stream<Event>` Output declaration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct StreamInterfaceDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub stream_of_event: ShapeApplication,
 }
 
 /// The prepared termination Input referencing the direct Stream Output.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct StreamTerminationInterfaceDeclaration {
-    pub name: VocabularyEncodedId,
-    pub stream_handle: VocabularyEncodedId,
+    pub name: EncodedName,
+    pub stream_handle: EncodedName,
 }
 
 /// Atomic Stream declarations and Interface-owned role relations prepared for
 /// an external store to commit or reject as one transaction.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct PreparedStreamGeneration {
     pub initiation: StreamInitiationInterfaceDeclaration,
     pub output: StreamInterfaceDeclaration,
@@ -287,47 +383,47 @@ pub struct PreparedStreamGeneration {
 }
 
 /// One behavioral Trait with zero or more scoped methods.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TraitDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub methods: Vec<MethodDeclaration>,
 }
 
 /// A method signature has zero or more parameters and one mandatory return.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct MethodDeclaration {
-    pub name: VocabularyEncodedId,
+    pub name: EncodedName,
     pub parameters: Vec<TypeExpression>,
     pub return_type: TypeExpression,
 }
 
 /// A keyed persistent table. Both leaves are strict persistent nominal refs.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TableDeclaration {
-    pub name: VocabularyEncodedId,
-    pub record_type: VocabularyEncodedId,
-    pub key_type: VocabularyEncodedId,
+    pub name: EncodedName,
+    pub record_type: EncodedName,
+    pub key_type: EncodedName,
 }
 
 /// Catalog identities underlying the validated runtime Stream carriers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStreamSchemaContract {
-    pub stream_shape: VocabularyEncodedId,
-    pub stream_identity_shape: VocabularyEncodedId,
+    pub stream_shape: EncodedName,
+    pub stream_identity_shape: EncodedName,
     pub stream_shape_arity: u16,
     pub stream_identity_shape_arity: u16,
 }
 
 /// A runtime Stream handle indexed by its Event type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStreamIdentity<Event> {
-    encoded_name: VocabularyEncodedId,
+    encoded_name: EncodedName,
     event: PhantomData<fn() -> Event>,
 }
 
 impl<Event> RuntimeStreamIdentity<Event> {
     pub fn new(
-        encoded_name: VocabularyEncodedId,
+        encoded_name: EncodedName,
         identities: &CanonicalIdentityOrder,
     ) -> Result<Self, RuntimeStreamValueError> {
         if !identities.contains(&encoded_name) {
@@ -339,7 +435,7 @@ impl<Event> RuntimeStreamIdentity<Event> {
         })
     }
 
-    pub const fn encoded_name(&self) -> &VocabularyEncodedId {
+    pub const fn encoded_name(&self) -> &EncodedName {
         &self.encoded_name
     }
 }
@@ -435,17 +531,10 @@ impl<Query, Event> RuntimeStreamValues<Query, Event> {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RuntimeStreamValueError {
     #[error("runtime Stream handle {0:?} is absent from the canonical identity registry")]
-    UnrecognizedHandle(VocabularyEncodedId),
+    UnrecognizedHandle(EncodedName),
     #[error("termination Stream {termination:?} differs from Stream value {stream:?}")]
     MismatchedTerminationStream {
-        stream: VocabularyEncodedId,
-        termination: VocabularyEncodedId,
+        stream: EncodedName,
+        termination: EncodedName,
     },
-}
-
-/// Archiving is deliberately deferred until the random EncodedName substrate is
-/// stable enough that an archive layout would not freeze today's chain carrier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BootstrapArchiveStatus {
-    NotYetArchived,
 }

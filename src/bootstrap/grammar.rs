@@ -3,14 +3,15 @@
 //! This layer owns delimiters and application shape only. Semantic alternatives
 //! are selected later from the expected bootstrap schema, never from spelling.
 
-use encoded_name_table::Name;
+use super::model::BootstrapLanguage;
+use name_table::EncodedName;
+use name_table::TextualName;
 use raw_discovery::{
     BlockTreeDiscoveryConfiguration, BoundaryDiscoveryConfiguration, BoundaryDiscoveryContext,
     BoundaryDiscoveryContextIdentifier, BoundaryDiscoveryTransition, CharacterSet, ProfileRevision,
     SealedTokenProfile, SourceBound, TokenProfileData, Trigger, TriggerDefinition,
     TriggerIdentifier, TriggerSet,
 };
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
 use structural_codec::{
     AcceptedDecodeForm, AddressedStructuralTable, AdjacentApplicationDelimitedHead,
     AdjacentApplicationDelimitedItems, AdjacentApplicationDelimitedRoot,
@@ -69,15 +70,15 @@ bootstrap_role!(BodySyntaxRole, 5106);
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 struct DocumentRecord {
-    root: Position<DocumentRootRole, VocabularyRoot>,
-    header: Position<HeaderSyntaxRole, VocabularyRoot>,
-    imports: Position<ImportsSyntaxRole, VocabularyRoot>,
-    body: Position<BodySyntaxRole, VocabularyRoot>,
+    root: Position<DocumentRootRole, BootstrapLanguage>,
+    header: Position<HeaderSyntaxRole, BootstrapLanguage>,
+    imports: Position<ImportsSyntaxRole, BootstrapLanguage>,
+    body: Position<BodySyntaxRole, BootstrapLanguage>,
 }
 
 impl DocumentRecord {
     fn new(
-        syntax: &EncodedTypeId<VocabularyRoot>,
+        syntax: &EncodedTypeId<BootstrapLanguage>,
     ) -> Result<Self, structural_codec::AuthoringError> {
         let sequence = OrderedSequence::try_new::<HeaderSyntaxRole>()?
             .then::<ImportsSyntaxRole>()?
@@ -93,8 +94,8 @@ impl DocumentRecord {
 
 struct DocumentRecordView<'a>(&'a DocumentRecord);
 
-impl BorrowedFieldView<VocabularyRoot> for DocumentRecordView<'_> {
-    fn expose<Visitor: FieldVisitor<VocabularyRoot>>(&self, visitor: &mut Visitor) {
+impl BorrowedFieldView<BootstrapLanguage> for DocumentRecordView<'_> {
+    fn expose<Visitor: FieldVisitor<BootstrapLanguage>>(&self, visitor: &mut Visitor) {
         visitor.field(&self.0.root);
         visitor.field(&self.0.header);
         visitor.field(&self.0.imports);
@@ -102,7 +103,7 @@ impl BorrowedFieldView<VocabularyRoot> for DocumentRecordView<'_> {
     }
 }
 
-impl StructureRecord<VocabularyRoot> for DocumentRecord {
+impl StructureRecord<BootstrapLanguage> for DocumentRecord {
     type View<'record> = DocumentRecordView<'record>;
 
     fn root_role(&self) -> StableRoleId {
@@ -116,14 +117,14 @@ impl StructureRecord<VocabularyRoot> for DocumentRecord {
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 struct DelimitedRecord {
-    root: Position<DelimitedRootRole, VocabularyRoot>,
-    items: Position<DelimitedItemsRole, VocabularyRoot>,
+    root: Position<DelimitedRootRole, BootstrapLanguage>,
+    items: Position<DelimitedItemsRole, BootstrapLanguage>,
 }
 
 impl DelimitedRecord {
     fn new(
         boundary: TriggerIdentifier,
-        syntax: &EncodedTypeId<VocabularyRoot>,
+        syntax: &EncodedTypeId<BootstrapLanguage>,
     ) -> Result<Self, structural_codec::AuthoringError> {
         let items = Position::try_new(SharedDescriptor::Repeated {
             minimum: 0,
@@ -142,14 +143,14 @@ impl DelimitedRecord {
 
 struct DelimitedRecordView<'a>(&'a DelimitedRecord);
 
-impl BorrowedFieldView<VocabularyRoot> for DelimitedRecordView<'_> {
-    fn expose<Visitor: FieldVisitor<VocabularyRoot>>(&self, visitor: &mut Visitor) {
+impl BorrowedFieldView<BootstrapLanguage> for DelimitedRecordView<'_> {
+    fn expose<Visitor: FieldVisitor<BootstrapLanguage>>(&self, visitor: &mut Visitor) {
         visitor.field(&self.0.root);
         visitor.field(&self.0.items);
     }
 }
 
-impl StructureRecord<VocabularyRoot> for DelimitedRecord {
+impl StructureRecord<BootstrapLanguage> for DelimitedRecord {
     type View<'record> = DelimitedRecordView<'record>;
 
     fn root_role(&self) -> StableRoleId {
@@ -161,8 +162,10 @@ impl StructureRecord<VocabularyRoot> for DelimitedRecord {
     }
 }
 
-type BootstrapRule =
-    RuleCoproduct<DocumentRecord, RuleCoproduct<DelimitedRecord, StructuralRule<VocabularyRoot>>>;
+type BootstrapRule = RuleCoproduct<
+    DocumentRecord,
+    RuleCoproduct<DelimitedRecord, StructuralRule<BootstrapLanguage>>,
+>;
 
 fn document_rule(rule: DocumentRecord) -> BootstrapRule {
     RuleCoproduct::Left(rule)
@@ -172,11 +175,11 @@ fn delimited_rule(rule: DelimitedRecord) -> BootstrapRule {
     RuleCoproduct::Right(RuleCoproduct::Left(rule))
 }
 
-fn structural_rule(rule: StructuralRule<VocabularyRoot>) -> BootstrapRule {
+fn structural_rule(rule: StructuralRule<BootstrapLanguage>) -> BootstrapRule {
     RuleCoproduct::Right(RuleCoproduct::Right(rule))
 }
 
-fn delegate(target: &EncodedTypeId<VocabularyRoot>) -> SharedDescriptor<VocabularyRoot> {
+fn delegate(target: &EncodedTypeId<BootstrapLanguage>) -> SharedDescriptor<BootstrapLanguage> {
     SharedDescriptor::Delegate {
         target: target.clone(),
         payload: None,
@@ -187,8 +190,8 @@ fn delegate(target: &EncodedTypeId<VocabularyRoot>) -> SharedDescriptor<Vocabula
 /// external; the grammar derives no hierarchical child identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootstrapGrammarIdentities {
-    pub document: VocabularyEncodedId,
-    pub syntax: VocabularyEncodedId,
+    pub document: EncodedName,
+    pub syntax: EncodedName,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -257,20 +260,20 @@ pub(crate) struct StructuralDocumentPlan {
 /// The single shared structural evaluator used for all three body roots.
 #[derive(Clone, Debug)]
 pub(crate) struct BootstrapGrammar {
-    document: EncodedTypeId<VocabularyRoot>,
+    document: EncodedTypeId<BootstrapLanguage>,
     constructors: SyntaxConstructors,
-    table: AddressedStructuralTable<VocabularyRoot, BootstrapRule>,
+    table: AddressedStructuralTable<BootstrapLanguage, BootstrapRule>,
 }
 
 #[derive(Clone, Debug)]
 struct SyntaxConstructors {
-    atom: EncodedConstructorId<VocabularyRoot>,
-    application: EncodedConstructorId<VocabularyRoot>,
-    angle: EncodedConstructorId<VocabularyRoot>,
-    brace: EncodedConstructorId<VocabularyRoot>,
-    square: EncodedConstructorId<VocabularyRoot>,
-    parenthesis: EncodedConstructorId<VocabularyRoot>,
-    guillemet: EncodedConstructorId<VocabularyRoot>,
+    atom: EncodedConstructorId<BootstrapLanguage>,
+    application: EncodedConstructorId<BootstrapLanguage>,
+    angle: EncodedConstructorId<BootstrapLanguage>,
+    brace: EncodedConstructorId<BootstrapLanguage>,
+    square: EncodedConstructorId<BootstrapLanguage>,
+    parenthesis: EncodedConstructorId<BootstrapLanguage>,
+    guillemet: EncodedConstructorId<BootstrapLanguage>,
 }
 
 impl BootstrapGrammar {
@@ -380,7 +383,7 @@ impl BootstrapGrammar {
 
     fn syntax_from_field(
         &self,
-        planned_field: &PlannedFieldValue<VocabularyRoot>,
+        planned_field: &PlannedFieldValue<BootstrapLanguage>,
     ) -> Result<SyntaxNode, BootstrapReadError> {
         let value = delegated(planned_field, "syntax node")?;
         let bound = value
@@ -446,9 +449,9 @@ impl BootstrapGrammar {
 }
 
 fn typed_entry(
-    type_id: EncodedTypeId<VocabularyRoot>,
+    type_id: EncodedTypeId<BootstrapLanguage>,
     rules: Vec<(u16, BootstrapRule)>,
-) -> StructuralEntry<VocabularyRoot, BootstrapRule> {
+) -> StructuralEntry<BootstrapLanguage, BootstrapRule> {
     StructuralEntry::new(
         type_id.clone(),
         rules
@@ -548,25 +551,25 @@ fn bootstrap_discovery() -> BlockTreeDiscoveryConfiguration {
 
 struct NoNames;
 
-impl EncodedNameResolver<VocabularyRoot> for NoNames {
-    fn resolve(&self, _encoded_id: &structural_codec::EncodedId<VocabularyRoot>) -> Option<&Name> {
+impl EncodedNameResolver<BootstrapLanguage> for NoNames {
+    fn resolve(&self, _encoded_name: &EncodedName) -> Option<&TextualName> {
         None
     }
 }
 
 fn field<'a, Role: FieldRole>(
-    value: &'a PlannedStructuralValue<VocabularyRoot>,
+    value: &'a PlannedStructuralValue<BootstrapLanguage>,
     expected: &'static str,
-) -> Result<&'a PlannedFieldValue<VocabularyRoot>, BootstrapReadError> {
+) -> Result<&'a PlannedFieldValue<BootstrapLanguage>, BootstrapReadError> {
     value
         .field::<Role>()
         .ok_or_else(|| unexpected(value, expected))
 }
 
 fn delegated<'a>(
-    field: &'a PlannedFieldValue<VocabularyRoot>,
+    field: &'a PlannedFieldValue<BootstrapLanguage>,
     expected: &'static str,
-) -> Result<&'a PlannedStructuralValue<VocabularyRoot>, BootstrapReadError> {
+) -> Result<&'a PlannedStructuralValue<BootstrapLanguage>, BootstrapReadError> {
     match field {
         PlannedFieldValue::Delegated(value) => Ok(value),
         _ => Err(BootstrapReadError::UnexpectedStructure {
@@ -578,9 +581,9 @@ fn delegated<'a>(
 }
 
 fn repeated<'a, Role: FieldRole>(
-    value: &'a PlannedStructuralValue<VocabularyRoot>,
+    value: &'a PlannedStructuralValue<BootstrapLanguage>,
     expected: &'static str,
-) -> Result<&'a [PlannedFieldValue<VocabularyRoot>], BootstrapReadError> {
+) -> Result<&'a [PlannedFieldValue<BootstrapLanguage>], BootstrapReadError> {
     match field::<Role>(value, expected)? {
         PlannedFieldValue::Repeated(items) => Ok(items),
         _ => Err(unexpected(value, expected)),
@@ -588,7 +591,7 @@ fn repeated<'a, Role: FieldRole>(
 }
 
 fn scalar_text<'a, Role: FieldRole>(
-    value: &'a PlannedStructuralValue<VocabularyRoot>,
+    value: &'a PlannedStructuralValue<BootstrapLanguage>,
     expected: &'static str,
 ) -> Result<(&'a str, SourceBound), BootstrapReadError> {
     match field::<Role>(value, expected)? {
@@ -603,7 +606,7 @@ fn scalar_text<'a, Role: FieldRole>(
 }
 
 fn unexpected(
-    value: &PlannedStructuralValue<VocabularyRoot>,
+    value: &PlannedStructuralValue<BootstrapLanguage>,
     expected: &'static str,
 ) -> BootstrapReadError {
     let start = value

@@ -190,8 +190,7 @@ mismatched handles are typed refusals.
 
 ## Archive boundary
 
-`BootstrapArchiveStatus::NotYetArchived` is explicit. A durable archive today
-would freeze the chain-shaped identity carrier the bootstrap otherwise treats as
-opaque. Once random EncodedName is stable, the semantic document and prepared
-schema additions can gain a validated archive/content-identity boundary while
-continuing to exclude imports and textual metadata.
+Each validated Interface, Nexus, or Sema body is directly portable through
+rkyv and receives its `TrueName` from those bytes. `EncodedName` is opaque
+reference data only; source imports, `TextualName` projection, authority
+receipts, and schema staging are excluded from the strict body identity.

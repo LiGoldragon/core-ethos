@@ -1,7 +1,7 @@
 //! Canonical textual projection over the same bidirectional name snapshot used
 //! during sealing.
 
-use signal_sema_translator::VocabularyEncodedId;
+use name_table::EncodedName;
 
 use super::catalog::TextualMetadataSnapshot;
 use super::error::BootstrapWriteError;
@@ -62,7 +62,7 @@ fn write_section(
     schema: SectionSchema,
     section: RootSemanticSectionRef<'_>,
     snapshot: &TextualMetadataSnapshot,
-    stream_nomos: VocabularyEncodedId,
+    stream_nomos: EncodedName,
 ) -> Result<(), BootstrapWriteError> {
     output.push_str("  [");
     match (schema, section) {
@@ -119,7 +119,7 @@ fn write_declaration(
     output: &mut String,
     declaration: &Declaration,
     snapshot: &TextualMetadataSnapshot,
-    stream_nomos: &VocabularyEncodedId,
+    stream_nomos: &EncodedName,
 ) -> Result<(), BootstrapWriteError> {
     match declaration {
         Declaration::Type(declaration) => write_type_declaration(output, declaration, snapshot),
@@ -240,7 +240,7 @@ fn write_type_expression(
 
 fn spelling<'a>(
     snapshot: &'a TextualMetadataSnapshot,
-    identity: &VocabularyEncodedId,
+    identity: &EncodedName,
 ) -> Result<&'a str, BootstrapWriteError> {
     snapshot
         .spelling(identity)
