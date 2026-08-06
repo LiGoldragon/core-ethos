@@ -324,14 +324,13 @@ impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority
         &self.decoded
     }
 
-    /// Derive the content identity of the strict validated kind body itself.
-    /// Textual projection and authority receipts are intentionally outside it.
-    pub fn body_true_name(&self) -> Result<TrueName, ArchiveError> {
-        match &self.decoded.document.body {
-            BootstrapBody::Interface(body) => body.true_name(),
-            BootstrapBody::Nexus(body) => body.true_name(),
-            BootstrapBody::Sema(body) => body.true_name(),
-        }
+    /// One content identity for every living authority seat. Each value is the
+    /// strict declaration type itself, never a document aggregate.
+    pub fn strict_value_true_names(&self) -> Result<BTreeMap<EncodedName, TrueName>, ArchiveError> {
+        let mut names = BTreeMap::new();
+        collect_strict_value_true_names(&self.decoded.document.body, &mut names)?;
+        debug_assert!(self.generated_streams.is_empty());
+        Ok(names)
     }
 
     pub fn generated_streams(&self) -> &[PreparedStreamGeneration] {
@@ -426,6 +425,13 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         }
         for (section, field) in root.sections.iter().zip(fields) {
             planner.discover_section(*section, field, &external, &self.catalog)?;
+        }
+        if planner
+            .declarations
+            .iter()
+            .any(|declaration| declaration.purpose == DeclarationPurpose::StreamInitiation)
+        {
+            return Err(BootstrapReadError::BundledStreamUnsupported);
         }
         Ok(BootstrapReadPlan {
             structural,
@@ -581,6 +587,9 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 body: decoded.document.body.kind(),
             });
         }
+        if contains_bundled_stream(&decoded.document.body) {
+            return Err(BootstrapReadError::BundledStreamUnsupported);
+        }
         if !self
             .catalog
             .versions()
@@ -668,6 +677,16 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             .keys()
             .cloned()
             .collect::<BTreeSet<_>>();
+        let strict_value_identities = transaction
+            .strict_value_true_names()
+            .map_err(BootstrapReadError::StrictValueArchive)?
+            .into_keys()
+            .collect::<BTreeSet<_>>();
+        if disposition_identities != strict_value_identities {
+            return Err(BootstrapReadError::InvalidPreparedModel(
+                "authority dispositions do not exactly equal strict per-object values",
+            ));
+        }
         if &disposition_identities != declared_identities {
             return Err(BootstrapReadError::InvalidPreparedModel(
                 "authority dispositions do not exactly equal prepared declarations",
@@ -3271,6 +3290,95 @@ fn declaration_identity(declaration: &Declaration) -> &EncodedName {
         Declaration::Type(declaration) => &declaration.name,
         Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => &declaration.name,
     }
+}
+
+fn collect_strict_value_true_names(
+    body: &BootstrapBody,
+    names: &mut BTreeMap<EncodedName, TrueName>,
+) -> Result<(), ArchiveError> {
+    match body {
+        BootstrapBody::Interface(body) => {
+            for entry in body
+                .inputs
+                .iter()
+                .chain(&body.outputs)
+                .chain(&body.refusals)
+            {
+                if let RoleEntry::Declaration(declaration) = entry {
+                    collect_type_true_names(declaration, names)?;
+                }
+            }
+            for declaration in &body.types {
+                match declaration {
+                    Declaration::Type(declaration) => collect_type_true_names(declaration, names)?,
+                    // Bundled Stream is rejected before assignment inputs are
+                    // accepted, so it cannot occupy a living authority seat.
+                    Declaration::Nomos(_) => unreachable!("Stream is refused during planning"),
+                }
+            }
+        }
+        BootstrapBody::Nexus(body) => {
+            for declaration in &body.traits {
+                insert_strict_true_name(names, declaration.name, declaration.true_name()?);
+                for method in &declaration.methods {
+                    insert_strict_true_name(names, method.name, method.true_name()?);
+                }
+            }
+            for declaration in &body.types {
+                match declaration {
+                    Declaration::Type(declaration) => collect_type_true_names(declaration, names)?,
+                    Declaration::Nomos(_) => unreachable!("Stream is refused during planning"),
+                }
+            }
+        }
+        BootstrapBody::Sema(body) => {
+            for declaration in &body.record_types {
+                collect_type_true_names(declaration, names)?;
+            }
+            for declaration in &body.tables {
+                insert_strict_true_name(names, declaration.name, declaration.true_name()?);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn contains_bundled_stream(body: &BootstrapBody) -> bool {
+    match body {
+        BootstrapBody::Interface(body) => body
+            .types
+            .iter()
+            .any(|declaration| matches!(declaration, Declaration::Nomos(_))),
+        BootstrapBody::Nexus(body) => body
+            .types
+            .iter()
+            .any(|declaration| matches!(declaration, Declaration::Nomos(_))),
+        BootstrapBody::Sema(_) => false,
+    }
+}
+
+fn collect_type_true_names(
+    declaration: &TypeDeclaration,
+    names: &mut BTreeMap<EncodedName, TrueName>,
+) -> Result<(), ArchiveError> {
+    insert_strict_true_name(names, declaration.name, declaration.true_name()?);
+    if let TypeBody::Enum(variants) = &declaration.body {
+        for variant in variants {
+            insert_strict_true_name(names, variant.name, variant.true_name()?);
+        }
+    }
+    Ok(())
+}
+
+fn insert_strict_true_name(
+    names: &mut BTreeMap<EncodedName, TrueName>,
+    identity: EncodedName,
+    true_name: TrueName,
+) {
+    assert!(
+        names.insert(identity, true_name).is_none(),
+        "validated bootstrap declarations have distinct authority seats"
+    );
 }
 
 fn canonicalize_imports(

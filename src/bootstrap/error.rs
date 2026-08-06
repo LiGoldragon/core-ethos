@@ -21,6 +21,10 @@ pub enum BootstrapBuildError {
 /// Failure in catalog construction, discovery, planning, or semantic sealing.
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapReadError {
+    #[error("bundled Stream declarations are not admitted by this authority path")]
+    BundledStreamUnsupported,
+    #[error("strict bootstrap value cannot be archived: {0}")]
+    StrictValueArchive(#[from] content_identity::ArchiveError),
     #[error("structural discovery or evaluation failed: {0}")]
     Structural(Box<structural_codec::DecodeError<BootstrapLanguage>>),
     #[error("expected {expected} at byte {start}, found {found}")]

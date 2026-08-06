@@ -190,7 +190,9 @@ mismatched handles are typed refusals.
 
 ## Archive boundary
 
-Each validated Interface, Nexus, or Sema body is directly portable through
-rkyv and receives its `TrueName` from those bytes. `EncodedName` is opaque
-reference data only; source imports, `TextualName` projection, authority
-receipts, and schema staging are excluded from the strict body identity.
+Each living authority seat—Type/PersistentType, Variant, Trait, Method, and
+Table—is directly portable through rkyv and receives its `TrueName` from that
+exact strict declaration value. `EncodedName` is opaque reference data only;
+source imports, `TextualName` projection, receipts, and staging are excluded
+from individual value identity. No transaction or document aggregate has a
+`TrueName`.

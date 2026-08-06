@@ -203,12 +203,14 @@ pub struct SemaBody {
     pub tables: Vec<TableDeclaration>,
 }
 
-// These are the strict, validated per-kind values. Their content identity is
-// the portable rkyv archive of the value itself; there is no projection or
-// wrapper body between validation and persistence.
-impl TrueNamed for InterfaceBody {}
-impl TrueNamed for NexusBody {}
-impl TrueNamed for SemaBody {}
+// These are the strict filled values occupied by individual authority seats.
+// Each hashes its own portable rkyv archive directly, with no serializer or
+// aggregate-document substitute.
+impl TrueNamed for TypeDeclaration {}
+impl TrueNamed for VariantDeclaration {}
+impl TrueNamed for TraitDeclaration {}
+impl TrueNamed for MethodDeclaration {}
+impl TrueNamed for TableDeclaration {}
 
 /// The deliberately closed bootstrap authored declaration algebra.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]

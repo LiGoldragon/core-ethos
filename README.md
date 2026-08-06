@@ -21,8 +21,7 @@ The `bootstrap` module separates five authorities that must never collapse:
    identity.
 4. `NamingAssignments` supplies exactly one externally authorized identity and
    `Existing`/`New` disposition for every authored occurrence. New identities
-   carry authority-supplied canonical ordering bytes. Generated Stream identities
-   use the same dispositions in their separate assignment channel.
+   carry authority-supplied canonical ordering bytes.
 5. `TextualMetadataTransition` is a public before→after proposal, never proof of
    its own authority. `BootstrapReader::seal` presents the complete
    `PreparedBootstrapDraft` and an authority-specific proof to the injected
@@ -38,7 +37,7 @@ authority. Untrusted parts remain a `PreparedBootstrapDraft` until
 `validate_draft` obtains a receipt and succeeds. Reader validation and every
 write re-verify that receipt against the exact reconstructed draft before using
 the transition. No magic spelling exists for
-file kinds, primitives, Shapes, roles, Stream, or StreamIdentity: every visible
+file kinds, primitives, Shapes, and roles: every visible
 projection comes from metadata attached to a typed prior identity.
 
 ## Strict bootstrap projections
@@ -65,27 +64,12 @@ the syntactically applicable namespace before exact role data is checked. Shape
 and Nomos heads are closed over typed prior-vocabulary identities; an imported
 object cannot become language syntax merely by registering a Shape or Nomos role.
 
-## Stream transaction
+## Bundled Stream refusal
 
-`Name.Stream.(Query Event)` decodes as the authored algebra
-`Declaration::Nomos(NomosDeclaration::StreamInitiation(...))`. The authored name
-is assigned like every other source occurrence and designates the direct Stream
-Output identity.
-
-The separate generated assignment supplies exactly two more identities. Sealing
-prepares, without storing:
-
-- initiation Input containing the Query type;
-- direct `Stream<Event>` Output;
-- termination Input referencing that direct Output;
-- exactly Input, Output, Input role relations in that order.
-
-The `BootstrapPriorVocabulary::runtime_stream_contract` explicitly seats the
-one-argument Stream and StreamIdentity Shapes. Strict runtime carriers model the
-query initiation value, a `RuntimeStream<Event>` containing only its registered
-typed `RuntimeStreamIdentity<Event>`, and termination containing the exact same
-`RuntimeStream<Event>` value.
-Live registries, routing behavior, and storage commitment remain outside Ethos.
+The former bundled `Name.Stream.(Query Event)` grammar is not a bootstrap
+authority operation. Planning refuses it before assignments, generated seats,
+metadata staging, or authorization can exist. Its later replacement is outside
+this crate's current authority path.
 
 ## Identity and archive boundary
 
@@ -97,18 +81,18 @@ Every unordered named semantic collection is normalized by those bytes while
 positional struct fields, method parameters, and Shape arguments retain authored
 order.
 
-Authored and generated assignments must be admitted by the injected naming
-authority and remain mutually collision-free. Bootstrap code never inspects an
+Authored assignments must be admitted by the injected naming authority and
+remain mutually collision-free. Bootstrap code never inspects an
 encoded identity's internal anatomy. `New` identities must be absent from
 metadata, schemas, and canonical authority; `Existing` identities must already
 exist with the exact reusable schema role. This makes unchanged rereads and
 stable rename/move/delete edits survive a persisted restart without reminting
 identities.
 
-Each validated Interface, Nexus, or Sema body is its own portable rkyv value.
-`PreparedBootstrapTransaction::body_true_name` derives its `TrueName` directly
-from that strict body; source imports, textual projections, receipts, and
-authority state remain outside the content identity.
+Every living authority seat—Type/PersistentType, Variant, Trait, Method, and
+Table—derives a `TrueName` from its own strict declaration value's portable rkyv
+bytes. `strict_value_true_names` proves the seat keys exactly equal the prepared
+identity dispositions; it never hashes a transaction or document aggregate.
 
 ## Build and test
 
