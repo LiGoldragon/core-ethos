@@ -20,6 +20,21 @@ fn authority_bytes(local: u16) -> Vec<u8> {
     bytes
 }
 
+const AUTHORITY_PROOF: u64 = 0x0065_7468_6f73;
+
+#[derive(Clone, Debug)]
+struct FakeAuthority;
+
+impl BootstrapNamingAuthority for FakeAuthority {
+    type Proof = u64;
+
+    fn verify(&self, request: BootstrapNamingAuthorityRequest<'_>, proof: &Self::Proof) -> bool {
+        let _proposal = request.transition();
+        let _dispositions = request.identity_dispositions();
+        *proof == AUTHORITY_PROOF
+    }
+}
+
 fn record(
     module: &[&str],
     owner: Option<VocabularyEncodedId>,
@@ -67,7 +82,7 @@ struct Extra {
 
 #[derive(Clone)]
 struct Fixture {
-    reader: BootstrapReader,
+    reader: BootstrapReader<FakeAuthority>,
     snapshot: TextualMetadataSnapshot,
     schemas: IdentitySchemaCatalog,
 }
@@ -159,6 +174,7 @@ fn fixture_from_parts(
             syntax: id(901),
         },
         catalog,
+        FakeAuthority,
     )
     .unwrap();
     Fixture {
@@ -358,6 +374,7 @@ fn seal_new(
             &inputs.assignments,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         )
         .unwrap();
     (plan, inputs, transaction)
@@ -393,6 +410,7 @@ fn stable_edits_rename_move_delete_and_restart_without_reminting() {
             &unchanged_inputs.assignments,
             &unchanged_inputs.generated,
             &unchanged_inputs.transition,
+            &AUTHORITY_PROOF,
         )
         .unwrap();
     assert_eq!(unchanged.decoded(), first.decoded());
@@ -432,6 +450,7 @@ fn stable_edits_rename_move_delete_and_restart_without_reminting() {
             &renamed_inputs.assignments,
             &renamed_inputs.generated,
             &renamed_inputs.transition,
+            &AUTHORITY_PROOF,
         )
         .unwrap();
     assert_eq!(
@@ -470,6 +489,7 @@ fn stable_edits_rename_move_delete_and_restart_without_reminting() {
             &moved_inputs.assignments,
             &moved_inputs.generated,
             &moved_inputs.transition,
+            &AUTHORITY_PROOF,
         )
         .unwrap();
     assert!(moved.naming_transition().after().record(&drop_id).is_none());
@@ -557,6 +577,7 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
             &inputs.assignments,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::AmbiguousReference { name, identities })
             if name == "Clash" && identities == vec![id(70), id(71)]
@@ -658,10 +679,9 @@ fn schema_roles_use_an_explicit_allowlist_and_priors_have_exact_relationships() 
     wrong.stream_nomos = id(14);
     assert!(matches!(
         BootstrapPriorVocabulary::new(wrong, &fixture.schemas, &fixture.snapshot),
-        Err(BootstrapReadError::InvalidPriorRole {
-            position: "stream_nomos",
-            ..
-        }) | Err(BootstrapReadError::InvalidPriorIdentityRelationship(_))
+        Err(BootstrapReadError::InvalidPriorIdentityRelationship(
+            "stream_nomos and stream_shape must be the same identity"
+        ))
     ));
     let mut duplicate = prior_identities();
     duplicate.option_shape = duplicate.vector_shape.clone();
@@ -755,11 +775,23 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
     let empty = GeneratedStreamAssignments::new(vec![]).unwrap();
     let transaction_a = fixture
         .reader
-        .seal(&plan_a, &assignments_a, &empty, &transition_a)
+        .seal(
+            &plan_a,
+            &assignments_a,
+            &empty,
+            &transition_a,
+            &AUTHORITY_PROOF,
+        )
         .unwrap();
     let transaction_b = fixture
         .reader
-        .seal(&plan_b, &assignments_b, &empty, &transition_b)
+        .seal(
+            &plan_b,
+            &assignments_b,
+            &empty,
+            &transition_b,
+            &AUTHORITY_PROOF,
+        )
         .unwrap();
     assert_eq!(transaction_a, transaction_b);
     let BootstrapBody::Nexus(body) = &transaction_a.decoded().document.body else {
@@ -906,13 +938,14 @@ fn table_leaves_are_exactly_persistent_nominals() {
             &inputs.assignments,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::UnresolvedReference { name }) if name == "ShapeOnly"
     ));
 }
 
 #[test]
-fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
+fn assignment_dispositions_authority_collisions_and_cardinalities_are_exact() {
     let fixture = make_fixture(&["app"], vec![]);
     let plan = fixture
         .reader
@@ -921,9 +954,13 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
     let inputs = new_inputs(&plan, &fixture.snapshot);
     let empty = NamingAssignments::new(vec![]).unwrap();
     assert!(matches!(
-        fixture
-            .reader
-            .seal(&plan, &empty, &inputs.generated, &inputs.transition,),
+        fixture.reader.seal(
+            &plan,
+            &empty,
+            &inputs.generated,
+            &inputs.transition,
+            &AUTHORITY_PROOF,
+        ),
         Err(BootstrapReadError::MissingAssignment(0))
     ));
     let duplicate = NamingAssignments::new(vec![
@@ -974,6 +1011,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             &extra_assignment,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::ExtraAssignment)
     ));
@@ -995,6 +1033,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             ),
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::ExistingAssignmentMissing { identity }) if identity == id(100)
     ));
@@ -1007,6 +1046,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             ),
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::NewAssignmentAlreadyExists { identity }) if identity == id(7)
     ));
@@ -1021,6 +1061,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             &assignment(id(7), IdentityDisposition::Existing),
             &inputs.generated,
             &prior_existing_transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::ExistingAssignmentNotReusable {
             identity,
@@ -1033,20 +1074,29 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
         fixture.snapshot.clone(),
         TextualMetadataSnapshot::new(rust_records).unwrap(),
     );
-    assert!(matches!(
-        fixture.reader.seal(
+    let opaque_identity_transaction = fixture
+        .reader
+        .seal(
             &plan,
             &assignment(
                 rust_id(40),
                 IdentityDisposition::New {
-                    canonical_bytes: vec![0x98]
+                    canonical_bytes: vec![0x98],
                 },
             ),
             &inputs.generated,
             &rust_transition,
-        ),
-        Err(BootstrapReadError::NonUniversalAssignment { occurrence: 0, .. })
-    ));
+            &AUTHORITY_PROOF,
+        )
+        .unwrap();
+    let BootstrapBody::Interface(body) = &opaque_identity_transaction.decoded().document.body
+    else {
+        panic!("Interface")
+    };
+    let Declaration::Type(declaration) = &body.types[0] else {
+        panic!("Type")
+    };
+    assert_eq!(declaration.name, rust_id(40));
 
     let stream_plan = fixture
         .reader
@@ -1059,6 +1109,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             &stream_inputs.assignments,
             &GeneratedStreamAssignments::new(vec![]).unwrap(),
             &stream_inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::MissingGeneratedStreamAssignment(0))
     ));
@@ -1083,36 +1134,6 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
         GeneratedStreamAssignments::new(vec![generated_assignment.clone(), generated_assignment,]),
         Err(BootstrapReadError::DuplicateGeneratedStreamAssignment(0))
     ));
-    let non_universal_generated =
-        GeneratedStreamAssignments::new(vec![GeneratedStreamAssignment {
-            source,
-            initiation: AssignedIdentity {
-                encoded_name: rust_id(500),
-                disposition: IdentityDisposition::New {
-                    canonical_bytes: vec![0xa0],
-                },
-            },
-            termination: AssignedIdentity {
-                encoded_name: termination.clone(),
-                disposition: IdentityDisposition::New {
-                    canonical_bytes: vec![0x90, 0xf5],
-                },
-            },
-        }])
-        .unwrap();
-    assert!(matches!(
-        fixture.reader.seal(
-            &stream_plan,
-            &stream_inputs.assignments,
-            &non_universal_generated,
-            &stream_inputs.transition,
-        ),
-        Err(BootstrapReadError::NonUniversalAssignment {
-            occurrence: 0,
-            identity,
-        }) if identity == rust_id(500)
-    ));
-
     let other_plan = fixture
         .reader
         .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Other.String]}")
@@ -1140,6 +1161,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             &other_inputs.assignments,
             &extra_generated,
             &other_inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::ExtraGeneratedStreamAssignment)
     ));
@@ -1166,6 +1188,7 @@ fn assignment_dispositions_universes_collisions_and_cardinalities_are_exact() {
             &stream_inputs.assignments,
             &collision,
             &stream_inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::AssignedIdentityCollision { identity })
             if identity == stream_inputs.authored[0]
@@ -1188,7 +1211,18 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
             &plan,
             &inputs.assignments,
             &inputs.generated,
+            &inputs.transition,
+            &(AUTHORITY_PROOF + 1),
+        ),
+        Err(BootstrapReadError::NamingAuthorityRejected)
+    ));
+    assert!(matches!(
+        fixture.reader.seal(
+            &plan,
+            &inputs.assignments,
+            &inputs.generated,
             &wrong_transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::MetadataTransitionBeforeMismatch)
     ));
@@ -1199,8 +1233,15 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
             &inputs.assignments,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         )
         .unwrap();
+    assert!(matches!(
+        fixture
+            .reader
+            .validate_draft(transaction.to_draft(), &(AUTHORITY_PROOF + 1)),
+        Err(BootstrapReadError::NamingAuthorityRejected)
+    ));
     let written = fixture.reader.write(&transaction).unwrap();
     assert!(written.contains("Thing.String"));
 }
@@ -1240,6 +1281,7 @@ fn seal_refuses_an_after_snapshot_that_makes_an_imported_reference_invisible() {
             &inputs.assignments,
             &inputs.generated,
             &inputs.transition,
+            &AUTHORITY_PROOF,
         ),
         Err(BootstrapReadError::MissingTextualLookup { module_path, name })
             if module_path == ["dep"] && name == "External"
@@ -1261,7 +1303,7 @@ fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
             canonical_bytes: vec![0x36],
         }],
     );
-    let (_, _, transaction) = seal_new(
+    let (_, inputs, transaction) = seal_new(
         &fixture,
         "Interface.{1 0 0}\n[]\n{[Shared] [] [] [Shared.String Flow.Stream.(String Integer)]}",
     );
@@ -1269,7 +1311,9 @@ fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
     let mut wrong_header = transaction.to_draft();
     wrong_header.decoded.document.header.kind = EthosKind::Nexus;
     assert!(matches!(
-        fixture.reader.validate_draft(wrong_header),
+        fixture
+            .reader
+            .validate_draft(wrong_header, &AUTHORITY_PROOF),
         Err(BootstrapReadError::HeaderBodyMismatch {
             header: EthosKind::Nexus,
             body: EthosKind::Interface,
@@ -1282,7 +1326,9 @@ fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
     };
     body.memberships.clear();
     assert!(matches!(
-        fixture.reader.validate_draft(wrong_membership),
+        fixture
+            .reader
+            .validate_draft(wrong_membership, &AUTHORITY_PROOF),
         Err(BootstrapReadError::InvalidPreparedModel(
             "Interface memberships do not exactly equal role entries"
         ))
@@ -1295,7 +1341,9 @@ fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
         .arguments
         .clear();
     assert!(matches!(
-        fixture.reader.validate_draft(wrong_stream),
+        fixture
+            .reader
+            .validate_draft(wrong_stream, &AUTHORITY_PROOF),
         Err(BootstrapReadError::InvalidPreparedModel(
             "generated Stream declaration anatomy"
         ))
@@ -1312,12 +1360,76 @@ fn validated_transaction_wrapper_refuses_every_writer_invariant_break() {
     };
     shared.body = TypeBody::Newtype(TypeExpression::Reference(hidden.clone()));
     assert!(matches!(
-        fixture.reader.validate_draft(invisible),
+        fixture
+            .reader
+            .validate_draft(invisible, &AUTHORITY_PROOF),
         Err(BootstrapReadError::InvisibleOrNonRoundTrippingReference {
             identity,
             name,
         }) if identity == hidden && name == "Hidden"
     ));
+
+    let unrelated = id(75);
+    let mut extra_after = transaction.to_draft();
+    let mut extra_records = extra_after.naming_transition.after().records().to_vec();
+    extra_records.push(record(&["unrelated"], None, "Unrelated", unrelated.clone()));
+    extra_after.naming_transition = TextualMetadataTransition::new(
+        fixture.snapshot.clone(),
+        TextualMetadataSnapshot::new(extra_records).unwrap(),
+    );
+    assert!(matches!(
+        fixture
+            .reader
+            .validate_draft(extra_after, &AUTHORITY_PROOF),
+        Err(BootstrapReadError::ExtraMetadataIdentity(identity)) if identity == unrelated
+    ));
+
+    let generated_initiation = transaction.generated_streams()[0].initiation.name.clone();
+    let generated_name = transaction
+        .naming_transition()
+        .after()
+        .spelling(&generated_initiation)
+        .unwrap()
+        .to_owned();
+    let mut authored_generated_reference = transaction.to_draft();
+    let BootstrapBody::Interface(body) = &mut authored_generated_reference.decoded.document.body
+    else {
+        panic!("Interface")
+    };
+    let Some(Declaration::Type(shared)) = body.types.iter_mut().find(|declaration| {
+        matches!(declaration, Declaration::Type(declaration) if matches!(declaration.body, TypeBody::Newtype(_)))
+    }) else {
+        panic!("Shared")
+    };
+    shared.body = TypeBody::Newtype(TypeExpression::Reference(generated_initiation.clone()));
+    assert!(matches!(
+        fixture
+            .reader
+            .validate_draft(authored_generated_reference, &AUTHORITY_PROOF),
+        Err(BootstrapReadError::InvisibleOrNonRoundTrippingReference { identity, name })
+            if identity == generated_initiation && name == generated_name
+    ));
+
+    let canonical = fixture.reader.write(&transaction).unwrap();
+    let committed = restarted(&fixture, &transaction, &["app"]);
+    let reseal_plan = committed.reader.plan(&canonical).unwrap();
+    let reseal_inputs = existing_inputs(
+        &reseal_plan,
+        &committed.snapshot,
+        committed.snapshot.clone(),
+        &["app"],
+        &inputs.stream_generated,
+    );
+    committed
+        .reader
+        .seal(
+            &reseal_plan,
+            &reseal_inputs.assignments,
+            &reseal_inputs.generated,
+            &reseal_inputs.transition,
+            &AUTHORITY_PROOF,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -1349,32 +1461,30 @@ fn root_registry_is_the_observable_section_order() {
 }
 
 #[test]
-fn runtime_stream_values_enforce_universal_and_same_typed_handle() {
-    let handle = RuntimeStreamIdentity::<String>::new(id(70)).unwrap();
-    let stream = RuntimeStream::new(handle.clone(), vec!["event".to_owned()]);
+fn runtime_stream_values_use_registered_identity_and_the_same_stream_handle() {
+    let identities = CanonicalIdentityOrder::new([(id(70), vec![1]), (id(71), vec![2])]).unwrap();
+    let handle = RuntimeStreamIdentity::<String>::new(id(70), &identities).unwrap();
+    let stream = RuntimeStream::new(handle);
+    let termination = RuntimeStreamTermination::new(stream.clone());
     let values =
-        RuntimeStreamValues::new(RuntimeStreamInitiation::new(42u64), stream, handle).unwrap();
+        RuntimeStreamValues::new(RuntimeStreamInitiation::new(42u64), stream, termination).unwrap();
     assert_eq!(values.initiation().query(), &42);
-    assert_eq!(values.stream().events(), ["event"]);
-    assert_eq!(
-        values.stream().identity().encoded_name(),
-        values.termination().identity().encoded_name()
-    );
+    assert_eq!(values.stream(), values.termination().stream());
     assert!(matches!(
-        RuntimeStreamIdentity::<String>::new(rust_id(70)),
-        Err(RuntimeStreamValueError::NonUniversalHandle(identity)) if identity == rust_id(70)
+        RuntimeStreamIdentity::<String>::new(rust_id(70), &identities),
+        Err(RuntimeStreamValueError::UnrecognizedHandle(identity)) if identity == rust_id(70)
     ));
-    let stream = RuntimeStream::new(
-        RuntimeStreamIdentity::<String>::new(id(70)).unwrap(),
-        vec![],
-    );
+    let stream =
+        RuntimeStream::new(RuntimeStreamIdentity::<String>::new(id(70), &identities).unwrap());
+    let other_stream =
+        RuntimeStream::new(RuntimeStreamIdentity::<String>::new(id(71), &identities).unwrap());
     assert!(matches!(
         RuntimeStreamValues::new(
             RuntimeStreamInitiation::new(()),
             stream,
-            RuntimeStreamIdentity::new(id(71)).unwrap(),
+            RuntimeStreamTermination::new(other_stream),
         ),
-        Err(RuntimeStreamValueError::MismatchedTerminationHandle {
+        Err(RuntimeStreamValueError::MismatchedTerminationStream {
             stream,
             termination,
         }) if stream == id(70) && termination == id(71)

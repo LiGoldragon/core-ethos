@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use raw_discovery::SourceBound;
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
+use signal_sema_translator::VocabularyEncodedId;
 
 use super::catalog::*;
 use super::error::{BootstrapBuildError, BootstrapReadError};
@@ -129,6 +129,33 @@ pub struct AssignedIdentity {
     pub disposition: IdentityDisposition,
 }
 
+/// The exact naming proposal and identity dispositions presented to the
+/// authority injected into one reader.
+pub struct BootstrapNamingAuthorityRequest<'a> {
+    transition: &'a TextualMetadataTransition,
+    identity_dispositions: &'a BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+}
+
+impl BootstrapNamingAuthorityRequest<'_> {
+    pub const fn transition(&self) -> &TextualMetadataTransition {
+        self.transition
+    }
+
+    pub const fn identity_dispositions(
+        &self,
+    ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+        self.identity_dispositions
+    }
+}
+
+/// Authenticity boundary for naming proposals. The reader validates structural
+/// consistency separately; only this injected authority can accept a proof.
+pub trait BootstrapNamingAuthority {
+    type Proof;
+
+    fn verify(&self, request: BootstrapNamingAuthorityRequest<'_>, proof: &Self::Proof) -> bool;
+}
+
 /// Checked syntactic assignment set; plan-relative exactness is enforced at seal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingAssignments {
@@ -189,15 +216,40 @@ impl GeneratedStreamAssignments {
     }
 }
 
+fn identity_dispositions(
+    assignments: &NamingAssignments,
+    generated: &GeneratedStreamAssignments,
+) -> BTreeMap<VocabularyEncodedId, IdentityDisposition> {
+    assignments
+        .by_occurrence
+        .values()
+        .map(|assignment| {
+            (
+                assignment.encoded_name.clone(),
+                assignment.disposition.clone(),
+            )
+        })
+        .chain(generated.by_source.values().flat_map(|assignment| {
+            [&assignment.initiation, &assignment.termination]
+                .map(|assigned| (assigned.encoded_name.clone(), assigned.disposition.clone()))
+        }))
+        .collect()
+}
+
 /// Complete, validated meaning and schema/name updates prepared for an external
 /// authority to commit atomically. The reader has not committed storage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VerifiedNamingAuthorization {
+    transition: TextualMetadataTransition,
+    identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBootstrapTransaction {
     decoded: DecodedBootstrap,
     generated_streams: Vec<PreparedStreamGeneration>,
     schema_additions: IdentitySchemaCatalog,
-    naming_transition: TextualMetadataTransition,
-    identity_dispositions: BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+    naming_authorization: VerifiedNamingAuthorization,
     canonical_order: CanonicalIdentityOrder,
 }
 
@@ -232,13 +284,13 @@ impl PreparedBootstrapTransaction {
     }
 
     pub const fn naming_transition(&self) -> &TextualMetadataTransition {
-        &self.naming_transition
+        &self.naming_authorization.transition
     }
 
     pub const fn identity_dispositions(
         &self,
     ) -> &BTreeMap<VocabularyEncodedId, IdentityDisposition> {
-        &self.identity_dispositions
+        &self.naming_authorization.identity_dispositions
     }
 
     pub const fn canonical_order(&self) -> &CanonicalIdentityOrder {
@@ -250,8 +302,8 @@ impl PreparedBootstrapTransaction {
             decoded: self.decoded.clone(),
             generated_streams: self.generated_streams.clone(),
             schema_additions: self.schema_additions.clone(),
-            naming_transition: self.naming_transition.clone(),
-            identity_dispositions: self.identity_dispositions.clone(),
+            naming_transition: self.naming_authorization.transition.clone(),
+            identity_dispositions: self.naming_authorization.identity_dispositions.clone(),
             canonical_order: self.canonical_order.clone(),
         }
     }
@@ -260,22 +312,25 @@ impl PreparedBootstrapTransaction {
 /// Shared two-phase reader. Allocation, persistence, and commit authority stay
 /// outside this type.
 #[derive(Clone, Debug)]
-pub struct BootstrapReader {
+pub struct BootstrapReader<Authority> {
     grammar: BootstrapGrammar,
     catalog: BootstrapCatalog,
     roots: RootSchemaRegistry,
+    naming_authority: Authority,
 }
 
-impl BootstrapReader {
+impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
     pub fn build(
         grammar_identities: BootstrapGrammarIdentities,
         catalog: BootstrapCatalog,
+        naming_authority: Authority,
     ) -> Result<Self, BootstrapBuildError> {
         let roots = RootSchemaRegistry::new(catalog.priors());
         Ok(Self {
             grammar: BootstrapGrammar::build(grammar_identities)?,
             catalog,
             roots,
+            naming_authority,
         })
     }
 
@@ -303,7 +358,7 @@ impl BootstrapReader {
     }
 
     /// Seal using exact authored dispositions, exact Stream-generated
-    /// dispositions, and an authority-issued before-to-after textual transition.
+    /// dispositions, a before-to-after textual proposal, and its authority proof.
     /// The result remains a prepared transaction; no authority state is mutated.
     pub fn seal(
         &self,
@@ -311,7 +366,14 @@ impl BootstrapReader {
         assignments: &NamingAssignments,
         generated: &GeneratedStreamAssignments,
         naming_transition: &TextualMetadataTransition,
+        authority_proof: &Authority::Proof,
     ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
+        let identity_dispositions = identity_dispositions(assignments, generated);
+        let naming_authorization = self.verify_naming_authority(
+            naming_transition,
+            &identity_dispositions,
+            authority_proof,
+        )?;
         let canonical_order =
             self.validate_assignment_inputs(plan, assignments, generated, naming_transition)?;
         let schema_additions = self.schema_additions(plan, assignments, generated)?;
@@ -362,28 +424,17 @@ impl BootstrapReader {
                 )?,
             },
         };
-        let identity_dispositions = assignments
-            .by_occurrence
-            .values()
-            .map(|assignment| {
-                (
-                    assignment.encoded_name.clone(),
-                    assignment.disposition.clone(),
-                )
-            })
-            .chain(generated.by_source.values().flat_map(|assignment| {
-                [&assignment.initiation, &assignment.termination]
-                    .map(|assigned| (assigned.encoded_name.clone(), assigned.disposition.clone()))
-            }))
-            .collect();
-        self.validate_draft(PreparedBootstrapDraft {
-            decoded,
-            generated_streams: prepared_streams,
-            schema_additions,
-            naming_transition: naming_transition.clone(),
-            identity_dispositions,
-            canonical_order,
-        })
+        self.validate_verified_draft(
+            PreparedBootstrapDraft {
+                decoded,
+                generated_streams: prepared_streams,
+                schema_additions,
+                naming_transition: naming_transition.clone(),
+                identity_dispositions,
+                canonical_order,
+            },
+            naming_authorization,
+        )
     }
 
     /// Validate untrusted transaction parts and return the invariant-bearing
@@ -391,17 +442,56 @@ impl BootstrapReader {
     pub fn validate_draft(
         &self,
         draft: PreparedBootstrapDraft,
+        authority_proof: &Authority::Proof,
     ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
+        let naming_authorization = self.verify_naming_authority(
+            &draft.naming_transition,
+            &draft.identity_dispositions,
+            authority_proof,
+        )?;
+        self.validate_verified_draft(draft, naming_authorization)
+    }
+
+    fn validate_verified_draft(
+        &self,
+        draft: PreparedBootstrapDraft,
+        naming_authorization: VerifiedNamingAuthorization,
+    ) -> Result<PreparedBootstrapTransaction, BootstrapReadError> {
+        if draft.naming_transition != naming_authorization.transition
+            || draft.identity_dispositions != naming_authorization.identity_dispositions
+        {
+            return Err(BootstrapReadError::NamingAuthorityRejected);
+        }
         let transaction = PreparedBootstrapTransaction {
             decoded: draft.decoded,
             generated_streams: draft.generated_streams,
             schema_additions: draft.schema_additions,
-            naming_transition: draft.naming_transition,
-            identity_dispositions: draft.identity_dispositions,
+            naming_authorization,
             canonical_order: draft.canonical_order,
         };
         self.validate_prepared(&transaction)?;
         Ok(transaction)
+    }
+
+    fn verify_naming_authority(
+        &self,
+        transition: &TextualMetadataTransition,
+        identity_dispositions: &BTreeMap<VocabularyEncodedId, IdentityDisposition>,
+        proof: &Authority::Proof,
+    ) -> Result<VerifiedNamingAuthorization, BootstrapReadError> {
+        if !self.naming_authority.verify(
+            BootstrapNamingAuthorityRequest {
+                transition,
+                identity_dispositions,
+            },
+            proof,
+        ) {
+            return Err(BootstrapReadError::NamingAuthorityRejected);
+        }
+        Ok(VerifiedNamingAuthorization {
+            transition: transition.clone(),
+            identity_dispositions: identity_dispositions.clone(),
+        })
     }
 
     pub fn archive_status(&self) -> BootstrapArchiveStatus {
@@ -441,10 +531,10 @@ impl BootstrapReader {
                 supported: self.catalog.versions().supported(),
             });
         }
-        if transaction.naming_transition.before() != self.catalog.metadata() {
+        if transaction.naming_transition().before() != self.catalog.metadata() {
             return Err(BootstrapReadError::MetadataTransitionBeforeMismatch);
         }
-        let snapshot = transaction.naming_transition.after();
+        let snapshot = transaction.naming_transition().after();
         for identity in self.catalog.priors().fixed_identities() {
             snapshot
                 .record(identity)
@@ -479,7 +569,7 @@ impl BootstrapReader {
             canonical_order: &transaction.canonical_order,
             priors: self.catalog.priors(),
             new_identities: transaction
-                .identity_dispositions
+                .identity_dispositions()
                 .iter()
                 .filter_map(|(identity, disposition)| match disposition {
                     IdentityDisposition::New { .. } => Some(identity.clone()),
@@ -487,6 +577,16 @@ impl BootstrapReader {
                 })
                 .collect(),
         };
+        for identity in snapshot.identities() {
+            if schemas.get(identity).is_none() {
+                return Err(BootstrapReadError::ExtraMetadataIdentity(identity.clone()));
+            }
+            if transaction.canonical_order.bytes(identity).is_none() {
+                return Err(BootstrapReadError::MissingCanonicalIdentity(
+                    identity.clone(),
+                ));
+            }
+        }
         validator.validate_body(
             &decoded.document.body,
             self.roots.for_kind(decoded.document.header.kind),
@@ -504,7 +604,7 @@ impl BootstrapReader {
         declared_identities: &BTreeSet<VocabularyEncodedId>,
     ) -> Result<(), BootstrapReadError> {
         let disposition_identities = transaction
-            .identity_dispositions
+            .identity_dispositions()
             .keys()
             .cloned()
             .collect::<BTreeSet<_>>();
@@ -514,12 +614,7 @@ impl BootstrapReader {
             ));
         }
         let mut canonical_additions = Vec::new();
-        for (identity, disposition) in &transaction.identity_dispositions {
-            if identity.root_variant() != &VocabularyRoot::Universal {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "prepared disposition identity is not Universal",
-                ));
-            }
+        for (identity, disposition) in transaction.identity_dispositions() {
             match disposition {
                 IdentityDisposition::Existing => {
                     if self.catalog.priors().is_fixed_identity(identity)
@@ -576,22 +671,8 @@ impl BootstrapReader {
         transaction: &PreparedBootstrapTransaction,
         schemas: SchemaView<'_>,
     ) -> Result<(), BootstrapReadError> {
-        let snapshot = transaction.naming_transition.after();
-        let mut local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
-        let mut seat_local = |identity: &VocabularyEncodedId| -> Result<(), BootstrapReadError> {
-            let record = snapshot
-                .record(identity)
-                .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
-            if record.address.module_path == self.catalog.current_module_path()
-                && record.address.lexical_owner.is_none()
-            {
-                local
-                    .entry(record.address.visible_name.clone())
-                    .or_default()
-                    .push(identity.clone());
-            }
-            Ok(())
-        };
+        let snapshot = transaction.naming_transition().after();
+        let mut authored_local = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
         match &transaction.decoded.document.body {
             BootstrapBody::Interface(body) => {
                 for entry in body
@@ -601,30 +682,66 @@ impl BootstrapReader {
                     .chain(&body.refusals)
                 {
                     if let RoleEntry::Declaration(declaration) = entry {
-                        seat_local(&declaration.name)?;
+                        seat_local_identity(
+                            &mut authored_local,
+                            &declaration.name,
+                            snapshot,
+                            self.catalog.current_module_path(),
+                        )?;
                     }
                 }
                 for declaration in &body.types {
-                    seat_local(declaration_identity(declaration))?;
+                    seat_local_identity(
+                        &mut authored_local,
+                        declaration_identity(declaration),
+                        snapshot,
+                        self.catalog.current_module_path(),
+                    )?;
                 }
             }
             BootstrapBody::Nexus(body) => {
                 for declaration in &body.traits {
-                    seat_local(&declaration.name)?;
+                    seat_local_identity(
+                        &mut authored_local,
+                        &declaration.name,
+                        snapshot,
+                        self.catalog.current_module_path(),
+                    )?;
                 }
                 for declaration in &body.types {
-                    seat_local(declaration_identity(declaration))?;
+                    seat_local_identity(
+                        &mut authored_local,
+                        declaration_identity(declaration),
+                        snapshot,
+                        self.catalog.current_module_path(),
+                    )?;
                 }
             }
             BootstrapBody::Sema(body) => {
                 for declaration in &body.record_types {
-                    seat_local(&declaration.name)?;
+                    seat_local_identity(
+                        &mut authored_local,
+                        &declaration.name,
+                        snapshot,
+                        self.catalog.current_module_path(),
+                    )?;
                 }
             }
         }
+        let mut generated_local = authored_local.clone();
         for generated in &transaction.generated_streams {
-            seat_local(&generated.initiation.name)?;
-            seat_local(&generated.termination.name)?;
+            seat_local_identity(
+                &mut generated_local,
+                &generated.initiation.name,
+                snapshot,
+                self.catalog.current_module_path(),
+            )?;
+            seat_local_identity(
+                &mut generated_local,
+                &generated.termination.name,
+                snapshot,
+                self.catalog.current_module_path(),
+            )?;
         }
 
         let mut imported = BTreeMap::<String, Vec<VocabularyEncodedId>>::new();
@@ -643,21 +760,50 @@ impl BootstrapReader {
             }
         }
 
-        let mut references = Vec::new();
-        collect_document_references(&transaction.decoded.document.body, &mut references);
+        let mut authored_references = Vec::new();
+        collect_document_references(&transaction.decoded.document.body, &mut authored_references);
+        self.validate_visible_references(
+            authored_references,
+            &authored_local,
+            &imported,
+            snapshot,
+            schemas,
+            &transaction.canonical_order,
+        )?;
+
+        let mut generated_references = Vec::new();
         for generated in &transaction.generated_streams {
             collect_expression_references(
                 &TypeExpression::ShapeApplication(generated.output.stream_of_event.clone()),
-                &mut references,
+                &mut generated_references,
             );
-            references.push((
+            generated_references.push((
                 generated.termination.stream_handle.clone(),
                 ReferenceNamespace::Nominal,
             ));
             for relation in &generated.role_relations {
-                references.push((relation.target.clone(), ReferenceNamespace::Nominal));
+                generated_references.push((relation.target.clone(), ReferenceNamespace::Nominal));
             }
         }
+        self.validate_visible_references(
+            generated_references,
+            &generated_local,
+            &imported,
+            snapshot,
+            schemas,
+            &transaction.canonical_order,
+        )
+    }
+
+    fn validate_visible_references(
+        &self,
+        references: Vec<(VocabularyEncodedId, ReferenceNamespace)>,
+        local: &BTreeMap<String, Vec<VocabularyEncodedId>>,
+        imported: &BTreeMap<String, Vec<VocabularyEncodedId>>,
+        snapshot: &TextualMetadataSnapshot,
+        schemas: SchemaView<'_>,
+        canonical_order: &CanonicalIdentityOrder,
+    ) -> Result<(), BootstrapReadError> {
         for (identity, namespace) in references {
             let Some(name) = snapshot.spelling(&identity) else {
                 return Err(BootstrapReadError::MissingMetadataIdentity(identity));
@@ -668,13 +814,13 @@ impl BootstrapReader {
                     .get(name)
                     .into_iter()
                     .flat_map(|identities| identities.iter().cloned()),
-                &imported,
+                imported,
                 namespace,
                 ResolutionAuthority {
                     priors: self.catalog.priors(),
                     snapshot,
                     schemas,
-                    canonical_order: &transaction.canonical_order,
+                    canonical_order,
                 },
             );
             if !matches!(resolved, Ok(ref resolved) if resolved == &identity) {
@@ -729,17 +875,10 @@ impl BootstrapReader {
             .map(PlannedDeclaration::occurrence)
             .collect::<BTreeSet<_>>();
         for declaration in &plan.declarations {
-            let Some(assignment) = assignments.get(declaration.occurrence) else {
+            if assignments.get(declaration.occurrence).is_none() {
                 return Err(BootstrapReadError::MissingAssignment(
                     declaration.occurrence.ordinal(),
                 ));
-            };
-            let identity = &assignment.encoded_name;
-            if identity.root_variant() != &VocabularyRoot::Universal {
-                return Err(BootstrapReadError::NonUniversalAssignment {
-                    occurrence: declaration.occurrence.ordinal(),
-                    identity: identity.clone(),
-                });
             }
         }
         if assignments
@@ -813,12 +952,6 @@ impl BootstrapReader {
         for assignment in generated.by_source.values() {
             for assigned in [&assignment.initiation, &assignment.termination] {
                 let identity = &assigned.encoded_name;
-                if identity.root_variant() != &VocabularyRoot::Universal {
-                    return Err(BootstrapReadError::NonUniversalAssignment {
-                        occurrence: assignment.source.ordinal(),
-                        identity: identity.clone(),
-                    });
-                }
                 self.validate_authority_assignment(
                     identity,
                     &assigned.disposition,
@@ -2133,6 +2266,24 @@ enum ReferenceNamespace {
     Trait,
     Shape,
     Nomos,
+}
+
+fn seat_local_identity(
+    local: &mut BTreeMap<String, Vec<VocabularyEncodedId>>,
+    identity: &VocabularyEncodedId,
+    snapshot: &TextualMetadataSnapshot,
+    current_module: &[String],
+) -> Result<(), BootstrapReadError> {
+    let record = snapshot
+        .record(identity)
+        .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
+    if record.address.module_path == current_module && record.address.lexical_owner.is_none() {
+        local
+            .entry(record.address.visible_name.clone())
+            .or_default()
+            .push(identity.clone());
+    }
+    Ok(())
 }
 
 fn require_schema<'a>(

@@ -23,9 +23,9 @@ pub use error::{BootstrapBuildError, BootstrapReadError, BootstrapWriteError};
 pub use grammar::BootstrapGrammarIdentities;
 pub use model::*;
 pub use reader::{
-    AssignedIdentity, BootstrapReadPlan, BootstrapReader, DeclarationOccurrence,
-    DeclarationPurpose, GeneratedStreamAssignment, GeneratedStreamAssignments, IdentityDisposition,
-    NamingAssignment, NamingAssignments, PlannedDeclaration, PlannedScope, PreparedBootstrapDraft,
-    PreparedBootstrapTransaction,
+    AssignedIdentity, BootstrapNamingAuthority, BootstrapNamingAuthorityRequest, BootstrapReadPlan,
+    BootstrapReader, DeclarationOccurrence, DeclarationPurpose, GeneratedStreamAssignment,
+    GeneratedStreamAssignments, IdentityDisposition, NamingAssignment, NamingAssignments,
+    PlannedDeclaration, PlannedScope, PreparedBootstrapDraft, PreparedBootstrapTransaction,
 };
 pub use root::BootstrapSectionSchema;

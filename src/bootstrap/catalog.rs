@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
+use signal_sema_translator::VocabularyEncodedId;
 
 use super::error::BootstrapReadError;
 use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaContract};
@@ -122,8 +122,8 @@ impl TextualMetadataSnapshot {
     }
 }
 
-/// Naming-authority proof for one explicit before-to-after projection change.
-/// The reader consumes this proof; it never invents or broadens the transition.
+/// Public proposal for one explicit before-to-after projection change. Only an
+/// injected [`crate::bootstrap::BootstrapNamingAuthority`] can authenticate it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextualMetadataTransition {
     before: TextualMetadataSnapshot,
@@ -252,9 +252,6 @@ impl IdentitySchema {
         identity: VocabularyEncodedId,
         roles: impl IntoIterator<Item = SchemaRole>,
     ) -> Result<Self, BootstrapReadError> {
-        if identity.root_variant() != &VocabularyRoot::Universal {
-            return Err(BootstrapReadError::NonUniversalSchemaIdentity(identity));
-        }
         let roles = roles.into_iter().collect::<BTreeSet<_>>();
         if roles.is_empty() || !admitted_role_set(&roles) {
             return Err(BootstrapReadError::IncompatibleSchemaRoles {
@@ -370,6 +367,11 @@ impl BootstrapPriorVocabulary {
         schemas: &IdentitySchemaCatalog,
         metadata: &TextualMetadataSnapshot,
     ) -> Result<Self, BootstrapReadError> {
+        if identities.stream_nomos != identities.stream_shape {
+            return Err(BootstrapReadError::InvalidPriorIdentityRelationship(
+                "stream_nomos and stream_shape must be the same identity",
+            ));
+        }
         let requirements = [
             (
                 "interface_kind",
@@ -458,9 +460,6 @@ impl BootstrapPriorVocabulary {
             ),
         ];
         for (position, identity, required) in requirements {
-            if identity.root_variant() != &VocabularyRoot::Universal {
-                return Err(BootstrapReadError::NonUniversalPrior { position });
-            }
             let schema =
                 schemas
                     .get(identity)
@@ -481,11 +480,6 @@ impl BootstrapPriorVocabulary {
                     identity.clone(),
                 ));
             }
-        }
-        if identities.stream_nomos != identities.stream_shape {
-            return Err(BootstrapReadError::InvalidPriorIdentityRelationship(
-                "stream_nomos and stream_shape must be the same identity",
-            ));
         }
         let positions = [
             ("interface_kind", &identities.interface_kind),

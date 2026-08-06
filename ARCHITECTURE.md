@@ -11,7 +11,8 @@ typed priors + version policy ─────┘       │
                                            ├─ authored occurrences
 external NamingAssignments ────────────────┤
 external Stream generated assignments ─────┤
-authorized metadata before→after ──────────┤
+metadata before→after proposal ────────────┤
+naming-authority proof ────────────────────┤
 authority canonical identity bytes ────────┘
                                            │
                                            v
@@ -28,11 +29,15 @@ refuses multiple records for an identity, and refuses multiple identities at an
 exact address. Lexical owners let sibling enum variants and Trait methods reuse a
 spelling without colliding.
 
-`TextualMetadataTransition` is an authority proof containing exact before and
-after snapshots. It can preserve, add, rename, move, or remove identities. Seal
-requires its before snapshot to equal the reader catalog and validates the after
-snapshot against assignments and semantic visibility. The reader never authors
-the transition.
+`TextualMetadataTransition` is a caller-constructible proposal containing exact
+before and after snapshots. It can preserve, add, rename, move, or remove
+identities, but cannot authenticate itself. Seal presents the proposal and exact
+identity dispositions to the injected `BootstrapNamingAuthority`; only a valid
+authority-specific proof creates the private authorization stored by
+`PreparedBootstrapTransaction`. Independently, seal requires the before snapshot
+to equal the reader catalog and validates the after snapshot against assignments,
+schemas, canonical identity bytes, and semantic visibility. The reader never
+authors or commits the transition.
 
 Candidate collection is first restricted to the syntactically applicable
 namespace. Fixed file-kind/role vocabulary never enters body-reference lookup.
@@ -105,17 +110,22 @@ extras even if their ordinals coincide.
 
 Sealing requires an exact authored assignment set and an exact generated Stream
 assignment set. Every assignment has an authority disposition. `New` means the
-Universal identity is absent from metadata, schema, and canonical-order authority;
-`Existing` means the object already exists, is not fixed prior vocabulary, and
-admits exactly the declaration role being reused. All authored and generated
-identities remain mutually unique.
+authority-admitted identity is absent from metadata, schema, and canonical-order
+authority; `Existing` means the object already exists, is not fixed prior
+vocabulary, and admits exactly the declaration role being reused. All authored
+and generated identities remain mutually unique. Grammar, catalog, reader, and
+runtime admission never inspect an EncodedName root, tag, or chain; grammar
+constructor identifiers are only local structural addresses.
 
-The prepared transaction records the dispositions and exact metadata transition.
-Its fields are private and exposed read-only. Public untrusted parts remain a
-`PreparedBootstrapDraft` until `validate_draft` constructs the wrapper. After persistence, a new reader can
-be built from the after snapshot, merged schemas, and canonical order; a reread
-then uses `Existing` dispositions and produces no schema additions. Rename, move,
-and deletion similarly reuse identities instead of reminting them.
+The prepared transaction records a private verified authorization containing the
+dispositions and exact metadata transition. Its fields are private and exposed
+read-only. Public untrusted parts remain a `PreparedBootstrapDraft` until
+`validate_draft` re-verifies authority and constructs the wrapper. Validation
+also proves that every after-snapshot identity has both a schema and canonical
+bytes, so a next catalog built from the after snapshot, merged schemas, and
+canonical order succeeds by construction. A reread then uses `Existing`
+dispositions and produces no schema additions. Rename, move, and deletion
+similarly reuse identities instead of reminting them.
 
 All New declarations are installed in a transient schema overlay before
 body resolution, making source order irrelevant. Visible resolution collects
@@ -157,13 +167,17 @@ Every seal and write performs exhaustive validation:
 
 The writer accepts only the validated wrapper and revalidates it. It uses the
 prepared transition's after snapshot for every emitted spelling and for reverse
-visibility checks. A write, persisted restart, new plan, and reseal with Existing
-assignments reproduces equal semantic meaning without new schema objects.
+visibility checks. Authored references see authored declarations, imports, and
+priors; generated initiation and termination declarations are seated only in the
+separate internal environment used to validate generated Stream anatomy. A write,
+persisted restart, new plan, and reseal with Existing assignments reproduces
+equal semantic meaning without new schema objects.
 
-Runtime values have strict typed carriers: initiation contains Query, the
-`RuntimeStream<Event>` contains `RuntimeStreamIdentity<Event>`, and termination is
-constructed only with the same typed handle. Non-Universal and mismatched handles
-are typed refusals.
+Runtime values have strict typed carriers: initiation contains only Query, the
+`RuntimeStream<Event>` contains only a registry-admitted
+`RuntimeStreamIdentity<Event>`, and termination contains the exact same
+`RuntimeStream<Event>` handle value rather than a bare identity. Unregistered and
+mismatched handles are typed refusals.
 
 ## Archive and transitional boundary
 

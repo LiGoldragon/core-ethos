@@ -277,14 +277,6 @@ impl BootstrapGrammar {
     pub(crate) fn build(
         identities: BootstrapGrammarIdentities,
     ) -> Result<Self, BootstrapBuildError> {
-        if identities.document.root_variant() != &VocabularyRoot::Universal {
-            return Err(BootstrapBuildError::NonUniversalGrammarIdentity {
-                position: "document",
-            });
-        }
-        if identities.syntax.root_variant() != &VocabularyRoot::Universal {
-            return Err(BootstrapBuildError::NonUniversalGrammarIdentity { position: "syntax" });
-        }
         if identities.document == identities.syntax {
             return Err(BootstrapBuildError::DuplicateGrammarIdentity);
         }

@@ -6,10 +6,10 @@ use signal_sema_translator::VocabularyEncodedId;
 use super::catalog::TextualMetadataSnapshot;
 use super::error::BootstrapWriteError;
 use super::model::*;
-use super::reader::{BootstrapReader, PreparedBootstrapTransaction};
+use super::reader::{BootstrapNamingAuthority, BootstrapReader, PreparedBootstrapTransaction};
 use super::root::{BootstrapSectionSchema as SectionSchema, RootSemanticSectionRef};
 
-impl BootstrapReader {
+impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
     /// Validate and write one canonical authored projection. Generated Stream
     /// declarations remain transaction output and are never emitted as extra
     /// source declarations.

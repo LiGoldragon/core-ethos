@@ -2,7 +2,9 @@
 
 use std::marker::PhantomData;
 
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
+use signal_sema_translator::VocabularyEncodedId;
+
+use super::catalog::CanonicalIdentityOrder;
 
 /// One compatibility version written as three canonical decimal components.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -324,9 +326,12 @@ pub struct RuntimeStreamIdentity<Event> {
 }
 
 impl<Event> RuntimeStreamIdentity<Event> {
-    pub fn new(encoded_name: VocabularyEncodedId) -> Result<Self, RuntimeStreamValueError> {
-        if encoded_name.root_variant() != &VocabularyRoot::Universal {
-            return Err(RuntimeStreamValueError::NonUniversalHandle(encoded_name));
+    pub fn new(
+        encoded_name: VocabularyEncodedId,
+        identities: &CanonicalIdentityOrder,
+    ) -> Result<Self, RuntimeStreamValueError> {
+        if !identities.contains(&encoded_name) {
+            return Err(RuntimeStreamValueError::UnrecognizedHandle(encoded_name));
         }
         Ok(Self {
             encoded_name,
@@ -355,36 +360,35 @@ impl<Query> RuntimeStreamInitiation<Query> {
     }
 }
 
-/// A `Stream<Event>` value necessarily contains its `StreamIdentity<Event>`.
+/// A `Stream<Event>` value is exactly its typed identity handle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStream<Event> {
     identity: RuntimeStreamIdentity<Event>,
-    events: Vec<Event>,
 }
 
 impl<Event> RuntimeStream<Event> {
-    pub fn new(identity: RuntimeStreamIdentity<Event>, events: Vec<Event>) -> Self {
-        Self { identity, events }
+    pub const fn new(identity: RuntimeStreamIdentity<Event>) -> Self {
+        Self { identity }
     }
 
     pub const fn identity(&self) -> &RuntimeStreamIdentity<Event> {
         &self.identity
     }
-
-    pub fn events(&self) -> &[Event] {
-        &self.events
-    }
 }
 
-/// Termination carries the same typed handle as the Stream value.
+/// Termination carries the exact same typed Stream value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeStreamTermination<Event> {
-    identity: RuntimeStreamIdentity<Event>,
+    stream: RuntimeStream<Event>,
 }
 
 impl<Event> RuntimeStreamTermination<Event> {
-    pub const fn identity(&self) -> &RuntimeStreamIdentity<Event> {
-        &self.identity
+    pub const fn new(stream: RuntimeStream<Event>) -> Self {
+        Self { stream }
+    }
+
+    pub const fn stream(&self) -> &RuntimeStream<Event> {
+        &self.stream
     }
 }
 
@@ -400,20 +404,18 @@ impl<Query, Event> RuntimeStreamValues<Query, Event> {
     pub fn new(
         initiation: RuntimeStreamInitiation<Query>,
         stream: RuntimeStream<Event>,
-        termination_identity: RuntimeStreamIdentity<Event>,
+        termination: RuntimeStreamTermination<Event>,
     ) -> Result<Self, RuntimeStreamValueError> {
-        if stream.identity.encoded_name != termination_identity.encoded_name {
-            return Err(RuntimeStreamValueError::MismatchedTerminationHandle {
+        if stream.identity.encoded_name != termination.stream.identity.encoded_name {
+            return Err(RuntimeStreamValueError::MismatchedTerminationStream {
                 stream: stream.identity.encoded_name.clone(),
-                termination: termination_identity.encoded_name,
+                termination: termination.stream.identity.encoded_name.clone(),
             });
         }
         Ok(Self {
             initiation,
             stream,
-            termination: RuntimeStreamTermination {
-                identity: termination_identity,
-            },
+            termination,
         })
     }
 
@@ -432,10 +434,10 @@ impl<Query, Event> RuntimeStreamValues<Query, Event> {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RuntimeStreamValueError {
-    #[error("runtime Stream handle {0:?} must use the Universal vocabulary root")]
-    NonUniversalHandle(VocabularyEncodedId),
-    #[error("termination handle {termination:?} differs from Stream handle {stream:?}")]
-    MismatchedTerminationHandle {
+    #[error("runtime Stream handle {0:?} is absent from the canonical identity registry")]
+    UnrecognizedHandle(VocabularyEncodedId),
+    #[error("termination Stream {termination:?} differs from Stream value {stream:?}")]
+    MismatchedTerminationStream {
         stream: VocabularyEncodedId,
         termination: VocabularyEncodedId,
     },

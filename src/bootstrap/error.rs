@@ -8,8 +8,6 @@ use super::model::{EthosKind, EthosVersion};
 /// Failure to build the shared structural reader.
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapBuildError {
-    #[error("bootstrap grammar identity {position} must use the Universal vocabulary root")]
-    NonUniversalGrammarIdentity { position: &'static str },
     #[error("bootstrap document and syntax grammar identities must be distinct")]
     DuplicateGrammarIdentity,
     #[error("bootstrap token profile is invalid: {0}")]
@@ -71,8 +69,10 @@ pub enum BootstrapReadError {
         "textual snapshot record for identity {identity:?} does not equal the required module/name projection"
     )]
     MetadataProjectionMismatch { identity: VocabularyEncodedId },
-    #[error("the authority transition's before snapshot is not the reader catalog snapshot")]
+    #[error("the metadata proposal's before snapshot is not the reader catalog snapshot")]
     MetadataTransitionBeforeMismatch,
+    #[error("the naming authority rejected the supplied proof for this proposal")]
+    NamingAuthorityRejected,
     #[error("the sealing snapshot adds unrelated identity {0:?}")]
     ExtraMetadataIdentity(VocabularyEncodedId),
     #[error("textual lookup {module_path:?}:{name} has no identity")]
@@ -101,10 +101,6 @@ pub enum BootstrapReadError {
     },
     #[error("schema catalog contains identity {0:?} more than once")]
     DuplicateSchemaIdentity(VocabularyEncodedId),
-    #[error("schema identity {0:?} must use the Universal vocabulary root")]
-    NonUniversalSchemaIdentity(VocabularyEncodedId),
-    #[error("prior {position} must use a Universal identity")]
-    NonUniversalPrior { position: &'static str },
     #[error("prior {position} points to identity {identity:?} without required role {required:?}")]
     InvalidPriorRole {
         position: &'static str,
@@ -129,11 +125,6 @@ pub enum BootstrapReadError {
     ExtraAssignment,
     #[error("declaration occurrence {0} has no naming-authority assignment")]
     MissingAssignment(u32),
-    #[error("assignment for occurrence {occurrence} uses non-Universal identity {identity:?}")]
-    NonUniversalAssignment {
-        occurrence: u32,
-        identity: VocabularyEncodedId,
-    },
     #[error("assigned identity {identity:?} collides with existing or newly assigned object")]
     AssignedIdentityCollision { identity: VocabularyEncodedId },
     #[error("assignment marks existing identity {identity:?}, but authority has no such object")]

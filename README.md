@@ -23,16 +23,19 @@ The `bootstrap` module separates five authorities that must never collapse:
    `Existing`/`New` disposition for every authored occurrence. New identities
    carry authority-supplied canonical ordering bytes. Generated Stream identities
    use the same dispositions in their separate assignment channel.
-5. `BootstrapReader::seal` consumes an explicit authority-issued
-   `TextualMetadataTransition`. That before→after transition may preserve,
-   rename, move, add, or remove projections. The reader validates it against the
-   plan and catalog; it never invents or commits a transition.
+5. `TextualMetadataTransition` is a public before→after proposal, never proof of
+   its own authority. `BootstrapReader::seal` presents that proposal, the exact
+   dispositions, and an authority-specific proof to the injected
+   `BootstrapNamingAuthority`. Only successful verification creates the private
+   authorization retained by the prepared transaction. A proposal may preserve,
+   rename, move, add, or remove projections; the reader still validates its
+   structural consistency and never commits it.
 
 The resulting `PreparedBootstrapTransaction` has private invariant-bearing fields
 and read-only accessors, so stores can accept only a validated value. Untrusted
-parts remain a `PreparedBootstrapDraft` until `validate_draft` succeeds. The writer
-consumes its exact transition and uses the after snapshot in both directions. No
-magic spelling exists for
+parts remain a `PreparedBootstrapDraft` until `validate_draft` re-verifies an
+authority proof and succeeds. The writer consumes its exact transition and uses
+the after snapshot in both directions. No magic spelling exists for
 file kinds, primitives, Shapes, roles, Stream, or StreamIdentity: every visible
 projection comes from metadata attached to a typed prior identity.
 
@@ -77,8 +80,9 @@ prepares, without storing:
 
 The `BootstrapPriorVocabulary::runtime_stream_contract` explicitly seats the
 one-argument Stream and StreamIdentity Shapes. Strict runtime carriers model the
-query initiation value, a `RuntimeStream<Event>` containing its typed
-`RuntimeStreamIdentity<Event>`, and termination containing the same handle.
+query initiation value, a `RuntimeStream<Event>` containing only its registered
+typed `RuntimeStreamIdentity<Event>`, and termination containing the exact same
+`RuntimeStream<Event>` value.
 Live registries, routing behavior, and storage commitment remain outside Ethos.
 
 ## Identity and archive boundary
@@ -91,11 +95,13 @@ Every unordered named semantic collection is normalized by those bytes while
 positional struct fields, method parameters, and Shape arguments retain authored
 order.
 
-Authored and generated assignments must be Universal and mutually collision-free.
-`New` identities must be absent from metadata, schemas, and canonical authority;
-`Existing` identities must already exist with the exact reusable schema role.
-This makes unchanged rereads and stable rename/move/delete edits survive a
-persisted restart without reminting identities.
+Authored and generated assignments must be admitted by the injected naming
+authority and remain mutually collision-free. Bootstrap code never inspects an
+encoded identity's root/tag/chain anatomy. `New` identities must be absent from
+metadata, schemas, and canonical authority; `Existing` identities must already
+exist with the exact reusable schema role. This makes unchanged rereads and
+stable rename/move/delete edits survive a persisted restart without reminting
+identities.
 
 Semantic archiving intentionally reports `BootstrapArchiveStatus::NotYetArchived`.
 Archiving now would freeze the current chain-shaped `VocabularyEncodedId` carrier
