@@ -167,8 +167,6 @@ pub enum BootstrapReadError {
         expected: u16,
         found: usize,
     },
-    #[error("Shape identity {identity:?} is not seated in the closed prior vocabulary")]
-    NonPriorShapeIdentity { identity: VocabularyEncodedId },
     #[error("Nomos identity {identity:?} is not seated in the closed prior vocabulary")]
     NonPriorNomosIdentity { identity: VocabularyEncodedId },
     #[error("local parameter {name:?} is reused with incompatible Trait requirements")]

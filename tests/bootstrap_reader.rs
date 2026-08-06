@@ -695,9 +695,11 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
 }
 
 #[test]
-fn shapes_and_nomos_heads_are_closed_prior_vocabulary() {
+fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
     let imported_shape = id(70);
     let imported_nomos = id(71);
+    let imported_nominal = id(72);
+    let imported_trait = id(73);
     let fixture = make_fixture(
         &["app"],
         vec![
@@ -721,14 +723,82 @@ fn shapes_and_nomos_heads_are_closed_prior_vocabulary() {
                 .unwrap(),
                 canonical_bytes: vec![0x32],
             },
+            Extra {
+                metadata: record(&["dep"], None, "ForeignNominal", imported_nominal.clone()),
+                schema: IdentitySchema::new(
+                    imported_nominal,
+                    [SchemaRole::Nominal { persistent: true }],
+                )
+                .unwrap(),
+                canonical_bytes: vec![0x33],
+            },
+            Extra {
+                metadata: record(&["dep"], None, "ForeignTrait", imported_trait.clone()),
+                schema: IdentitySchema::new(imported_trait, [SchemaRole::Trait]).unwrap(),
+                canonical_bytes: vec![0x34],
+            },
         ],
     );
+    let (_, inputs, transaction) = seal_new(
+        &fixture,
+        "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String>]}",
+    );
+    let BootstrapBody::Interface(body) = &transaction.decoded().document.body else {
+        panic!("planned Interface changed kind")
+    };
+    let Declaration::Type(TypeDeclaration {
+        body:
+            TypeBody::Newtype(TypeExpression::ShapeApplication(ShapeApplication { shape, arguments })),
+        ..
+    }) = &body.types[0]
+    else {
+        panic!("imported Shape application changed semantic form")
+    };
+    assert_eq!(shape, &imported_shape);
+    assert_eq!(arguments, &[TypeExpression::Reference(id(7))]);
+    let canonical = fixture.reader.write(&transaction).unwrap();
+    let committed = restarted(&fixture, &transaction, &["app"]);
+    let reseal_plan = committed.reader.plan(&canonical).unwrap();
+    let reseal_inputs = existing_inputs(
+        &reseal_plan,
+        &committed.snapshot,
+        committed.snapshot.clone(),
+        &["app"],
+        &inputs.stream_generated,
+    );
+    let resealed = committed
+        .reader
+        .seal(
+            &reseal_plan,
+            &reseal_inputs.assignments,
+            &reseal_inputs.generated,
+            &reseal_inputs.transition,
+            &AUTHORITY_PROOF,
+        )
+        .unwrap();
+    assert_eq!(resealed.decoded(), transaction.decoded());
+
     assert!(matches!(
         fixture.reader.plan(
-            "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String>]}"
+            "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String Integer>]}"
         ),
-        Err(BootstrapReadError::NonPriorShapeIdentity { identity }) if identity == imported_shape
+        Err(BootstrapReadError::ShapeArity {
+            identity,
+            expected: 1,
+            found: 2,
+        }) if identity == imported_shape
     ));
+    for source in [
+        "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.ForeignShape<String>]}",
+        "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Unknown<String>]}",
+        "Interface.{1 0 0}\n[dep.[ForeignNominal]]\n{[] [] [] [Bad.ForeignNominal<String>]}",
+        "Interface.{1 0 0}\n[dep.[ForeignTrait]]\n{[] [] [] [Bad.ForeignTrait<String>]}",
+    ] {
+        assert!(matches!(
+            fixture.reader.plan(source),
+            Err(BootstrapReadError::UnresolvedReference { .. })
+        ));
+    }
     assert!(matches!(
         fixture.reader.plan(
             "Interface.{1 0 0}\n[dep.[ForeignNomos]]\n{[] [] [] [Bad.ForeignNomos.(String String)]}"

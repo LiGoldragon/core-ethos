@@ -2459,15 +2459,6 @@ fn resolve_visible_identity(
         }),
     }?;
     match namespace {
-        ReferenceNamespace::Shape
-            if !authority
-                .priors
-                .shape_identities()
-                .into_iter()
-                .any(|prior| prior == &identity) =>
-        {
-            Err(BootstrapReadError::NonPriorShapeIdentity { identity })
-        }
         ReferenceNamespace::Nomos if identity != authority.priors.identities().stream_nomos => {
             Err(BootstrapReadError::NonPriorNomosIdentity { identity })
         }
