@@ -1,83 +1,140 @@
 # Architecture — core-ethos
 
-## Shared two-phase bootstrap reader
+## Authority-separated bootstrap pipeline
 
-`bootstrap` separates structural discovery, naming authority, semantic sealing,
-and textual projection.
+The bootstrap implementation is a staged transaction boundary:
 
-The structural layer owns one Ethos-specific sealed token profile and one
-addressed table. Its recursive syntax type distinguishes atom, dot application,
-bare-angle application, braces, squares, parentheses, and guillemets. A single
-ordered document record requires Header, Imports, and Body. Every file kind goes
-through the same `StructuralEvaluator::plan_text` call; the selected header only
-chooses a typed body-root definition. There is no Interface, Nexus, or Sema
-parser.
+```text
+existing TextualMetadataSnapshot ─┐
+existing IdentitySchemaCatalog ───┼─> structural plan
+typed priors + version policy ─────┘       │
+                                           ├─ authored occurrences
+external NamingAssignments ────────────────┤
+external Stream generated assignments ─────┤
+complete post-operation name snapshot ─────┘
+                                           │
+                                           v
+                              PreparedBootstrapTransaction
+                              (not committed storage)
+```
 
-This structural tree is intentionally pre-semantic. The expected typed position
-then chooses `Declaration`, `TypeExpression`, `RoleEntry`, Trait method, or table
-meaning. Consequently an atom is never classified by spelling alone, and the
-semantic model contains no generic syntax tree or transformer application.
+### Textual authority
 
-Planning walks the selected schema before any body resolution. It produces
-ephemeral `DeclarationOccurrence` handles with exact full-source bounds and
-enforces module, enum-variant, and Trait-method uniqueness. A Stream occurrence
-requests its output, initiation, and termination identities in one plan. These
-handles are decode-local coordination values; they are not archived or hashed.
+`TextualMetadataRecord` contains exactly module path, visible name, and encoded
+identity. `TextualMetadataSnapshot` indexes the same immutable records in both
+directions and refuses more than one record for an identity. Several objects may
+share a visible projection; resolving a path/name or visible body reference must
+first produce exactly one identity or refuse ambiguity.
 
-Sealing accepts a `NamingAssignments` set and proves it equals the planned set.
-The reader has no allocation capability. It constructs a complete resolution
-environment from:
+Semantic class is never used to pick among ambiguous textual candidates. Only
+after one identity is known does the reader query `IdentitySchemaCatalog`.
 
-- all top-level assignments, so source order is irrelevant;
-- the source-only import selectors resolved through `BootstrapCatalog`;
-- the closed, role-typed `BootstrapPriorVocabulary`.
+### Schema authority
 
-References are checked against their position's admitted class: nominal,
-persistent nominal, Shape, Trait, or the audited Stream Nomos head. Local
-parameter binders never receive a global encoded identity. Inferred Trait
-vectors are sorted by encoded identity and used as declaration-local
-co-reference keys; named binders additionally reject incompatible reuse.
+`IdentitySchemaCatalog` is identity-keyed. `IdentitySchema` carries a set of
+compatible typed `SchemaRole`s. Role families with data—file kind, Interface role,
+nominality/persistence, Shape arity, and concrete Nomos schema—admit exactly one
+value per family. Distinct families may coexist, so the same Stream identity can
+be both an exact one-argument Shape and the exact two-argument audited Nomos head.
 
-The semantic output consists only of purpose-built carriers:
+`BootstrapPriorVocabulary` validates every prior identity against both the schema
+catalog and textual snapshot. The prior type seats:
 
-- Interface roles contain declarations or nominal references, while all
-  `InterfaceRoleMembership` relations are owned by the Interface root;
-- plain types contain newtype, struct, or enum bodies and strict recursive type
-  expressions;
-- Stream contains exactly its three generated nominal declarations, while the
-  Interface holds their Input/Output/Input relations;
-- Nexus holds Traits first, then supporting declarations, with marker Traits
-  represented by an explicit empty method product;
-- Sema holds persistent nominal declarations and tables whose record and key
-  leaves are persistent nominal identities.
+- three file kinds and three Interface roles;
+- persistent primitive nominals;
+- exact Vector/Option/Map/Result arities;
+- exact Stream Nomos and Stream/StreamIdentity Shape contracts.
 
-Review-sensitive root orders and the complete prior catalog are isolated in
-typed definitions. Nothing in these semantic forms names Rust, LLVM, an ABI, a
-storage engine, or the current operating system.
+Visible names are never embedded in the prior type or parser.
 
-## Canonical writer
+## One structural evaluator and one root registry
 
-The writer traverses the strict model rather than source bytes. It retrieves
-global spellings from an injected `EncodedNameResolver`, uses retained
-source-only imports and local-binder projections, restores every explicit empty
-vector/product, and emits the ruled delimiters and ordering. Stream writes back
-only `OutputName.Stream.(Query Event)`; initiation and termination remain
-generated meaning rather than additional authored declarations.
+Both grammar type identities—document and recursive syntax—are caller supplied.
+Only constructor-local structural addresses are derived. The custom sealed token
+profile adds guillemets while retaining the established discovery machinery.
 
-## Transitional boundary
+One `StructuralEvaluator::plan_text` call selects a recursive tree of atom, dot
+application, bare-angle application, braces, squares, parentheses, and
+guillemets. The semantic planner then walks the expected schema; this private tree
+never appears in encoded meaning.
 
-`whole` is the previous composite authoring carrier and remains temporarily for
-downstream compatibility. `EncodedEthos` and its declaration/reference algebra
-predate the full-chain model and remain only as sealed execution data. The new
-reader does not extend either representation. Removing them belongs to consumer
-migration, not to widening the bootstrap schema.
+`RootSchemaRegistry` is the sole seating of provisional root choices:
 
-## Identity and Capsule boundary
+- Interface: Role(Input), Role(Output), Role(Refusal), Declarations(Nomos admitted)
+- Nexus: Traits, Declarations(Nomos refused)
+- Sema: PersistentDeclarations, Tables
 
-Grammar, prior, declaration, and lookup identities are caller-supplied. The
-crate treats the pinned `VocabularyEncodedId` carrier as opaque and does not
-allocate names, handle collisions, store naming tables, or derive a durable
-identity scheme from its present chain anatomy.
+Planning, sealing, and writing iterate those section descriptors. Limited final
+assembly/projection into purpose-built Rust body types is intentionally isolated.
 
-`capsule_from_issued_hash` similarly passes through a caller-issued content hash
-and opaque complete NameTree pin. It does not derive their relationship.
+## Planning and scopes
+
+Planning validates before requesting identities:
+
+- exact envelope/header/import/root arities and explicit empty vectors;
+- enum nonemptiness and product-variant nonemptiness;
+- method mandatory return and table two-leaf anatomy;
+- exact catalog-defined Shape arity at every recursive occurrence;
+- exact audited Nomos schema and arity;
+- Interface/Nexus/Sema admission boundaries;
+- module, enum-variant, and Trait-method duplicate scopes;
+- safe declaration, import, local-binder, and reference projections;
+- nonempty Trait requirements and duplicate visible Trait occurrences.
+
+The result contains only authored `DeclarationOccurrence`s. Handles include a
+process-local plan generation and ordinal, so assignments from another plan are
+extras even if their ordinals coincide.
+
+## Sealing and generated work
+
+Sealing requires an exact authored assignment set and an exact generated Stream
+assignment set. Every identity must be Universal, fresh against every existing
+metadata/schema identity, and unique across authored plus generated identities.
+The supplied complete name snapshot must preserve every old record and add exactly
+one current-module record for each new object.
+
+All top-level declarations are installed in a transient schema overlay before
+body resolution, making source order irrelevant. Visible resolution collects
+local, import, and typed-prior candidates, deduplicates by identity, refuses zero
+or several candidates, then checks the selected identity's schema role.
+
+Trait requirements sort resolved identities using an explicit canonical byte
+projection—root tag followed by big-endian table-local components—not the carrier's
+incidental `Ord`. Equal inferred vectors co-refer within one owner. Named binders
+carry their validated local projection inside the semantic binder form; the field
+is not publicly mutable, and exhaustive transaction validation refuses owner
+escape, incompatible reuse, named/inferred collapse, or noncanonical vectors.
+
+The authored Stream remains
+`Declaration::Nomos(StreamInitiationDeclaration)`. Its prepared generation is a
+separate transaction result with three purpose-built declarations and exactly
+three role relations. Nothing says those additions were stored.
+
+## Invariant and writer boundary
+
+Every seal and write performs exhaustive validation:
+
+- supported header version and header/body agreement;
+- root-section meaning and exact Interface memberships;
+- declaration/schema-addition equality;
+- reference class, persistence, Shape arity, and canonical Trait vectors;
+- local binder ownership/co-reference laws;
+- Stream identity distinctness, output Shape/arity/event equality, termination
+  reference, and exact role relations;
+- safe and complete textual projection records;
+- no unrelated metadata or schema addition.
+
+The writer uses the prepared transaction's own snapshot. A write, new plan, and
+reseal with the same assignments/snapshot reproduces equal semantic meaning and
+prepared generation.
+
+## Archive and transitional boundary
+
+`BootstrapArchiveStatus::NotYetArchived` is explicit. A durable archive today
+would freeze the chain-shaped identity carrier the bootstrap otherwise treats as
+opaque. Once random EncodedName is stable, the semantic document and prepared
+schema additions can gain a validated archive/content-identity boundary while
+continuing to exclude imports and textual metadata.
+
+`whole` and flat `EncodedEthos` remain untouched transitional consumers. They are
+not alternate schemas for new bootstrap work.

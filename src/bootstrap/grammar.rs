@@ -183,9 +183,13 @@ fn delegate(target: &EncodedTypeId<VocabularyRoot>) -> SharedDescriptor<Vocabula
     }
 }
 
-/// The only structural identity the reader owns. Its allocation is external.
+/// Every addressed structural identity required by the reader. Allocation is
+/// external; the grammar derives no hierarchical child identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BootstrapGrammarIdentity(pub VocabularyEncodedId);
+pub struct BootstrapGrammarIdentities {
+    pub document: VocabularyEncodedId,
+    pub syntax: VocabularyEncodedId,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Delimiter {
@@ -270,20 +274,23 @@ struct SyntaxConstructors {
 }
 
 impl BootstrapGrammar {
-    pub(crate) fn build(identity: BootstrapGrammarIdentity) -> Result<Self, BootstrapBuildError> {
-        if identity.0.root_variant() != &VocabularyRoot::Universal {
-            return Err(BootstrapBuildError::NonUniversalGrammarIdentity);
+    pub(crate) fn build(
+        identities: BootstrapGrammarIdentities,
+    ) -> Result<Self, BootstrapBuildError> {
+        if identities.document.root_variant() != &VocabularyRoot::Universal {
+            return Err(BootstrapBuildError::NonUniversalGrammarIdentity {
+                position: "document",
+            });
+        }
+        if identities.syntax.root_variant() != &VocabularyRoot::Universal {
+            return Err(BootstrapBuildError::NonUniversalGrammarIdentity { position: "syntax" });
+        }
+        if identities.document == identities.syntax {
+            return Err(BootstrapBuildError::DuplicateGrammarIdentity);
         }
         let profile = bootstrap_profile()?;
-        let document = EncodedTypeId::new(identity.0.clone());
-        let syntax = EncodedTypeId::new(
-            VocabularyEncodedId::new(VocabularyRoot::Universal, {
-                let mut chain = identity.0.chain().to_vec();
-                chain.push(structural_codec::LocalEncodedId::new(1));
-                chain
-            })
-            .map_err(|_| BootstrapBuildError::NonUniversalGrammarIdentity)?,
-        );
+        let document = EncodedTypeId::new(identities.document);
+        let syntax = EncodedTypeId::new(identities.syntax);
         let constructors = SyntaxConstructors {
             atom: EncodedConstructorId::under(&syntax, 0),
             application: EncodedConstructorId::under(&syntax, 1),

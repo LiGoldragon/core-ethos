@@ -1,33 +1,32 @@
 //! Purpose-built semantic carriers for the bootstrap Ethos file kinds.
 
-use std::collections::BTreeMap;
-
 use signal_sema_translator::VocabularyEncodedId;
 
 /// One compatibility version written as three canonical decimal components.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EthosVersion {
     pub major: u64,
     pub minor: u64,
     pub patch: u64,
 }
 
-/// The closed set of bootstrap roots.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+impl EthosVersion {
+    /// Construct an exact compatibility version.
+    pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
+/// The closed set of provisional bootstrap roots.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EthosKind {
     Interface,
     Nexus,
     Sema,
-}
-
-impl EthosKind {
-    pub(crate) const fn spelling(self) -> &'static str {
-        match self {
-            Self::Interface => "Interface",
-            Self::Nexus => "Nexus",
-            Self::Sema => "Sema",
-        }
-    }
 }
 
 /// Retained compatibility metadata for one decoded file.
@@ -44,18 +43,17 @@ pub struct ImportEntry {
     pub imported_names: Vec<String>,
 }
 
-/// Source-only information required to write an equivalent textual projection.
+/// Source-only information needed to reproduce the authored projection.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct BootstrapSourceMetadata {
+pub struct BootstrapSourceProjection {
     pub imports: Vec<ImportEntry>,
-    pub(crate) named_parameters: BTreeMap<LocalParameter, String>,
 }
 
-/// A semantically decoded bootstrap document plus non-semantic textual metadata.
+/// A semantically decoded bootstrap document plus source-only projection data.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecodedBootstrap {
     pub document: BootstrapDocument,
-    pub source: BootstrapSourceMetadata,
+    pub source: BootstrapSourceProjection,
 }
 
 /// The common envelope with a typed, kind-selected body.
@@ -65,8 +63,8 @@ pub struct BootstrapDocument {
     pub body: BootstrapBody,
 }
 
-/// The three provisional root schemas. This enum is an implementation boundary,
-/// not a claim that the language ontology is a Rust sum.
+/// The three provisional root schemas. The enum is an implementation boundary,
+/// not a language-ontology claim.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BootstrapBody {
     Interface(InterfaceBody),
@@ -74,8 +72,18 @@ pub enum BootstrapBody {
     Sema(SemaBody),
 }
 
+impl BootstrapBody {
+    pub(crate) const fn kind(&self) -> EthosKind {
+        match self {
+            Self::Interface(_) => EthosKind::Interface,
+            Self::Nexus(_) => EthosKind::Nexus,
+            Self::Sema(_) => EthosKind::Sema,
+        }
+    }
+}
+
 /// One Interface-owned universal role.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum InterfaceRole {
     Input,
     Output,
@@ -112,10 +120,12 @@ pub struct InterfaceBody {
     pub outputs: Vec<RoleEntry>,
     pub refusals: Vec<RoleEntry>,
     pub types: Vec<Declaration>,
+    /// Relations produced only by the three authored role sections. Generated
+    /// Stream relations live in the prepared transaction until commit.
     pub memberships: Vec<InterfaceRoleMembership>,
 }
 
-/// Traits first, signature-supporting types last.
+/// Traits first, signature-supporting declarations last.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NexusBody {
     pub traits: Vec<TraitDeclaration>,
@@ -129,11 +139,26 @@ pub struct SemaBody {
     pub tables: Vec<TableDeclaration>,
 }
 
-/// The deliberately closed bootstrap declaration algebra.
+/// The deliberately closed bootstrap authored declaration algebra.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Declaration {
     Type(TypeDeclaration),
-    Stream(GeneratedStreamDeclarations),
+    Nomos(NomosDeclaration),
+}
+
+/// Audited purpose-built Nomos alternatives.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NomosDeclaration {
+    StreamInitiation(StreamInitiationDeclaration),
+}
+
+/// The authored meaning of `Name.Stream.(Query Event)`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamInitiationDeclaration {
+    /// The authored name designates the eventual direct Stream output identity.
+    pub name: VocabularyEncodedId,
+    pub query: TypeExpression,
+    pub event: TypeExpression,
 }
 
 /// A named plain nominal declaration.
@@ -173,6 +198,24 @@ pub struct LocalParameter {
     pub ordinal: u32,
 }
 
+/// The binder form is semantic and cannot be omitted from named requirements.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParameterBinder {
+    Inferred(LocalParameter),
+    Named {
+        parameter: LocalParameter,
+        local_name: String,
+    },
+}
+
+impl ParameterBinder {
+    pub fn parameter(&self) -> &LocalParameter {
+        match self {
+            Self::Inferred(parameter) | Self::Named { parameter, .. } => parameter,
+        }
+    }
+}
+
 /// The strict recursive type-expression algebra.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TypeExpression {
@@ -181,7 +224,7 @@ pub enum TypeExpression {
     TraitRequirement(TraitRequirement),
 }
 
-/// A prior-vocabulary Shape applied to one or more arguments.
+/// An identity registered as a Shape, applied at its catalog-defined arity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShapeApplication {
     pub shape: VocabularyEncodedId,
@@ -191,37 +234,49 @@ pub struct ShapeApplication {
 /// One local parameter constrained by a normalized, nonempty Trait vector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TraitRequirement {
-    pub parameter: LocalParameter,
-    pub required_traits: Vec<VocabularyEncodedId>,
+    pub(crate) binder: ParameterBinder,
+    pub(crate) required_traits: Vec<VocabularyEncodedId>,
 }
 
-/// The one audited bootstrap Nomos arm, resolved atomically into three types.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GeneratedStreamDeclarations {
-    pub initiation: StreamInitiationInterfaceDeclaration,
-    pub output: StreamInterfaceDeclaration,
-    pub termination: StreamTerminationInterfaceDeclaration,
+impl TraitRequirement {
+    pub fn binder(&self) -> &ParameterBinder {
+        &self.binder
+    }
+
+    pub fn required_traits(&self) -> &[VocabularyEncodedId] {
+        &self.required_traits
+    }
 }
 
-/// The generated Input whose value is the query value.
+/// The prepared generated declaration whose value is the query value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamInitiationInterfaceDeclaration {
     pub name: VocabularyEncodedId,
     pub query: TypeExpression,
 }
 
-/// The generated Output whose body is directly `Stream<Event>`.
+/// The prepared direct `Stream<Event>` Output declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamInterfaceDeclaration {
     pub name: VocabularyEncodedId,
     pub stream_of_event: ShapeApplication,
 }
 
-/// The generated Input whose body references the Output declaration.
+/// The prepared termination Input referencing the direct Stream Output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamTerminationInterfaceDeclaration {
     pub name: VocabularyEncodedId,
     pub stream_handle: VocabularyEncodedId,
+}
+
+/// Atomic Stream declarations and Interface-owned role relations prepared for
+/// an external store to commit or reject as one transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedStreamGeneration {
+    pub initiation: StreamInitiationInterfaceDeclaration,
+    pub output: StreamInterfaceDeclaration,
+    pub termination: StreamTerminationInterfaceDeclaration,
+    pub role_relations: [InterfaceRoleMembership; 3],
 }
 
 /// One behavioral Trait with zero or more scoped methods.
@@ -245,4 +300,20 @@ pub struct TableDeclaration {
     pub name: VocabularyEncodedId,
     pub record_type: VocabularyEncodedId,
     pub key_type: VocabularyEncodedId,
+}
+
+/// Runtime Stream value anatomy remains a catalog contract at this stage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeStreamSchemaContract {
+    pub stream_shape: VocabularyEncodedId,
+    pub stream_identity_shape: VocabularyEncodedId,
+    pub stream_shape_arity: u16,
+    pub stream_identity_shape_arity: u16,
+}
+
+/// Archiving is deliberately deferred until the random EncodedName substrate is
+/// stable enough that an archive layout would not freeze today's chain carrier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootstrapArchiveStatus {
+    NotYetArchived,
 }

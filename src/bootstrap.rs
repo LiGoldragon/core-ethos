@@ -4,19 +4,24 @@
 //! every declaration occurrence without identity authority, then
 //! [`BootstrapReader::seal`] accepts an exact externally allocated assignment set.
 
+mod catalog;
 mod error;
 mod grammar;
 mod model;
 mod reader;
+mod root;
 mod writer;
 
-pub use error::{
-    BootstrapBuildError, BootstrapReadError, BootstrapWriteError, ExpectedNameClass, NameClass,
+pub use catalog::{
+    BootstrapCatalog, BootstrapPriorIdentities, BootstrapPriorVocabulary, BootstrapVersionPolicy,
+    IdentitySchema, IdentitySchemaCatalog, NomosSchema, SchemaRole, TextualMetadataRecord,
+    TextualMetadataSnapshot,
 };
-pub use grammar::BootstrapGrammarIdentity;
+pub use error::{BootstrapBuildError, BootstrapReadError, BootstrapWriteError};
+pub use grammar::BootstrapGrammarIdentities;
 pub use model::*;
 pub use reader::{
-    BootstrapCatalog, BootstrapPriorIdentities, BootstrapPriorVocabulary, BootstrapReadPlan,
-    BootstrapReader, DeclarationOccurrence, DeclarationPurpose, NamingAssignment,
-    NamingAssignments, PlannedDeclaration, PlannedScope, TextualMetadataEntry,
+    BootstrapReadPlan, BootstrapReader, DeclarationOccurrence, DeclarationPurpose,
+    GeneratedStreamAssignment, GeneratedStreamAssignments, NamingAssignment, NamingAssignments,
+    PlannedDeclaration, PlannedScope, PreparedBootstrapTransaction,
 };

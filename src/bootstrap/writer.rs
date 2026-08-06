@@ -1,190 +1,198 @@
-//! Canonical textual projection for the strict bootstrap model.
+//! Canonical textual projection over the same bidirectional name snapshot used
+//! during sealing.
 
-use signal_sema_translator::{VocabularyEncodedId, VocabularyRoot};
-use structural_codec::EncodedNameResolver;
+use signal_sema_translator::VocabularyEncodedId;
 
+use super::catalog::TextualMetadataSnapshot;
 use super::error::BootstrapWriteError;
 use super::model::*;
-use super::reader::{BootstrapPriorVocabulary, BootstrapReader};
+use super::reader::{BootstrapReader, PreparedBootstrapTransaction};
+use super::root::SectionSchema;
 
 impl BootstrapReader {
-    /// Write one canonical textual projection. Declaration spellings come from
-    /// the injected resolver; source-only imports and local binder spellings come
-    /// from the decoded textual metadata.
-    pub fn write<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
+    /// Validate and write one canonical authored projection. Generated Stream
+    /// declarations remain transaction output and are never emitted as extra
+    /// source declarations.
+    pub fn write(
         &self,
-        decoded: &DecodedBootstrap,
-        resolver: &Resolver,
+        transaction: &PreparedBootstrapTransaction,
     ) -> Result<String, BootstrapWriteError> {
-        write_decoded(decoded, self.priors(), resolver)
+        self.validate_prepared(transaction)?;
+        let decoded = &transaction.decoded;
+        let snapshot = &transaction.naming_snapshot;
+        let root = self.roots().for_kind(decoded.document.header.kind);
+        let mut output = format!(
+            "{}.{{{} {} {}}}\n",
+            spelling(snapshot, &root.kind_identity)?,
+            decoded.document.header.version.major,
+            decoded.document.header.version.minor,
+            decoded.document.header.version.patch,
+        );
+        output.push('[');
+        for (index, import) in decoded.source.imports.iter().enumerate() {
+            if index > 0 {
+                output.push(' ');
+            }
+            output.push_str(&import.module_path.join(":"));
+            output.push_str(".[");
+            output.push_str(&import.imported_names.join(" "));
+            output.push(']');
+        }
+        output.push_str("]\n{\n");
+        let sections = semantic_sections(&decoded.document.body);
+        for (index, (schema, section)) in root.sections.iter().zip(sections).enumerate() {
+            if index > 0 {
+                output.push('\n');
+            }
+            write_section(
+                &mut output,
+                *schema,
+                section,
+                snapshot,
+                self.catalog().priors().identities().stream_nomos.clone(),
+            )?;
+        }
+        output.push_str("\n}\n");
+        Ok(output)
     }
 }
 
-fn write_decoded<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
-    decoded: &DecodedBootstrap,
-    priors: &BootstrapPriorVocabulary,
-    resolver: &Resolver,
-) -> Result<String, BootstrapWriteError> {
-    let header = decoded.document.header;
-    let mut output = format!(
-        "{}.{{{} {} {}}}\n",
-        header.kind.spelling(),
-        header.version.major,
-        header.version.minor,
-        header.version.patch,
-    );
-    output.push('[');
-    for (index, import) in decoded.source.imports.iter().enumerate() {
-        if index > 0 {
-            output.push(' ');
-        }
-        output.push_str(&import.module_path.join(":"));
-        output.push_str(".[");
-        output.push_str(&import.imported_names.join(" "));
-        output.push(']');
+enum SemanticSectionRef<'a> {
+    Role(&'a [RoleEntry]),
+    Declarations(&'a [Declaration]),
+    Traits(&'a [TraitDeclaration]),
+    PersistentDeclarations(&'a [TypeDeclaration]),
+    Tables(&'a [TableDeclaration]),
+}
+
+fn semantic_sections(body: &BootstrapBody) -> Vec<SemanticSectionRef<'_>> {
+    match body {
+        BootstrapBody::Interface(body) => vec![
+            SemanticSectionRef::Role(&body.inputs),
+            SemanticSectionRef::Role(&body.outputs),
+            SemanticSectionRef::Role(&body.refusals),
+            SemanticSectionRef::Declarations(&body.types),
+        ],
+        BootstrapBody::Nexus(body) => vec![
+            SemanticSectionRef::Traits(&body.traits),
+            SemanticSectionRef::Declarations(&body.types),
+        ],
+        BootstrapBody::Sema(body) => vec![
+            SemanticSectionRef::PersistentDeclarations(&body.record_types),
+            SemanticSectionRef::Tables(&body.tables),
+        ],
     }
-    output.push_str("]\n{\n");
-    match &decoded.document.body {
-        BootstrapBody::Interface(body) => {
-            write_role_entries(&mut output, &body.inputs, resolver, &decoded.source, priors)?;
-            output.push('\n');
-            write_role_entries(
-                &mut output,
-                &body.outputs,
-                resolver,
-                &decoded.source,
-                priors,
-            )?;
-            output.push('\n');
-            write_role_entries(
-                &mut output,
-                &body.refusals,
-                resolver,
-                &decoded.source,
-                priors,
-            )?;
-            output.push('\n');
-            output.push_str("  [");
-            write_separated(&mut output, &body.types, |output, declaration| {
-                write_declaration(output, declaration, resolver, &decoded.source, priors)
+}
+
+fn write_section(
+    output: &mut String,
+    schema: SectionSchema,
+    section: SemanticSectionRef<'_>,
+    snapshot: &TextualMetadataSnapshot,
+    stream_nomos: VocabularyEncodedId,
+) -> Result<(), BootstrapWriteError> {
+    output.push_str("  [");
+    match (schema, section) {
+        (SectionSchema::Role(_), SemanticSectionRef::Role(entries)) => {
+            write_separated(output, entries, |output, entry| match entry {
+                RoleEntry::Declaration(declaration) => {
+                    write_type_declaration(output, declaration, snapshot)
+                }
+                RoleEntry::Reference(reference) => {
+                    output.push_str(spelling(snapshot, reference)?);
+                    Ok(())
+                }
             })?;
-            output.push(']');
         }
-        BootstrapBody::Nexus(body) => {
-            output.push_str("  [");
-            write_separated(&mut output, &body.traits, |output, declaration| {
-                write_trait(output, declaration, resolver, &decoded.source)
+        (SectionSchema::Declarations { .. }, SemanticSectionRef::Declarations(declarations)) => {
+            write_separated(output, declarations, |output, declaration| {
+                write_declaration(output, declaration, snapshot, &stream_nomos)
             })?;
-            output.push_str("]\n  [");
-            write_separated(&mut output, &body.types, |output, declaration| {
-                write_declaration(output, declaration, resolver, &decoded.source, priors)
-            })?;
-            output.push(']');
         }
-        BootstrapBody::Sema(body) => {
-            output.push_str("  [");
-            write_separated(&mut output, &body.record_types, |output, declaration| {
-                write_type_declaration(output, declaration, resolver, &decoded.source)
+        (SectionSchema::Traits, SemanticSectionRef::Traits(traits)) => {
+            write_separated(output, traits, |output, declaration| {
+                write_trait(output, declaration, snapshot)
             })?;
-            output.push_str("]\n  [");
-            write_separated(&mut output, &body.tables, |output, table| {
-                output.push_str(spelling(resolver, &table.name)?);
+        }
+        (
+            SectionSchema::PersistentDeclarations,
+            SemanticSectionRef::PersistentDeclarations(declarations),
+        ) => {
+            write_separated(output, declarations, |output, declaration| {
+                write_type_declaration(output, declaration, snapshot)
+            })?;
+        }
+        (SectionSchema::Tables, SemanticSectionRef::Tables(tables)) => {
+            write_separated(output, tables, |output, table| {
+                output.push_str(spelling(snapshot, &table.name)?);
                 output.push_str(".{");
-                output.push_str(spelling(resolver, &table.record_type)?);
+                output.push_str(spelling(snapshot, &table.record_type)?);
                 output.push(' ');
-                output.push_str(spelling(resolver, &table.key_type)?);
+                output.push_str(spelling(snapshot, &table.key_type)?);
                 output.push('}');
                 Ok(())
             })?;
-            output.push(']');
         }
+        _ => unreachable!("validate_prepared proves registry/body section agreement"),
     }
-    output.push_str("\n}\n");
-    Ok(output)
-}
-
-fn write_role_entries<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
-    output: &mut String,
-    entries: &[RoleEntry],
-    resolver: &Resolver,
-    source: &BootstrapSourceMetadata,
-    _priors: &BootstrapPriorVocabulary,
-) -> Result<(), BootstrapWriteError> {
-    output.push_str("  [");
-    write_separated(output, entries, |output, entry| match entry {
-        RoleEntry::Declaration(declaration) => {
-            write_type_declaration(output, declaration, resolver, source)
-        }
-        RoleEntry::Reference(reference) => {
-            output.push_str(spelling(resolver, reference)?);
-            Ok(())
-        }
-    })?;
     output.push(']');
     Ok(())
 }
 
-fn write_declaration<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
+fn write_declaration(
     output: &mut String,
     declaration: &Declaration,
-    resolver: &Resolver,
-    source: &BootstrapSourceMetadata,
-    priors: &BootstrapPriorVocabulary,
+    snapshot: &TextualMetadataSnapshot,
+    stream_nomos: &VocabularyEncodedId,
 ) -> Result<(), BootstrapWriteError> {
     match declaration {
-        Declaration::Type(declaration) => {
-            write_type_declaration(output, declaration, resolver, source)
-        }
-        Declaration::Stream(stream) => {
-            output.push_str(spelling(resolver, &stream.output.name)?);
+        Declaration::Type(declaration) => write_type_declaration(output, declaration, snapshot),
+        Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => {
+            output.push_str(spelling(snapshot, &declaration.name)?);
             output.push('.');
-            output.push_str(spelling(resolver, &priors.identities().stream_nomos)?);
+            output.push_str(spelling(snapshot, stream_nomos)?);
             output.push_str(".(");
-            write_type_expression(output, &stream.initiation.query, resolver, source)?;
+            write_type_expression(output, &declaration.query, snapshot)?;
             output.push(' ');
-            let event = stream.output.stream_of_event.arguments.first().ok_or(
-                BootstrapWriteError::InvalidModel("Stream output Shape has no Event argument"),
-            )?;
-            write_type_expression(output, event, resolver, source)?;
+            write_type_expression(output, &declaration.event, snapshot)?;
             output.push(')');
             Ok(())
         }
     }
 }
 
-fn write_type_declaration<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
+fn write_type_declaration(
     output: &mut String,
     declaration: &TypeDeclaration,
-    resolver: &Resolver,
-    source: &BootstrapSourceMetadata,
+    snapshot: &TextualMetadataSnapshot,
 ) -> Result<(), BootstrapWriteError> {
-    output.push_str(spelling(resolver, &declaration.name)?);
+    output.push_str(spelling(snapshot, &declaration.name)?);
     match &declaration.body {
         TypeBody::Newtype(expression) => {
             output.push('.');
-            write_type_expression(output, expression, resolver, source)?;
+            write_type_expression(output, expression, snapshot)?;
         }
         TypeBody::Struct(fields) => {
             output.push_str(".{");
             write_separated(output, fields, |output, field| {
-                write_type_expression(output, field, resolver, source)
+                write_type_expression(output, field, snapshot)
             })?;
             output.push('}');
         }
         TypeBody::Enum(variants) => {
             output.push_str(".[");
             write_separated(output, variants, |output, variant| {
-                output.push_str(spelling(resolver, &variant.name)?);
+                output.push_str(spelling(snapshot, &variant.name)?);
                 match &variant.body {
                     VariantBody::Unit => Ok(()),
                     VariantBody::Unary(expression) => {
                         output.push('.');
-                        write_type_expression(output, expression, resolver, source)
+                        write_type_expression(output, expression, snapshot)
                     }
                     VariantBody::Product(fields) => {
                         output.push_str(".{");
                         write_separated(output, fields, |output, field| {
-                            write_type_expression(output, field, resolver, source)
+                            write_type_expression(output, field, snapshot)
                         })?;
                         output.push('}');
                         Ok(())
@@ -197,22 +205,21 @@ fn write_type_declaration<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized
     Ok(())
 }
 
-fn write_trait<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
+fn write_trait(
     output: &mut String,
     declaration: &TraitDeclaration,
-    resolver: &Resolver,
-    source: &BootstrapSourceMetadata,
+    snapshot: &TextualMetadataSnapshot,
 ) -> Result<(), BootstrapWriteError> {
-    output.push_str(spelling(resolver, &declaration.name)?);
+    output.push_str(spelling(snapshot, &declaration.name)?);
     output.push_str(".{");
     write_separated(output, &declaration.methods, |output, method| {
-        output.push_str(spelling(resolver, &method.name)?);
+        output.push_str(spelling(snapshot, &method.name)?);
         output.push_str(".{");
         for parameter in &method.parameters {
-            write_type_expression(output, parameter, resolver, source)?;
+            write_type_expression(output, parameter, snapshot)?;
             output.push(' ');
         }
-        write_type_expression(output, &method.return_type, resolver, source)?;
+        write_type_expression(output, &method.return_type, snapshot)?;
         output.push('}');
         Ok(())
     })?;
@@ -220,35 +227,34 @@ fn write_trait<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
     Ok(())
 }
 
-fn write_type_expression<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
+fn write_type_expression(
     output: &mut String,
     expression: &TypeExpression,
-    resolver: &Resolver,
-    source: &BootstrapSourceMetadata,
+    snapshot: &TextualMetadataSnapshot,
 ) -> Result<(), BootstrapWriteError> {
     match expression {
-        TypeExpression::Reference(reference) => output.push_str(spelling(resolver, reference)?),
+        TypeExpression::Reference(reference) => output.push_str(spelling(snapshot, reference)?),
         TypeExpression::ShapeApplication(application) => {
-            output.push_str(spelling(resolver, &application.shape)?);
+            output.push_str(spelling(snapshot, &application.shape)?);
             output.push('<');
             write_separated(output, &application.arguments, |output, argument| {
-                write_type_expression(output, argument, resolver, source)
+                write_type_expression(output, argument, snapshot)
             })?;
             output.push('>');
         }
         TypeExpression::TraitRequirement(requirement) => {
             output.push('«');
-            for (index, required) in requirement.required_traits.iter().enumerate() {
+            for (index, required) in requirement.required_traits().iter().enumerate() {
                 if index > 0 {
                     output.push(' ');
                 }
                 if index == 0 {
-                    if let Some(name) = source.named_parameters.get(&requirement.parameter) {
-                        output.push_str(name);
+                    if let ParameterBinder::Named { local_name, .. } = requirement.binder() {
+                        output.push_str(local_name);
                         output.push('.');
                     }
                 }
-                output.push_str(spelling(resolver, required)?);
+                output.push_str(spelling(snapshot, required)?);
             }
             output.push('»');
         }
@@ -256,13 +262,12 @@ fn write_type_expression<Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>
     Ok(())
 }
 
-fn spelling<'a, Resolver: EncodedNameResolver<VocabularyRoot> + ?Sized>(
-    resolver: &'a Resolver,
+fn spelling<'a>(
+    snapshot: &'a TextualMetadataSnapshot,
     identity: &VocabularyEncodedId,
 ) -> Result<&'a str, BootstrapWriteError> {
-    resolver
-        .resolve(identity)
-        .map(encoded_name_table::Name::as_str)
+    snapshot
+        .spelling(identity)
         .ok_or_else(|| BootstrapWriteError::MissingSpelling(identity.clone()))
 }
 
