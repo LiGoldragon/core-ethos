@@ -353,37 +353,6 @@ impl TraitRequirement {
     }
 }
 
-/// The prepared generated declaration whose value is the query value.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct StreamInitiationInterfaceDeclaration {
-    pub name: EncodedName,
-    pub query: TypeExpression,
-}
-
-/// The prepared direct `Stream<Event>` Output declaration.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct StreamInterfaceDeclaration {
-    pub name: EncodedName,
-    pub stream_of_event: ShapeApplication,
-}
-
-/// The prepared termination Input referencing the direct Stream Output.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct StreamTerminationInterfaceDeclaration {
-    pub name: EncodedName,
-    pub stream_handle: EncodedName,
-}
-
-/// Atomic Stream declarations and Interface-owned role relations prepared for
-/// an external store to commit or reject as one transaction.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct PreparedStreamGeneration {
-    pub initiation: StreamInitiationInterfaceDeclaration,
-    pub output: StreamInterfaceDeclaration,
-    pub termination: StreamTerminationInterfaceDeclaration,
-    pub role_relations: [InterfaceRoleMembership; 3],
-}
-
 /// One behavioral Trait with zero or more scoped methods.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TraitDeclaration {

@@ -153,12 +153,6 @@ pub enum BootstrapReadError {
         first: EncodedName,
         second: EncodedName,
     },
-    #[error("generated Stream assignment for occurrence {0} appears more than once")]
-    DuplicateGeneratedStreamAssignment(u32),
-    #[error("Stream occurrence {0} has no exact generated initiation/termination assignment")]
-    MissingGeneratedStreamAssignment(u32),
-    #[error("generated Stream assignment refers to a non-Stream or foreign occurrence")]
-    ExtraGeneratedStreamAssignment,
     #[error("Shape identity {identity:?} requires {expected} arguments, found {found}")]
     ShapeArity {
         identity: EncodedName,

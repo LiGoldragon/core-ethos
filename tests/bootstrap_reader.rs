@@ -307,7 +307,6 @@ fn restarted(
 #[derive(Clone)]
 struct SealInputs {
     assignments: NamingAssignments,
-    generated: GeneratedStreamAssignments,
     transition: TextualMetadataTransition,
 }
 
@@ -340,51 +339,9 @@ fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> Sea
             assignment.encoded_name.clone(),
         ));
     }
-    let mut generated = Vec::new();
-    let mut next = 500u16;
-    for declaration in plan
-        .declarations()
-        .iter()
-        .filter(|item| item.purpose() == DeclarationPurpose::StreamInitiation)
-    {
-        let _output = identity_by_occurrence[&declaration.occurrence()].clone();
-        let initiation = id(next);
-        let termination = id(next + 1);
-        next += 2;
-        records.extend([
-            record(
-                &["app"],
-                None,
-                &format!("Start{}", declaration.spelling()),
-                initiation.clone(),
-            ),
-            record(
-                &["app"],
-                None,
-                &format!("Stop{}", declaration.spelling()),
-                termination.clone(),
-            ),
-        ]);
-        generated.push(GeneratedStreamAssignment {
-            source: declaration.occurrence(),
-            initiation: AssignedIdentity {
-                encoded_name: initiation.clone(),
-                disposition: IdentityDisposition::New {
-                    canonical_bytes: vec![0x90, (next - 2) as u8],
-                },
-            },
-            termination: AssignedIdentity {
-                encoded_name: termination.clone(),
-                disposition: IdentityDisposition::New {
-                    canonical_bytes: vec![0x90, (next - 1) as u8],
-                },
-            },
-        });
-    }
     let after = TextualMetadataSnapshot::new(records).unwrap();
     SealInputs {
         assignments: NamingAssignments::new(raw_assignments).unwrap(),
-        generated: GeneratedStreamAssignments::new(generated).unwrap(),
         transition: TextualMetadataTransition::new(before.clone(), after),
     }
 }
@@ -421,7 +378,6 @@ fn existing_inputs(
     }
     SealInputs {
         assignments: NamingAssignments::new(raw).unwrap(),
-        generated: GeneratedStreamAssignments::new(vec![]).unwrap(),
         transition: TextualMetadataTransition::new(before.clone(), after),
     }
 }
@@ -437,7 +393,6 @@ fn seal_new(
         .seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &AUTHORITY_PROOF,
         )
@@ -519,7 +474,6 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &AUTHORITY_PROOF,
         ),
@@ -651,7 +605,6 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
         .seal(
             &reseal_plan,
             &reseal_inputs.assignments,
-            &reseal_inputs.generated,
             &reseal_inputs.transition,
             &AUTHORITY_PROOF,
         )
@@ -814,13 +767,11 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
     let (assignments_a, transition_a) = make(&plan_a);
     let (assignments_b, transition_b) = make(&plan_b);
     assert_eq!(transition_a.after(), transition_b.after());
-    let empty = GeneratedStreamAssignments::new(vec![]).unwrap();
     let transaction_a = fixture
         .reader
         .seal(
             &plan_a,
             &assignments_a,
-            &empty,
             &transition_a,
             &AUTHORITY_PROOF,
         )
@@ -830,7 +781,6 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
         .seal(
             &plan_b,
             &assignments_b,
-            &empty,
             &transition_b,
             &AUTHORITY_PROOF,
         )
@@ -974,7 +924,6 @@ fn table_leaves_are_exactly_persistent_nominals() {
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &AUTHORITY_PROOF,
         ),
@@ -997,7 +946,6 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &(AUTHORITY_PROOF + 1),
         ),
@@ -1007,7 +955,6 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &wrong_transition,
             &AUTHORITY_PROOF,
         ),
@@ -1018,7 +965,6 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
         .seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &AUTHORITY_PROOF,
         )
@@ -1106,7 +1052,6 @@ fn seal_refuses_an_after_snapshot_that_makes_an_imported_reference_invisible() {
         fixture.reader.seal(
             &plan,
             &inputs.assignments,
-            &inputs.generated,
             &inputs.transition,
             &AUTHORITY_PROOF,
         ),

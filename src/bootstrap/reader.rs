@@ -123,20 +123,12 @@ pub enum IdentityDisposition {
     New { canonical_bytes: Vec<u8> },
 }
 
-/// One authority disposition for a generated identity.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AssignedIdentity {
-    pub encoded_name: EncodedName,
-    pub disposition: IdentityDisposition,
-}
-
 /// Publicly constructible, explicitly unvalidated transaction parts. External
 /// stores and writers accept [`PreparedBootstrapTransaction`] instead; callers
 /// obtain that wrapper through [`BootstrapReader::validate_draft`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBootstrapDraft {
     pub decoded: DecodedBootstrap,
-    pub generated_streams: Vec<PreparedStreamGeneration>,
     pub schema_additions: IdentitySchemaCatalog,
     pub naming_transition: TextualMetadataTransition,
     pub identity_dispositions: BTreeMap<EncodedName, IdentityDisposition>,
@@ -210,43 +202,7 @@ impl NamingAssignments {
     }
 }
 
-/// The two additional identities required by one authored Stream occurrence.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GeneratedStreamAssignment {
-    pub source: DeclarationOccurrence,
-    pub initiation: AssignedIdentity,
-    pub termination: AssignedIdentity,
-}
-
-/// Exact generated Stream assignments, separate from authored naming requests.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GeneratedStreamAssignments {
-    by_source: BTreeMap<DeclarationOccurrence, GeneratedStreamAssignment>,
-}
-
-impl GeneratedStreamAssignments {
-    pub fn new(assignments: Vec<GeneratedStreamAssignment>) -> Result<Self, BootstrapReadError> {
-        let mut by_source = BTreeMap::new();
-        for assignment in assignments {
-            let source = assignment.source;
-            if by_source.insert(source, assignment).is_some() {
-                return Err(BootstrapReadError::DuplicateGeneratedStreamAssignment(
-                    source.ordinal(),
-                ));
-            }
-        }
-        Ok(Self { by_source })
-    }
-
-    fn get(&self, source: DeclarationOccurrence) -> Option<&GeneratedStreamAssignment> {
-        self.by_source.get(&source)
-    }
-}
-
-fn identity_dispositions(
-    assignments: &NamingAssignments,
-    generated: &GeneratedStreamAssignments,
-) -> BTreeMap<EncodedName, IdentityDisposition> {
+fn identity_dispositions(assignments: &NamingAssignments) -> BTreeMap<EncodedName, IdentityDisposition> {
     assignments
         .by_occurrence
         .values()
@@ -256,10 +212,6 @@ fn identity_dispositions(
                 assignment.disposition.clone(),
             )
         })
-        .chain(generated.by_source.values().flat_map(|assignment| {
-            [&assignment.initiation, &assignment.termination]
-                .map(|assigned| (assigned.encoded_name.clone(), assigned.disposition.clone()))
-        }))
         .collect()
 }
 
@@ -274,7 +226,6 @@ struct VerifiedNamingAuthorization<Receipt> {
 
 pub struct PreparedBootstrapTransaction<Authority: BootstrapNamingAuthority> {
     decoded: DecodedBootstrap,
-    generated_streams: Vec<PreparedStreamGeneration>,
     schema_additions: IdentitySchemaCatalog,
     naming_authorization: VerifiedNamingAuthorization<Authority::Receipt>,
     canonical_order: CanonicalIdentityOrder,
@@ -284,7 +235,6 @@ impl<Authority: BootstrapNamingAuthority> Clone for PreparedBootstrapTransaction
     fn clone(&self) -> Self {
         Self {
             decoded: self.decoded.clone(),
-            generated_streams: self.generated_streams.clone(),
             schema_additions: self.schema_additions.clone(),
             naming_authorization: self.naming_authorization.clone(),
             canonical_order: self.canonical_order.clone(),
@@ -299,7 +249,6 @@ impl<Authority: BootstrapNamingAuthority> std::fmt::Debug
         formatter
             .debug_struct("PreparedBootstrapTransaction")
             .field("decoded", &self.decoded)
-            .field("generated_streams", &self.generated_streams)
             .field("schema_additions", &self.schema_additions)
             .field("naming_authorization", &self.naming_authorization)
             .field("canonical_order", &self.canonical_order)
@@ -310,7 +259,6 @@ impl<Authority: BootstrapNamingAuthority> std::fmt::Debug
 impl<Authority: BootstrapNamingAuthority> PartialEq for PreparedBootstrapTransaction<Authority> {
     fn eq(&self, other: &Self) -> bool {
         self.decoded == other.decoded
-            && self.generated_streams == other.generated_streams
             && self.schema_additions == other.schema_additions
             && self.naming_authorization == other.naming_authorization
             && self.canonical_order == other.canonical_order
@@ -329,12 +277,7 @@ impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority
     pub fn strict_value_true_names(&self) -> Result<BTreeMap<EncodedName, TrueName>, ArchiveError> {
         let mut names = BTreeMap::new();
         collect_strict_value_true_names(&self.decoded.document.body, &mut names)?;
-        debug_assert!(self.generated_streams.is_empty());
         Ok(names)
-    }
-
-    pub fn generated_streams(&self) -> &[PreparedStreamGeneration] {
-        &self.generated_streams
     }
 
     pub const fn schema_additions(&self) -> &IdentitySchemaCatalog {
@@ -377,7 +320,6 @@ impl<Authority: BootstrapNamingAuthority> PreparedBootstrapTransaction<Authority
     pub fn to_draft(&self) -> PreparedBootstrapDraft {
         PreparedBootstrapDraft {
             decoded: self.decoded.clone(),
-            generated_streams: self.generated_streams.clone(),
             schema_additions: self.schema_additions.clone(),
             naming_transition: self.naming_authorization.transition.clone(),
             identity_dispositions: self.naming_authorization.identity_dispositions.clone(),
@@ -441,21 +383,19 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         })
     }
 
-    /// Seal using exact authored dispositions, exact Stream-generated
-    /// dispositions, a before-to-after textual proposal, and its authority proof.
+    /// Seal using exact authored dispositions, a before-to-after textual
+    /// proposal, and its authority proof.
     /// The result remains a prepared transaction; no authority state is mutated.
     pub fn seal(
         &self,
         plan: &BootstrapReadPlan,
         assignments: &NamingAssignments,
-        generated: &GeneratedStreamAssignments,
         naming_transition: &TextualMetadataTransition,
         authority_proof: &Authority::Proof,
     ) -> Result<PreparedBootstrapTransaction<Authority>, BootstrapReadError> {
-        let identity_dispositions = identity_dispositions(assignments, generated);
-        let canonical_order =
-            self.validate_assignment_inputs(plan, assignments, generated, naming_transition)?;
-        let schema_additions = self.schema_additions(plan, assignments, generated)?;
+        let identity_dispositions = identity_dispositions(assignments);
+        let canonical_order = self.validate_assignment_inputs(plan, assignments, naming_transition)?;
+        let schema_additions = self.schema_additions(plan, assignments)?;
         let schemas = SchemaView {
             existing: self.catalog.schemas(),
             additions: &schema_additions,
@@ -471,7 +411,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         let (_, _, body, root) = self.envelope(&plan.structural)?;
         let fields = expect_delimited(body, Delimiter::Brace, "registered body")?;
         let mut cursor = AssignmentCursor::new(&plan.declarations, assignments);
-        let mut prepared_streams = Vec::new();
         let mut sections = Vec::new();
         for (section, field) in root.sections.iter().zip(fields) {
             sections.push(reify_section(
@@ -479,17 +418,10 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 field,
                 &environment,
                 &mut cursor,
-                generated,
-                &mut prepared_streams,
                 self.catalog.priors(),
             )?);
         }
         cursor.finish()?;
-        sort_by_identity(
-            &mut prepared_streams,
-            |stream| &stream.output.name,
-            &canonical_order,
-        )?;
         let decoded = DecodedBootstrap {
             document: BootstrapDocument {
                 header: plan.header,
@@ -506,7 +438,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         self.authorize_draft(
             PreparedBootstrapDraft {
                 decoded,
-                generated_streams: prepared_streams,
                 schema_additions,
                 naming_transition: naming_transition.clone(),
                 identity_dispositions,
@@ -542,7 +473,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             .ok_or(BootstrapReadError::NamingAuthorityRejected)?;
         let transaction = PreparedBootstrapTransaction {
             decoded: draft.decoded,
-            generated_streams: draft.generated_streams,
             schema_additions: draft.schema_additions,
             naming_authorization: VerifiedNamingAuthorization {
                 transition: draft.naming_transition,
@@ -634,7 +564,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             current_module: self.catalog.current_module_path(),
             expected_additions: BTreeMap::new(),
             seen_existing: BTreeSet::new(),
-            streams: BTreeMap::new(),
             canonical_order: &transaction.canonical_order,
             priors: self.catalog.priors(),
             new_identities: transaction
@@ -660,7 +589,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             &decoded.document.body,
             self.roots.for_kind(decoded.document.header.kind),
         )?;
-        validator.validate_streams(&transaction.generated_streams, self.catalog.priors())?;
         validator.validate_additions(&transaction.schema_additions)?;
         let declared_identities = validator.seen_existing.clone();
         self.validate_prepared_dispositions(transaction, &declared_identities)?;
@@ -810,22 +738,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 }
             }
         }
-        let mut generated_local = authored_local.clone();
-        for generated in &transaction.generated_streams {
-            seat_local_identity(
-                &mut generated_local,
-                &generated.initiation.name,
-                snapshot,
-                self.catalog.current_module_path(),
-            )?;
-            seat_local_identity(
-                &mut generated_local,
-                &generated.termination.name,
-                snapshot,
-                self.catalog.current_module_path(),
-            )?;
-        }
-
         let mut imported = BTreeMap::<String, Vec<EncodedName>>::new();
         for import in &transaction.decoded.source.imports {
             for name in &import.imported_names {
@@ -853,28 +765,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             &transaction.canonical_order,
         )?;
 
-        let mut generated_references = Vec::new();
-        for generated in &transaction.generated_streams {
-            collect_expression_references(
-                &TypeExpression::ShapeApplication(generated.output.stream_of_event.clone()),
-                &mut generated_references,
-            );
-            generated_references.push((
-                generated.termination.stream_handle.clone(),
-                ReferenceNamespace::Nominal,
-            ));
-            for relation in &generated.role_relations {
-                generated_references.push((relation.target.clone(), ReferenceNamespace::Nominal));
-            }
-        }
-        self.validate_visible_references(
-            generated_references,
-            &generated_local,
-            &imported,
-            snapshot,
-            schemas,
-            &transaction.canonical_order,
-        )
+        Ok(())
     }
 
     fn validate_visible_references(
@@ -944,7 +835,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         &self,
         plan: &BootstrapReadPlan,
         assignments: &NamingAssignments,
-        generated: &GeneratedStreamAssignments,
         transition: &TextualMetadataTransition,
     ) -> Result<CanonicalIdentityOrder, BootstrapReadError> {
         if transition.before() != self.catalog.metadata() {
@@ -969,27 +859,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             .any(|occurrence| !expected.contains(occurrence))
         {
             return Err(BootstrapReadError::ExtraAssignment);
-        }
-
-        let streams = plan
-            .declarations
-            .iter()
-            .filter(|declaration| declaration.purpose == DeclarationPurpose::StreamInitiation)
-            .map(PlannedDeclaration::occurrence)
-            .collect::<BTreeSet<_>>();
-        for stream in &streams {
-            if generated.get(*stream).is_none() {
-                return Err(BootstrapReadError::MissingGeneratedStreamAssignment(
-                    stream.ordinal(),
-                ));
-            }
-        }
-        if generated
-            .by_source
-            .keys()
-            .any(|occurrence| !streams.contains(occurrence))
-        {
-            return Err(BootstrapReadError::ExtraGeneratedStreamAssignment);
         }
 
         let mut used_ids = BTreeSet::new();
@@ -1029,29 +898,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 return Err(BootstrapReadError::MetadataProjectionMismatch {
                     identity: identity.clone(),
                 });
-            }
-        }
-        for assignment in generated.by_source.values() {
-            for assigned in [&assignment.initiation, &assignment.termination] {
-                let identity = &assigned.encoded_name;
-                self.validate_authority_assignment(
-                    identity,
-                    &assigned.disposition,
-                    SchemaRole::Nominal { persistent: false },
-                    &mut used_ids,
-                    &mut new_ids,
-                    &mut canonical_additions,
-                )?;
-                let record = snapshot
-                    .record(identity)
-                    .ok_or_else(|| BootstrapReadError::MissingMetadataIdentity(identity.clone()))?;
-                if record.address.module_path != self.catalog.current_module_path()
-                    || record.address.lexical_owner.is_some()
-                {
-                    return Err(BootstrapReadError::MetadataProjectionMismatch {
-                        identity: identity.clone(),
-                    });
-                }
             }
         }
         for identity in snapshot.identities() {
@@ -1116,7 +962,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         &self,
         plan: &BootstrapReadPlan,
         assignments: &NamingAssignments,
-        generated: &GeneratedStreamAssignments,
     ) -> Result<IdentitySchemaCatalog, BootstrapReadError> {
         let mut additions = Vec::new();
         for declaration in &plan.declarations {
@@ -1130,16 +975,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 )?);
             }
         }
-        for assignment in generated.by_source.values() {
-            for assigned in [&assignment.initiation, &assignment.termination] {
-                if matches!(assigned.disposition, IdentityDisposition::New { .. }) {
-                    additions.push(IdentitySchema::new(
-                        assigned.encoded_name.clone(),
-                        [SchemaRole::Nominal { persistent: false }],
-                    )?);
-                }
-            }
-        }
         IdentitySchemaCatalog::new(additions)
     }
 }
@@ -1150,7 +985,6 @@ struct PreparedModelValidator<'a> {
     current_module: &'a [String],
     expected_additions: BTreeMap<EncodedName, SchemaRole>,
     seen_existing: BTreeSet<EncodedName>,
-    streams: BTreeMap<EncodedName, StreamInitiationDeclaration>,
     canonical_order: &'a CanonicalIdentityOrder,
     priors: &'a BootstrapPriorVocabulary,
     new_identities: BTreeSet<EncodedName>,
@@ -1251,28 +1085,9 @@ impl PreparedModelValidator<'_> {
     ) -> Result<(), BootstrapReadError> {
         match declaration {
             Declaration::Type(declaration) => self.validate_type_declaration(declaration, false),
-            Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => {
-                if !admit_nomos {
-                    return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
-                }
-                self.expect_declaration(
-                    &declaration.name,
-                    SchemaRole::Nominal { persistent: false },
-                    None,
-                )?;
-                let mut binders = BinderValidation::new(&declaration.name, self.canonical_order);
-                self.validate_expression(&declaration.query, &mut binders)?;
-                self.validate_expression(&declaration.event, &mut binders)?;
-                if self
-                    .streams
-                    .insert(declaration.name.clone(), declaration.clone())
-                    .is_some()
-                {
-                    return Err(BootstrapReadError::InvalidPreparedModel(
-                        "duplicate authored Stream output identity",
-                    ));
-                }
-                Ok(())
+            Declaration::Nomos(NomosDeclaration::StreamInitiation(_)) => {
+                let _ = admit_nomos;
+                Err(BootstrapReadError::BundledStreamUnsupported)
             }
         }
     }
@@ -1383,74 +1198,6 @@ impl PreparedModelValidator<'_> {
                 binders.observe(requirement)?;
             }
         }
-        Ok(())
-    }
-
-    fn validate_streams(
-        &mut self,
-        generated: &[PreparedStreamGeneration],
-        priors: &BootstrapPriorVocabulary,
-    ) -> Result<(), BootstrapReadError> {
-        if generated.len() != self.streams.len() {
-            return Err(BootstrapReadError::InvalidPreparedModel(
-                "generated Stream transaction count",
-            ));
-        }
-        let mut seen = BTreeSet::new();
-        for stream in generated {
-            let Some(authored) = self.streams.get(&stream.output.name) else {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "generated Stream has no authored source declaration",
-                ));
-            };
-            if !seen.insert(stream.output.name.clone()) {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "duplicate generated Stream output",
-                ));
-            }
-            if stream.initiation.query != authored.query
-                || stream.output.stream_of_event.shape != priors.identities().stream_shape
-                || stream.output.stream_of_event.arguments.as_slice() != [authored.event.clone()]
-                || stream.termination.stream_handle != authored.name
-                || stream.initiation.name == stream.output.name
-                || stream.initiation.name == stream.termination.name
-                || stream.output.name == stream.termination.name
-            {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "generated Stream declaration anatomy",
-                ));
-            }
-            self.expect_declaration(
-                &stream.initiation.name,
-                SchemaRole::Nominal { persistent: false },
-                None,
-            )?;
-            self.expect_declaration(
-                &stream.termination.name,
-                SchemaRole::Nominal { persistent: false },
-                None,
-            )?;
-            let expected_relations = [
-                InterfaceRoleMembership {
-                    role: InterfaceRole::Input,
-                    target: stream.initiation.name.clone(),
-                },
-                InterfaceRoleMembership {
-                    role: InterfaceRole::Output,
-                    target: stream.output.name.clone(),
-                },
-                InterfaceRoleMembership {
-                    role: InterfaceRole::Input,
-                    target: stream.termination.name.clone(),
-                },
-            ];
-            if stream.role_relations != expected_relations {
-                return Err(BootstrapReadError::InvalidPreparedModel(
-                    "generated Stream role relations",
-                ));
-            }
-        }
-        self.require_sorted_by_identity(generated, |item| &item.output.name)?;
         Ok(())
     }
 
@@ -2327,7 +2074,6 @@ enum ExpectedSchema {
     PersistentNominal,
     Trait,
     Shape,
-    StreamNomos,
 }
 
 impl ExpectedSchema {
@@ -2336,7 +2082,6 @@ impl ExpectedSchema {
             Self::Nominal | Self::PersistentNominal => ReferenceNamespace::Nominal,
             Self::Trait => ReferenceNamespace::Trait,
             Self::Shape => ReferenceNamespace::Shape,
-            Self::StreamNomos => ReferenceNamespace::Nomos,
         }
     }
 }
@@ -2401,11 +2146,6 @@ fn require_schema<'a>(
         }
         ExpectedSchema::Trait => schema.admits(SchemaRole::Trait),
         ExpectedSchema::Shape => schema.shape_arity().is_some(),
-        ExpectedSchema::StreamNomos => {
-            schema.admits(SchemaRole::Nomos(NomosSchema::StreamInitiation {
-                arity: 2,
-            }))
-        }
     };
     if admitted {
         Ok(schema)
@@ -2415,9 +2155,6 @@ fn require_schema<'a>(
             ExpectedSchema::PersistentNominal => SchemaRole::Nominal { persistent: true },
             ExpectedSchema::Trait => SchemaRole::Trait,
             ExpectedSchema::Shape => SchemaRole::Shape { arity: 0 },
-            ExpectedSchema::StreamNomos => {
-                SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 })
-            }
         };
         Err(BootstrapReadError::WrongSchemaRole {
             identity: identity.clone(),
@@ -2581,8 +2318,6 @@ fn reify_section(
     node: &SyntaxNode,
     environment: &ResolutionEnvironment<'_>,
     cursor: &mut AssignmentCursor<'_>,
-    generated: &GeneratedStreamAssignments,
-    prepared_streams: &mut Vec<PreparedStreamGeneration>,
     priors: &BootstrapPriorVocabulary,
 ) -> Result<ReifiedSection, BootstrapReadError> {
     let items = expect_delimited(node, Delimiter::Square, "registered section")?;
@@ -2623,15 +2358,7 @@ fn reify_section(
             let mut declarations = items
                 .iter()
                 .map(|node| {
-                    reify_declaration(
-                        node,
-                        environment,
-                        cursor,
-                        generated,
-                        prepared_streams,
-                        admit_nomos,
-                        priors,
-                    )
+                    reify_declaration(node, environment, cursor, admit_nomos)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             sort_by_identity(
@@ -2830,20 +2557,11 @@ fn reify_declaration(
     node: &SyntaxNode,
     environment: &ResolutionEnvironment<'_>,
     cursor: &mut AssignmentCursor<'_>,
-    generated: &GeneratedStreamAssignments,
-    prepared_streams: &mut Vec<PreparedStreamGeneration>,
     admit_nomos: bool,
-    priors: &BootstrapPriorVocabulary,
 ) -> Result<Declaration, BootstrapReadError> {
     if is_nomos_declaration(node) {
-        if !admit_nomos {
-            return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
-        }
-        let (declaration, prepared) = reify_stream(node, environment, cursor, generated, priors)?;
-        prepared_streams.push(prepared);
-        Ok(Declaration::Nomos(NomosDeclaration::StreamInitiation(
-            declaration,
-        )))
+        let _ = (environment, cursor, admit_nomos);
+        Err(BootstrapReadError::BundledStreamUnsupported)
     } else {
         reify_type_declaration(node, environment, cursor, DeclarationPurpose::Type)
             .map(Declaration::Type)
@@ -2948,81 +2666,6 @@ fn reify_variant(
         }
         _ => Err(unexpected_node(node, "enum variant")),
     }
-}
-
-fn reify_stream(
-    node: &SyntaxNode,
-    environment: &ResolutionEnvironment<'_>,
-    cursor: &mut AssignmentCursor<'_>,
-    generated: &GeneratedStreamAssignments,
-    priors: &BootstrapPriorVocabulary,
-) -> Result<(StreamInitiationDeclaration, PreparedStreamGeneration), BootstrapReadError> {
-    let SyntaxNode::Application { head, payload, .. } = node else {
-        return Err(unexpected_node(node, "Name.Nomos.(Query Event)"));
-    };
-    let SyntaxNode::Application {
-        head: nomos,
-        payload,
-        ..
-    } = payload.as_ref()
-    else {
-        return Err(unexpected_node(payload, "audited Nomos application"));
-    };
-    let nomos_identity = environment.require(nomos, ExpectedSchema::StreamNomos)?;
-    if nomos_identity != priors.identities().stream_nomos {
-        return Err(BootstrapReadError::WrongSchemaRole {
-            identity: nomos_identity,
-            required: SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-        });
-    }
-    let arguments = expect_delimited(payload, Delimiter::Parenthesis, "Query then Event")?;
-    let [query, event] = arguments else {
-        return Err(unexpected_node(payload, "exactly Query then Event"));
-    };
-    let (output_name, occurrence) = cursor.take(head, DeclarationPurpose::StreamInitiation)?;
-    let generated = generated.get(occurrence).ok_or_else(|| {
-        BootstrapReadError::MissingGeneratedStreamAssignment(occurrence.ordinal())
-    })?;
-    let mut parameters = ParameterScope::new(output_name.clone(), environment.canonical_order);
-    let query = parse_type_expression(query, environment, &mut parameters)?;
-    let event = parse_type_expression(event, environment, &mut parameters)?;
-    let declaration = StreamInitiationDeclaration {
-        name: output_name.clone(),
-        query: query.clone(),
-        event: event.clone(),
-    };
-    let prepared = PreparedStreamGeneration {
-        initiation: StreamInitiationInterfaceDeclaration {
-            name: generated.initiation.encoded_name.clone(),
-            query,
-        },
-        output: StreamInterfaceDeclaration {
-            name: output_name.clone(),
-            stream_of_event: ShapeApplication {
-                shape: priors.identities().stream_shape.clone(),
-                arguments: vec![event],
-            },
-        },
-        termination: StreamTerminationInterfaceDeclaration {
-            name: generated.termination.encoded_name.clone(),
-            stream_handle: output_name.clone(),
-        },
-        role_relations: [
-            InterfaceRoleMembership {
-                role: InterfaceRole::Input,
-                target: generated.initiation.encoded_name.clone(),
-            },
-            InterfaceRoleMembership {
-                role: InterfaceRole::Output,
-                target: output_name,
-            },
-            InterfaceRoleMembership {
-                role: InterfaceRole::Input,
-                target: generated.termination.encoded_name.clone(),
-            },
-        ],
-    };
-    Ok((declaration, prepared))
 }
 
 fn reify_trait(
