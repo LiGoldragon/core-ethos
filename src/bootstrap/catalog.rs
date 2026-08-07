@@ -802,7 +802,7 @@ pub struct BootstrapCatalog {
 }
 
 impl BootstrapCatalog {
-    pub fn new(
+    pub(crate) fn new(
         current_module_path: Vec<String>,
         metadata: TextualMetadataSnapshot,
         schemas: IdentitySchemaCatalog,

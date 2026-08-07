@@ -190,8 +190,14 @@ fn delegate(target: &EncodedTypeId<BootstrapLanguage>) -> SharedDescriptor<Boots
 /// external; the grammar derives no hierarchical child identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootstrapGrammarIdentities {
-    pub document: EncodedName,
-    pub syntax: EncodedName,
+    document: EncodedName,
+    syntax: EncodedName,
+}
+
+impl BootstrapGrammarIdentities {
+    pub(crate) const fn new(document: EncodedName, syntax: EncodedName) -> Self {
+        Self { document, syntax }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

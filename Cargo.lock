@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "core-ethos"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "content-identity 0.6.0 (git+https://github.com/LiGoldragon/content-identity.git?rev=df1d25c7cd9e822ae03255e04ede59a00b78480b)",
  "name-table",

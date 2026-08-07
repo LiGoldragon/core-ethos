@@ -251,28 +251,27 @@ fn fixture_from_parts(
     order: CanonicalIdentityOrder,
     authority: FakeAuthority,
 ) -> Fixture {
+    let assembler = SemaTransactionAssembler::new();
     let priors = BootstrapPriorVocabulary::new(prior_identities(), &schemas, &snapshot).unwrap();
-    let catalog = BootstrapCatalog::new(
-        current_module
-            .iter()
-            .map(|part| (*part).to_owned())
-            .collect(),
-        snapshot.clone(),
-        schemas.clone(),
-        priors,
-        BootstrapVersionPolicy::exact(EthosVersion::new(1, 0, 0)),
-        order.clone(),
-    )
-    .unwrap();
-    let reader = BootstrapReader::build(
-        BootstrapGrammarIdentities {
-            document: id(900),
-            syntax: id(901),
-        },
-        catalog,
-        authority.clone(),
-    )
-    .unwrap();
+    let catalog = assembler
+        .bootstrap_catalog(
+            current_module
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect(),
+            BootstrapCatalogMetadata::new(snapshot.clone(), schemas.clone()),
+            priors,
+            BootstrapVersionPolicy::exact(EthosVersion::new(1, 0, 0)),
+            order.clone(),
+        )
+        .unwrap();
+    let reader = assembler
+        .bootstrap_reader(
+            assembler.bootstrap_grammar(id(900), id(901)),
+            catalog,
+            authority.clone(),
+        )
+        .unwrap();
     Fixture {
         reader,
         authority,
@@ -311,19 +310,20 @@ struct SealInputs {
 }
 
 fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> SealInputs {
+    let assembler = SemaTransactionAssembler::new();
     let mut records = before.records().to_vec();
     let mut identity_by_occurrence = BTreeMap::new();
     let mut raw_assignments = Vec::new();
     for (index, declaration) in plan.declarations().iter().enumerate() {
         let identity = id(100 + index as u16);
         identity_by_occurrence.insert(declaration.occurrence(), identity.clone());
-        raw_assignments.push(NamingAssignment {
-            occurrence: declaration.occurrence(),
-            encoded_name: identity,
-            disposition: IdentityDisposition::New {
+        raw_assignments.push(assembler.naming_assignment(
+            declaration.occurrence(),
+            identity,
+            IdentityDisposition::New {
                 canonical_bytes: vec![0x80, index as u8],
             },
-        });
+        ));
     }
     for (declaration, assignment) in plan.declarations().iter().zip(&raw_assignments) {
         let owner = match declaration.scope() {
@@ -336,12 +336,12 @@ fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> Sea
             &["app"],
             owner,
             declaration.spelling(),
-            assignment.encoded_name.clone(),
+            assignment.encoded_name().clone(),
         ));
     }
     let after = TextualMetadataSnapshot::new(records).unwrap();
     SealInputs {
-        assignments: NamingAssignments::new(raw_assignments).unwrap(),
+        assignments: assembler.naming_assignments(raw_assignments).unwrap(),
         transition: TextualMetadataTransition::new(before.clone(), after),
     }
 }
@@ -352,6 +352,7 @@ fn existing_inputs(
     after: TextualMetadataSnapshot,
     module: &[&str],
 ) -> SealInputs {
+    let assembler = SemaTransactionAssembler::new();
     let module = module
         .iter()
         .map(|part| (*part).to_owned())
@@ -370,14 +371,14 @@ fn existing_inputs(
             .unwrap()
             .clone();
         identity_by_occurrence.insert(declaration.occurrence(), identity.clone());
-        raw.push(NamingAssignment {
-            occurrence: declaration.occurrence(),
-            encoded_name: identity,
-            disposition: IdentityDisposition::Existing,
-        });
+        raw.push(assembler.naming_assignment(
+            declaration.occurrence(),
+            identity,
+            IdentityDisposition::Existing,
+        ));
     }
     SealInputs {
-        assignments: NamingAssignments::new(raw).unwrap(),
+        assignments: assembler.naming_assignments(raw).unwrap(),
         transition: TextualMetadataTransition::new(before.clone(), after),
     }
 }
@@ -723,6 +724,7 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
         ("X", id(105), vec![0x75]),
         ("First", id(106), vec![0x71]),
     ];
+    let assembler = SemaTransactionAssembler::new();
     let make = |plan: &BootstrapReadPlan| {
         let mut owner_by_occurrence = BTreeMap::new();
         let mut assignments = Vec::new();
@@ -733,13 +735,13 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
                 .find(|(name, _, _)| *name == declaration.spelling())
                 .unwrap();
             owner_by_occurrence.insert(declaration.occurrence(), identity.clone());
-            assignments.push(NamingAssignment {
-                occurrence: declaration.occurrence(),
-                encoded_name: identity.clone(),
-                disposition: IdentityDisposition::New {
+            assignments.push(assembler.naming_assignment(
+                declaration.occurrence(),
+                identity.clone(),
+                IdentityDisposition::New {
                     canonical_bytes: bytes.clone(),
                 },
-            });
+            ));
         }
         for declaration in plan.declarations() {
             let identity = &owner_by_occurrence[&declaration.occurrence()];
@@ -757,7 +759,7 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
             ));
         }
         (
-            NamingAssignments::new(assignments).unwrap(),
+            assembler.naming_assignments(assignments).unwrap(),
             TextualMetadataTransition::new(
                 fixture.snapshot.clone(),
                 TextualMetadataSnapshot::new(records).unwrap(),
@@ -769,21 +771,11 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
     assert_eq!(transition_a.after(), transition_b.after());
     let transaction_a = fixture
         .reader
-        .seal(
-            &plan_a,
-            &assignments_a,
-            &transition_a,
-            &AUTHORITY_PROOF,
-        )
+        .seal(&plan_a, &assignments_a, &transition_a, &AUTHORITY_PROOF)
         .unwrap();
     let transaction_b = fixture
         .reader
-        .seal(
-            &plan_b,
-            &assignments_b,
-            &transition_b,
-            &AUTHORITY_PROOF,
-        )
+        .seal(&plan_b, &assignments_b, &transition_b, &AUTHORITY_PROOF)
         .unwrap();
     assert_eq!(transaction_a, transaction_b);
     let BootstrapBody::Nexus(body) = &transaction_a.decoded().document.body else {

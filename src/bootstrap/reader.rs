@@ -110,9 +110,23 @@ impl BootstrapReadPlan {
 /// One caller-issued identity for one authored occurrence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingAssignment {
-    pub occurrence: DeclarationOccurrence,
-    pub encoded_name: EncodedName,
-    pub disposition: IdentityDisposition,
+    occurrence: DeclarationOccurrence,
+    encoded_name: EncodedName,
+    disposition: IdentityDisposition,
+}
+
+impl NamingAssignment {
+    pub const fn occurrence(&self) -> DeclarationOccurrence {
+        self.occurrence
+    }
+
+    pub const fn encoded_name(&self) -> &EncodedName {
+        &self.encoded_name
+    }
+
+    pub const fn disposition(&self) -> &IdentityDisposition {
+        &self.disposition
+    }
 }
 
 /// Naming authority's statement about whether an identity is being reused or
@@ -182,7 +196,7 @@ pub struct NamingAssignments {
 }
 
 impl NamingAssignments {
-    pub fn new(assignments: Vec<NamingAssignment>) -> Result<Self, BootstrapReadError> {
+    pub(crate) fn new(assignments: Vec<NamingAssignment>) -> Result<Self, BootstrapReadError> {
         let mut by_occurrence = BTreeMap::new();
         for assignment in assignments {
             if by_occurrence
@@ -202,7 +216,150 @@ impl NamingAssignments {
     }
 }
 
-fn identity_dispositions(assignments: &NamingAssignments) -> BTreeMap<EncodedName, IdentityDisposition> {
+mod raw_construction_seal {
+    pub trait Sealed {}
+}
+
+/// Admission to the one authority-owned route that may assemble Core Ethos raw
+/// construction values. The private supertrait prevents downstream crates from
+/// minting a competing admission capability.
+// psyche-grasp: slightly-reviewed (2026-08-07)
+pub trait AdmittedToCoreEthosRawConstruction: raw_construction_seal::Sealed {
+    /// Join the two authority-issued structural identities into the bootstrap
+    /// grammar carrier.
+    fn bootstrap_grammar(
+        &self,
+        document: EncodedName,
+        syntax: EncodedName,
+    ) -> BootstrapGrammarIdentities;
+
+    /// Validate and join authority-owned state into the catalog consumed by a
+    /// reader. The catalog has no public raw constructor.
+    fn bootstrap_catalog(
+        &self,
+        current_module_path: Vec<String>,
+        metadata: BootstrapCatalogMetadata,
+        priors: BootstrapPriorVocabulary,
+        versions: BootstrapVersionPolicy,
+        canonical_order: CanonicalIdentityOrder,
+    ) -> Result<BootstrapCatalog, BootstrapReadError>;
+
+    /// Build one exact authority assignment. Its fields are not publicly
+    /// writable, so callers cannot manufacture an assignment outside this
+    /// admitted path.
+    fn naming_assignment(
+        &self,
+        occurrence: DeclarationOccurrence,
+        encoded_name: EncodedName,
+        disposition: IdentityDisposition,
+    ) -> NamingAssignment;
+
+    /// Check a complete assignment set for the exact reader plan.
+    fn naming_assignments(
+        &self,
+        assignments: Vec<NamingAssignment>,
+    ) -> Result<NamingAssignments, BootstrapReadError>;
+
+    /// Prepare a reader only from an admitted grammar and catalog.
+    fn bootstrap_reader<Authority: BootstrapNamingAuthority>(
+        &self,
+        grammar: BootstrapGrammarIdentities,
+        catalog: BootstrapCatalog,
+        naming_authority: Authority,
+    ) -> Result<BootstrapReader<Authority>, BootstrapBuildError>;
+}
+
+/// The sole Core-provided admission capability for Sema's transaction
+/// assembler. Its field is private; callers may use its authority-shaped
+/// operations but cannot form raw Core construction values directly.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SemaTransactionAssembler {
+    _private: (),
+}
+
+/// The two catalog components whose direct construction joins raw authority
+/// data. Keeping them together makes the catalog handoff explicit.
+#[derive(Clone, Debug)]
+pub struct BootstrapCatalogMetadata {
+    metadata: TextualMetadataSnapshot,
+    schemas: IdentitySchemaCatalog,
+}
+
+impl BootstrapCatalogMetadata {
+    pub fn new(metadata: TextualMetadataSnapshot, schemas: IdentitySchemaCatalog) -> Self {
+        Self { metadata, schemas }
+    }
+}
+
+impl SemaTransactionAssembler {
+    /// Obtain the one Core admission used by Sema's transaction assembler.
+    pub const fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl raw_construction_seal::Sealed for SemaTransactionAssembler {}
+
+impl AdmittedToCoreEthosRawConstruction for SemaTransactionAssembler {
+    fn bootstrap_grammar(
+        &self,
+        document: EncodedName,
+        syntax: EncodedName,
+    ) -> BootstrapGrammarIdentities {
+        BootstrapGrammarIdentities::new(document, syntax)
+    }
+
+    fn bootstrap_catalog(
+        &self,
+        current_module_path: Vec<String>,
+        metadata: BootstrapCatalogMetadata,
+        priors: BootstrapPriorVocabulary,
+        versions: BootstrapVersionPolicy,
+        canonical_order: CanonicalIdentityOrder,
+    ) -> Result<BootstrapCatalog, BootstrapReadError> {
+        BootstrapCatalog::new(
+            current_module_path,
+            metadata.metadata,
+            metadata.schemas,
+            priors,
+            versions,
+            canonical_order,
+        )
+    }
+
+    fn naming_assignment(
+        &self,
+        occurrence: DeclarationOccurrence,
+        encoded_name: EncodedName,
+        disposition: IdentityDisposition,
+    ) -> NamingAssignment {
+        NamingAssignment {
+            occurrence,
+            encoded_name,
+            disposition,
+        }
+    }
+
+    fn naming_assignments(
+        &self,
+        assignments: Vec<NamingAssignment>,
+    ) -> Result<NamingAssignments, BootstrapReadError> {
+        NamingAssignments::new(assignments)
+    }
+
+    fn bootstrap_reader<Authority: BootstrapNamingAuthority>(
+        &self,
+        grammar: BootstrapGrammarIdentities,
+        catalog: BootstrapCatalog,
+        naming_authority: Authority,
+    ) -> Result<BootstrapReader<Authority>, BootstrapBuildError> {
+        BootstrapReader::build(grammar, catalog, naming_authority)
+    }
+}
+
+fn identity_dispositions(
+    assignments: &NamingAssignments,
+) -> BTreeMap<EncodedName, IdentityDisposition> {
     assignments
         .by_occurrence
         .values()
@@ -339,7 +496,7 @@ pub struct BootstrapReader<Authority> {
 }
 
 impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
-    pub fn build(
+    pub(crate) fn build(
         grammar_identities: BootstrapGrammarIdentities,
         catalog: BootstrapCatalog,
         naming_authority: Authority,
@@ -394,7 +551,8 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         authority_proof: &Authority::Proof,
     ) -> Result<PreparedBootstrapTransaction<Authority>, BootstrapReadError> {
         let identity_dispositions = identity_dispositions(assignments);
-        let canonical_order = self.validate_assignment_inputs(plan, assignments, naming_transition)?;
+        let canonical_order =
+            self.validate_assignment_inputs(plan, assignments, naming_transition)?;
         let schema_additions = self.schema_additions(plan, assignments)?;
         let schemas = SchemaView {
             existing: self.catalog.schemas(),
@@ -2357,9 +2515,7 @@ fn reify_section(
         SectionSchema::Declarations { admit_nomos } => {
             let mut declarations = items
                 .iter()
-                .map(|node| {
-                    reify_declaration(node, environment, cursor, admit_nomos)
-                })
+                .map(|node| reify_declaration(node, environment, cursor, admit_nomos))
                 .collect::<Result<Vec<_>, _>>()?;
             sort_by_identity(
                 &mut declarations,
