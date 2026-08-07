@@ -2287,6 +2287,19 @@ fn resolve_visible_identity(
             .filter(|identity| authority.snapshot.spelling(identity) == Some(spelling))
             .cloned(),
     );
+    // Discover catalog-registered builtin identities beyond core priors:
+    // domain vocabulary admitted into the bootstrap catalog is registered
+    // under the "builtin" module path and is visible without import. The
+    // retain filter below ensures namespace admission.
+    for record in authority.snapshot.records() {
+        if record.address.textual_name.as_str() == spelling
+            && record.address.lexical_owner.is_none()
+            && record.address.module_path == ["builtin"]
+            && !candidates.contains(&record.encoded_name)
+        {
+            candidates.push(record.encoded_name);
+        }
+    }
     candidates.retain(|identity| {
         authority
             .schemas
