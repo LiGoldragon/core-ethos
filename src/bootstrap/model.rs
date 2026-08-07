@@ -1,10 +1,6 @@
 //! Purpose-built semantic carriers for the bootstrap Ethos file kinds.
 
-use std::marker::PhantomData;
-
 use name_table::{EncodedName, TrueNamed};
-
-use super::catalog::CanonicalIdentityOrder;
 
 /// One compatibility version written as three canonical decimal components.
 #[derive(
@@ -152,9 +148,7 @@ pub enum InterfaceRole {
 }
 
 /// A role position either declares a plain nominal type inline or references
-/// one. Authored Stream/Nomos declarations deliberately remain exclusive to
-/// Interface support Types: applying a Stream initiation declaration directly
-/// as Input/Output/Refusal has no coherent role-position semantics.
+/// one.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum RoleEntry {
     Declaration(TypeDeclaration),
@@ -184,8 +178,7 @@ pub struct InterfaceBody {
     pub outputs: Vec<RoleEntry>,
     pub refusals: Vec<RoleEntry>,
     pub types: Vec<Declaration>,
-    /// Relations produced only by the three authored role sections. Generated
-    /// Stream relations live in the prepared transaction until commit.
+    /// Relations produced only by the three authored role sections.
     pub memberships: Vec<InterfaceRoleMembership>,
 }
 
@@ -216,22 +209,6 @@ impl TrueNamed for TableDeclaration {}
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum Declaration {
     Type(TypeDeclaration),
-    Nomos(NomosDeclaration),
-}
-
-/// Audited purpose-built Nomos alternatives.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub enum NomosDeclaration {
-    StreamInitiation(StreamInitiationDeclaration),
-}
-
-/// The authored meaning of `Name.Stream.(Query Event)`.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct StreamInitiationDeclaration {
-    /// The authored name designates the eventual direct Stream output identity.
-    pub name: EncodedName,
-    pub query: TypeExpression,
-    pub event: TypeExpression,
 }
 
 /// A named plain nominal declaration.
@@ -376,136 +353,3 @@ pub struct TableDeclaration {
     pub key_type: EncodedName,
 }
 
-/// Catalog identities underlying the validated runtime Stream carriers.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStreamSchemaContract {
-    pub stream_shape: EncodedName,
-    pub stream_identity_shape: EncodedName,
-    pub stream_shape_arity: u16,
-    pub stream_identity_shape_arity: u16,
-}
-
-/// A runtime Stream handle indexed by its Event type.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStreamIdentity<Event> {
-    encoded_name: EncodedName,
-    event: PhantomData<fn() -> Event>,
-}
-
-impl<Event> RuntimeStreamIdentity<Event> {
-    pub fn new(
-        encoded_name: EncodedName,
-        identities: &CanonicalIdentityOrder,
-    ) -> Result<Self, RuntimeStreamValueError> {
-        if !identities.contains(&encoded_name) {
-            return Err(RuntimeStreamValueError::UnrecognizedHandle(encoded_name));
-        }
-        Ok(Self {
-            encoded_name,
-            event: PhantomData,
-        })
-    }
-
-    pub const fn encoded_name(&self) -> &EncodedName {
-        &self.encoded_name
-    }
-}
-
-/// The query value consumed by Stream initiation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStreamInitiation<Query> {
-    query: Query,
-}
-
-impl<Query> RuntimeStreamInitiation<Query> {
-    pub const fn new(query: Query) -> Self {
-        Self { query }
-    }
-
-    pub const fn query(&self) -> &Query {
-        &self.query
-    }
-}
-
-/// A `Stream<Event>` value is exactly its typed identity handle.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStream<Event> {
-    identity: RuntimeStreamIdentity<Event>,
-}
-
-impl<Event> RuntimeStream<Event> {
-    pub const fn new(identity: RuntimeStreamIdentity<Event>) -> Self {
-        Self { identity }
-    }
-
-    pub const fn identity(&self) -> &RuntimeStreamIdentity<Event> {
-        &self.identity
-    }
-}
-
-/// Termination carries the exact same typed Stream value.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStreamTermination<Event> {
-    stream: RuntimeStream<Event>,
-}
-
-impl<Event> RuntimeStreamTermination<Event> {
-    pub const fn new(stream: RuntimeStream<Event>) -> Self {
-        Self { stream }
-    }
-
-    pub const fn stream(&self) -> &RuntimeStream<Event> {
-        &self.stream
-    }
-}
-
-/// One validated initiation/output/termination runtime value family.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeStreamValues<Query, Event> {
-    initiation: RuntimeStreamInitiation<Query>,
-    stream: RuntimeStream<Event>,
-    termination: RuntimeStreamTermination<Event>,
-}
-
-impl<Query, Event> RuntimeStreamValues<Query, Event> {
-    pub fn new(
-        initiation: RuntimeStreamInitiation<Query>,
-        stream: RuntimeStream<Event>,
-        termination: RuntimeStreamTermination<Event>,
-    ) -> Result<Self, RuntimeStreamValueError> {
-        if stream.identity.encoded_name != termination.stream.identity.encoded_name {
-            return Err(RuntimeStreamValueError::MismatchedTerminationStream {
-                stream: stream.identity.encoded_name.clone(),
-                termination: termination.stream.identity.encoded_name.clone(),
-            });
-        }
-        Ok(Self {
-            initiation,
-            stream,
-            termination,
-        })
-    }
-
-    pub const fn initiation(&self) -> &RuntimeStreamInitiation<Query> {
-        &self.initiation
-    }
-
-    pub const fn stream(&self) -> &RuntimeStream<Event> {
-        &self.stream
-    }
-
-    pub const fn termination(&self) -> &RuntimeStreamTermination<Event> {
-        &self.termination
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum RuntimeStreamValueError {
-    #[error("runtime Stream handle {0:?} is absent from the canonical identity registry")]
-    UnrecognizedHandle(EncodedName),
-    #[error("termination Stream {termination:?} differs from Stream value {stream:?}")]
-    MismatchedTerminationStream {
-        stream: EncodedName,
-        termination: EncodedName,
-    },
-}

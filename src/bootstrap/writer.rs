@@ -10,9 +10,7 @@ use super::reader::{BootstrapNamingAuthority, BootstrapReader, PreparedBootstrap
 use super::root::{BootstrapSectionSchema as SectionSchema, RootSemanticSectionRef};
 
 impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
-    /// Validate and write one canonical authored projection. Generated Stream
-    /// declarations remain transaction output and are never emitted as extra
-    /// source declarations.
+    /// Validate and write one canonical authored projection.
     pub fn write(
         &self,
         transaction: &PreparedBootstrapTransaction<Authority>,
@@ -44,13 +42,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             if index > 0 {
                 output.push('\n');
             }
-            write_section(
-                &mut output,
-                *schema,
-                section,
-                snapshot,
-                self.catalog().priors().identities().stream_nomos.clone(),
-            )?;
+            write_section(&mut output, *schema, section, snapshot)?;
         }
         output.push_str("\n}\n");
         Ok(output)
@@ -62,7 +54,6 @@ fn write_section(
     schema: SectionSchema,
     section: RootSemanticSectionRef<'_>,
     snapshot: &TextualMetadataSnapshot,
-    stream_nomos: EncodedName,
 ) -> Result<(), BootstrapWriteError> {
     output.push_str("  [");
     match (schema, section) {
@@ -78,11 +69,11 @@ fn write_section(
             })?;
         }
         (
-            SectionSchema::Declarations { .. },
+            SectionSchema::Declarations,
             RootSemanticSectionRef::Declarations(declarations),
         ) => {
             write_separated(output, declarations, |output, declaration| {
-                write_declaration(output, declaration, snapshot, &stream_nomos)
+                write_declaration(output, declaration, snapshot)
             })?;
         }
         (SectionSchema::Traits, RootSemanticSectionRef::Traits(traits)) => {
@@ -119,22 +110,9 @@ fn write_declaration(
     output: &mut String,
     declaration: &Declaration,
     snapshot: &TextualMetadataSnapshot,
-    stream_nomos: &EncodedName,
 ) -> Result<(), BootstrapWriteError> {
-    match declaration {
-        Declaration::Type(declaration) => write_type_declaration(output, declaration, snapshot),
-        Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => {
-            output.push_str(spelling(snapshot, &declaration.name)?);
-            output.push('.');
-            output.push_str(spelling(snapshot, stream_nomos)?);
-            output.push_str(".(");
-            write_type_expression(output, &declaration.query, snapshot)?;
-            output.push(' ');
-            write_type_expression(output, &declaration.event, snapshot)?;
-            output.push(')');
-            Ok(())
-        }
-    }
+    let Declaration::Type(declaration) = declaration;
+    write_type_declaration(output, declaration, snapshot)
 }
 
 fn write_type_declaration(

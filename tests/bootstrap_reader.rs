@@ -9,10 +9,6 @@ fn id(local: u16) -> EncodedName {
     opaque_name(0, local)
 }
 
-fn rust_id(local: u16) -> EncodedName {
-    opaque_name(1, local)
-}
-
 fn opaque_name(namespace: u8, local: u16) -> EncodedName {
     let mut bytes = [0; 16];
     bytes[0] = namespace;
@@ -153,9 +149,6 @@ fn prior_identities() -> BootstrapPriorIdentities {
         option_shape: id(12),
         map_shape: id(13),
         result_shape: id(14),
-        stream_nomos: id(15),
-        stream_shape: id(15),
-        stream_identity_shape: id(16),
     }
 }
 
@@ -214,15 +207,6 @@ fn make_fixture_with_authority(
         (12, "Option", vec![SchemaRole::Shape { arity: 1 }]),
         (13, "Map", vec![SchemaRole::Shape { arity: 2 }]),
         (14, "Result", vec![SchemaRole::Shape { arity: 2 }]),
-        (
-            15,
-            "Stream",
-            vec![
-                SchemaRole::Shape { arity: 1 },
-                SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-            ],
-        ),
-        (16, "StreamIdentity", vec![SchemaRole::Shape { arity: 1 }]),
     ];
     let mut records = Vec::new();
     let mut schemas = Vec::new();
@@ -502,9 +486,8 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
 }
 
 #[test]
-fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
+fn shapes_follow_explicit_catalog_authority() {
     let imported_shape = id(70);
-    let imported_nomos = id(71);
     let imported_nominal = id(72);
     let imported_trait = id(73);
     let local_shape = id(74);
@@ -519,17 +502,6 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
                 )
                 .unwrap(),
                 canonical_bytes: vec![0x31],
-            },
-            Extra {
-                metadata: record(&["dep"], None, "ForeignNomos", imported_nomos.clone()),
-                schema: IdentitySchema::new(
-                    imported_nomos.clone(),
-                    [SchemaRole::Nomos(NomosSchema::StreamInitiation {
-                        arity: 2,
-                    })],
-                )
-                .unwrap(),
-                canonical_bytes: vec![0x32],
             },
             Extra {
                 metadata: record(&["dep"], None, "ForeignNominal", imported_nominal.clone()),
@@ -633,12 +605,6 @@ fn shapes_follow_explicit_catalog_authority_while_nomos_heads_remain_closed() {
             Err(BootstrapReadError::UnresolvedReference { .. })
         ));
     }
-    assert!(matches!(
-        fixture.reader.plan(
-            "Interface.{1 0 0}\n[dep.[ForeignNomos]]\n{[] [] [] [Bad.ForeignNomos.(String String)]}"
-        ),
-        Err(BootstrapReadError::NonPriorNomosIdentity { identity }) if identity == imported_nomos
-    ));
 }
 
 #[test]
@@ -661,24 +627,7 @@ fn schema_roles_use_an_explicit_allowlist_and_priors_have_exact_relationships() 
             Err(BootstrapReadError::IncompatibleSchemaRoles { identity, .. }) if identity == id(70)
         ));
     }
-    IdentitySchema::new(
-        id(70),
-        [
-            SchemaRole::Shape { arity: 1 },
-            SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-        ],
-    )
-    .unwrap();
-
     let fixture = make_fixture(&["app"], vec![]);
-    let mut wrong = prior_identities();
-    wrong.stream_nomos = id(14);
-    assert!(matches!(
-        BootstrapPriorVocabulary::new(wrong, &fixture.schemas, &fixture.snapshot),
-        Err(BootstrapReadError::InvalidPriorIdentityRelationship(
-            "stream_nomos and stream_shape must be the same identity"
-        ))
-    ));
     let mut duplicate = prior_identities();
     duplicate.option_shape = duplicate.vector_shape.clone();
     assert!(matches!(
@@ -805,7 +754,7 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
 }
 
 #[test]
-fn exact_plan_errors_cover_method_stream_shape_table_and_versions() {
+fn exact_plan_errors_cover_method_shape_table_and_versions() {
     let fixture = make_fixture(&["app"], vec![]);
     assert!(matches!(
         fixture
@@ -818,16 +767,6 @@ fn exact_plan_errors_cover_method_stream_shape_table_and_versions() {
     ));
     assert!(matches!(
         fixture.reader.plan(
-            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Stream.(String)]}"
-        ),
-        Err(BootstrapReadError::NomosArity {
-            identity,
-            expected: 2,
-            found: 1,
-        }) if identity == id(15)
-    ));
-    assert!(matches!(
-        fixture.reader.plan(
             "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Map<String>]}"
         ),
         Err(BootstrapReadError::ShapeArity {
@@ -835,22 +774,6 @@ fn exact_plan_errors_cover_method_stream_shape_table_and_versions() {
             expected: 2,
             found: 1,
         }) if identity == id(13)
-    ));
-    assert!(matches!(
-        fixture.reader.plan(
-            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Stream<String Integer>]}"
-        ),
-        Err(BootstrapReadError::ShapeArity {
-            identity,
-            expected: 1,
-            found: 2,
-        }) if identity == id(15)
-    ));
-    assert!(matches!(
-        fixture
-            .reader
-            .plan("Nexus.{1 0 0}\n[]\n{[] [Bad.Stream.(String Integer)]}"),
-        Err(BootstrapReadError::StreamOutsideInterfaceTypes)
     ));
     assert!(matches!(
         fixture.reader.plan("Sema.{1 0 0}\n[]\n{[] [bad.{String}]}"),
@@ -886,13 +809,13 @@ fn exact_plan_errors_cover_method_stream_shape_table_and_versions() {
 }
 
 #[test]
-fn bundled_stream_is_refused_before_authority_inputs_exist() {
+fn dotted_transformer_form_is_superseded() {
     let fixture = make_fixture(&["app"], vec![]);
     assert!(matches!(
         fixture
             .reader
             .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Flow.Stream.(String Integer)]}"),
-        Err(BootstrapReadError::BundledStreamUnsupported)
+        Err(BootstrapReadError::DottedTransformerFormSuperseded)
     ));
 }
 
@@ -1061,14 +984,14 @@ fn root_registry_is_the_observable_section_order() {
             BootstrapSectionSchema::Role(InterfaceRole::Input),
             BootstrapSectionSchema::Role(InterfaceRole::Output),
             BootstrapSectionSchema::Role(InterfaceRole::Refusal),
-            BootstrapSectionSchema::Declarations { admit_nomos: true },
+            BootstrapSectionSchema::Declarations,
         ]
     );
     assert_eq!(
         fixture.reader.section_order(EthosKind::Nexus),
         [
             BootstrapSectionSchema::Traits,
-            BootstrapSectionSchema::Declarations { admit_nomos: false },
+            BootstrapSectionSchema::Declarations,
         ]
     );
     assert_eq!(
@@ -1078,37 +1001,6 @@ fn root_registry_is_the_observable_section_order() {
             BootstrapSectionSchema::Tables,
         ]
     );
-}
-
-#[test]
-fn runtime_stream_values_use_registered_identity_and_the_same_stream_handle() {
-    let identities = CanonicalIdentityOrder::new([(id(70), vec![1]), (id(71), vec![2])]).unwrap();
-    let handle = RuntimeStreamIdentity::<String>::new(id(70), &identities).unwrap();
-    let stream = RuntimeStream::new(handle);
-    let termination = RuntimeStreamTermination::new(stream.clone());
-    let values =
-        RuntimeStreamValues::new(RuntimeStreamInitiation::new(42u64), stream, termination).unwrap();
-    assert_eq!(values.initiation().query(), &42);
-    assert_eq!(values.stream(), values.termination().stream());
-    assert!(matches!(
-        RuntimeStreamIdentity::<String>::new(rust_id(70), &identities),
-        Err(RuntimeStreamValueError::UnrecognizedHandle(identity)) if identity == rust_id(70)
-    ));
-    let stream =
-        RuntimeStream::new(RuntimeStreamIdentity::<String>::new(id(70), &identities).unwrap());
-    let other_stream =
-        RuntimeStream::new(RuntimeStreamIdentity::<String>::new(id(71), &identities).unwrap());
-    assert!(matches!(
-        RuntimeStreamValues::new(
-            RuntimeStreamInitiation::new(()),
-            stream,
-            RuntimeStreamTermination::new(other_stream),
-        ),
-        Err(RuntimeStreamValueError::MismatchedTerminationStream {
-            stream,
-            termination,
-        }) if stream == id(70) && termination == id(71)
-    ));
 }
 
 #[test]

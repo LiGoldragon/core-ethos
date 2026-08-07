@@ -16,7 +16,7 @@ mod writer;
 pub use catalog::{
     BootstrapCatalog, BootstrapPriorDefinition, BootstrapPriorIdentities, BootstrapPriorRole,
     BootstrapPriorSlot, BootstrapPriorVocabulary, BootstrapVersionPolicy, CanonicalIdentityOrder,
-    IdentitySchema, IdentitySchemaCatalog, NomosSchema, SchemaRole, TextualMetadataRecord,
+    IdentitySchema, IdentitySchemaCatalog, SchemaRole, TextualMetadataRecord,
     TextualMetadataSnapshot, TextualMetadataTransition, TextualProjectionAddress,
     bootstrap_prior_definitions,
 };

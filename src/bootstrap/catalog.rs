@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use name_table::{EncodedName, TextualName};
 
 use super::error::BootstrapReadError;
-use super::model::{EthosKind, EthosVersion, InterfaceRole, RuntimeStreamSchemaContract};
+use super::model::{EthosKind, EthosVersion, InterfaceRole};
 
 /// Bootstrap-local address of one closed prior definition.
 ///
@@ -29,8 +29,6 @@ pub enum BootstrapPriorSlot {
     OptionShape,
     MapShape,
     ResultShape,
-    Stream,
-    StreamIdentityShape,
 }
 
 /// One identity-free role in the closed bootstrap seed.
@@ -40,7 +38,6 @@ pub enum BootstrapPriorRole {
     InterfaceRole(InterfaceRole),
     Nominal { persistent: bool },
     Shape { arity: u16 },
-    Nomos(NomosSchema),
 }
 
 impl BootstrapPriorRole {
@@ -51,7 +48,6 @@ impl BootstrapPriorRole {
             Self::InterfaceRole(role) => SchemaRole::InterfaceRole(role),
             Self::Nominal { persistent } => SchemaRole::Nominal { persistent },
             Self::Shape { arity } => SchemaRole::Shape { arity },
-            Self::Nomos(nomos) => SchemaRole::Nomos(nomos),
         }
     }
 }
@@ -78,10 +74,6 @@ const PERSISTENT_NOMINAL_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::Nominal { persistent: true }];
 const UNARY_SHAPE_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::Shape { arity: 1 }];
 const BINARY_SHAPE_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::Shape { arity: 2 }];
-const STREAM_ROLES: &[BootstrapPriorRole] = &[
-    BootstrapPriorRole::Shape { arity: 1 },
-    BootstrapPriorRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-];
 
 const BOOTSTRAP_PRIOR_DEFINITIONS: &[BootstrapPriorDefinition] = &[
     BootstrapPriorDefinition {
@@ -153,16 +145,6 @@ const BOOTSTRAP_PRIOR_DEFINITIONS: &[BootstrapPriorDefinition] = &[
         slot: BootstrapPriorSlot::ResultShape,
         textual_name: "Result",
         roles: BINARY_SHAPE_ROLES,
-    },
-    BootstrapPriorDefinition {
-        slot: BootstrapPriorSlot::Stream,
-        textual_name: "Stream",
-        roles: STREAM_ROLES,
-    },
-    BootstrapPriorDefinition {
-        slot: BootstrapPriorSlot::StreamIdentityShape,
-        textual_name: "StreamIdentity",
-        roles: UNARY_SHAPE_ROLES,
     },
 ];
 
@@ -382,12 +364,6 @@ impl CanonicalIdentityOrder {
     }
 }
 
-/// The concrete audited bootstrap Nomos schema selected by an identity role.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum NomosSchema {
-    StreamInitiation { arity: u16 },
-}
-
 /// One semantic role registered independently of textual projection.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SchemaRole {
@@ -396,14 +372,12 @@ pub enum SchemaRole {
     Nominal { persistent: bool },
     Shape { arity: u16 },
     Trait,
-    Nomos(NomosSchema),
     Variant,
     Method,
     Table,
 }
 
-/// All admitted roles for one encoded identity. Multiple distinct roles are
-/// intentional; a Stream identity can be both Shape and audited Nomos head.
+/// All admitted roles for one encoded identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentitySchema {
     identity: EncodedName,
@@ -443,24 +417,10 @@ impl IdentitySchema {
             _ => None,
         })
     }
-
-    pub fn nomos(&self) -> Option<NomosSchema> {
-        self.roles.iter().find_map(|role| match role {
-            SchemaRole::Nomos(schema) => Some(*schema),
-            _ => None,
-        })
-    }
 }
 
 fn admitted_role_set(roles: &BTreeSet<SchemaRole>) -> bool {
-    if roles.len() == 1 {
-        return true;
-    }
-    roles
-        == &BTreeSet::from([
-            SchemaRole::Shape { arity: 1 },
-            SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-        ])
+    roles.len() == 1
 }
 
 /// Identity-keyed semantic schema authority.
@@ -513,9 +473,6 @@ pub struct BootstrapPriorIdentities {
     pub option_shape: EncodedName,
     pub map_shape: EncodedName,
     pub result_shape: EncodedName,
-    pub stream_nomos: EncodedName,
-    pub stream_shape: EncodedName,
-    pub stream_identity_shape: EncodedName,
 }
 
 /// Validated typed seating of all bootstrap priors.
@@ -530,11 +487,6 @@ impl BootstrapPriorVocabulary {
         schemas: &IdentitySchemaCatalog,
         metadata: &TextualMetadataSnapshot,
     ) -> Result<Self, BootstrapReadError> {
-        if identities.stream_nomos != identities.stream_shape {
-            return Err(BootstrapReadError::InvalidPriorIdentityRelationship(
-                "stream_nomos and stream_shape must be the same identity",
-            ));
-        }
         let requirements = [
             (
                 "interface_kind",
@@ -606,21 +558,6 @@ impl BootstrapPriorVocabulary {
                 &identities.result_shape,
                 SchemaRole::Shape { arity: 2 },
             ),
-            (
-                "stream_nomos",
-                &identities.stream_nomos,
-                SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-            ),
-            (
-                "stream_shape",
-                &identities.stream_shape,
-                SchemaRole::Shape { arity: 1 },
-            ),
-            (
-                "stream_identity_shape",
-                &identities.stream_identity_shape,
-                SchemaRole::Shape { arity: 1 },
-            ),
         ];
         for (position, identity, required) in requirements {
             let schema =
@@ -659,8 +596,6 @@ impl BootstrapPriorVocabulary {
             ("option_shape", &identities.option_shape),
             ("map_shape", &identities.map_shape),
             ("result_shape", &identities.result_shape),
-            ("stream_shape", &identities.stream_shape),
-            ("stream_identity_shape", &identities.stream_identity_shape),
         ];
         let mut seated = BTreeMap::new();
         for (position, identity) in positions {
@@ -690,15 +625,6 @@ impl BootstrapPriorVocabulary {
         &self.identities
     }
 
-    pub fn runtime_stream_contract(&self) -> RuntimeStreamSchemaContract {
-        RuntimeStreamSchemaContract {
-            stream_shape: self.identities.stream_shape.clone(),
-            stream_identity_shape: self.identities.stream_identity_shape.clone(),
-            stream_shape_arity: 1,
-            stream_identity_shape_arity: 1,
-        }
-    }
-
     pub(crate) fn body_nominal_identities(&self) -> [&EncodedName; 4] {
         let ids = &self.identities;
         [
@@ -709,15 +635,13 @@ impl BootstrapPriorVocabulary {
         ]
     }
 
-    pub(crate) fn shape_identities(&self) -> [&EncodedName; 6] {
+    pub(crate) fn shape_identities(&self) -> [&EncodedName; 4] {
         let ids = &self.identities;
         [
             &ids.vector_shape,
             &ids.option_shape,
             &ids.map_shape,
             &ids.result_shape,
-            &ids.stream_shape,
-            &ids.stream_identity_shape,
         ]
     }
 
@@ -733,7 +657,7 @@ impl BootstrapPriorVocabulary {
         self.fixed_identities().contains(&identity)
     }
 
-    pub(crate) fn fixed_identities(&self) -> [&EncodedName; 16] {
+    pub(crate) fn fixed_identities(&self) -> [&EncodedName; 14] {
         let ids = &self.identities;
         [
             &ids.interface_kind,
@@ -750,8 +674,6 @@ impl BootstrapPriorVocabulary {
             &ids.option_shape,
             &ids.map_shape,
             &ids.result_shape,
-            &ids.stream_shape,
-            &ids.stream_identity_shape,
         ]
     }
 }

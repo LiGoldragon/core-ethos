@@ -21,8 +21,6 @@ pub enum BootstrapBuildError {
 /// Failure in catalog construction, discovery, planning, or semantic sealing.
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapReadError {
-    #[error("bundled Stream declarations are not admitted by this authority path")]
-    BundledStreamUnsupported,
     #[error("strict bootstrap value cannot be archived: {0}")]
     StrictValueArchive(#[from] content_identity::ArchiveError),
     #[error("structural discovery or evaluation failed: {0}")]
@@ -159,22 +157,16 @@ pub enum BootstrapReadError {
         expected: u16,
         found: usize,
     },
-    #[error("Nomos identity {identity:?} requires {expected} arguments, found {found}")]
-    NomosArity {
-        identity: EncodedName,
-        expected: u16,
-        found: usize,
-    },
-    #[error("Nomos identity {identity:?} is not seated in the closed prior vocabulary")]
-    NonPriorNomosIdentity { identity: EncodedName },
     #[error("local parameter {name:?} is reused with incompatible Trait requirements")]
     ConflictingNamedParameter { name: String },
     #[error("one Trait requirement repeats Trait identity {0:?}")]
     DuplicateTrait(EncodedName),
     #[error("one Trait requirement repeats visible Trait name {0:?}")]
     DuplicateTraitProjection(String),
-    #[error("authored Stream declarations are admitted only in Interface support Types")]
-    StreamOutsideInterfaceTypes,
+    #[error("the dotted transformer head form is superseded by the colon form Name:Transformer.(payload)")]
+    DottedTransformerFormSuperseded,
+    #[error("no transformer is registered for head {head:?} in the bootstrap catalog")]
+    TransformerHeadNotRegistered { head: String },
     #[error("Sema persistent declarations admit only plain nominal types")]
     NonPersistentDeclaration,
     #[error("prepared transaction model is invalid: {0}")]

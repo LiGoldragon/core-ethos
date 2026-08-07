@@ -12,7 +12,7 @@ use super::model::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootstrapSectionSchema {
     Role(InterfaceRole),
-    Declarations { admit_nomos: bool },
+    Declarations,
     Traits,
     PersistentDeclarations,
     Tables,
@@ -99,7 +99,7 @@ impl RootSchemaRegistry {
                         BootstrapSectionSchema::Role(InterfaceRole::Input),
                         BootstrapSectionSchema::Role(InterfaceRole::Output),
                         BootstrapSectionSchema::Role(InterfaceRole::Refusal),
-                        BootstrapSectionSchema::Declarations { admit_nomos: true },
+                        BootstrapSectionSchema::Declarations,
                     ],
                 },
                 RootSchema {
@@ -107,7 +107,7 @@ impl RootSchemaRegistry {
                     kind_identity: ids.nexus_kind.clone(),
                     sections: vec![
                         BootstrapSectionSchema::Traits,
-                        BootstrapSectionSchema::Declarations { admit_nomos: false },
+                        BootstrapSectionSchema::Declarations,
                     ],
                 },
                 RootSchema {

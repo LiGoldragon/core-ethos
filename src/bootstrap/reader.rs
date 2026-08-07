@@ -48,7 +48,6 @@ pub enum DeclarationPurpose {
     Trait,
     Method,
     Table,
-    StreamInitiation,
 }
 
 /// One exact authored occurrence discovered before identity authority is used.
@@ -525,13 +524,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
         for (section, field) in root.sections.iter().zip(fields) {
             planner.discover_section(*section, field, &external, &self.catalog)?;
         }
-        if planner
-            .declarations
-            .iter()
-            .any(|declaration| declaration.purpose == DeclarationPurpose::StreamInitiation)
-        {
-            return Err(BootstrapReadError::BundledStreamUnsupported);
-        }
         Ok(BootstrapReadPlan {
             structural,
             header,
@@ -674,9 +666,6 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                 header: decoded.document.header.kind,
                 body: decoded.document.body.kind(),
             });
-        }
-        if contains_bundled_stream(&decoded.document.body) {
-            return Err(BootstrapReadError::BundledStreamUnsupported);
         }
         if !self
             .catalog
@@ -1175,11 +1164,11 @@ impl PreparedModelValidator<'_> {
                     self.require_sorted_by_identity(entries, RoleEntry::target)?;
                 }
                 (
-                    SectionSchema::Declarations { admit_nomos },
+                    SectionSchema::Declarations,
                     RootSemanticSectionRef::Declarations(declarations),
                 ) => {
                     for declaration in declarations {
-                        self.validate_declaration(declaration, *admit_nomos)?;
+                        self.validate_declaration(declaration)?;
                     }
                     self.require_sorted_by_identity(declarations, declaration_identity)?;
                 }
@@ -1239,14 +1228,9 @@ impl PreparedModelValidator<'_> {
     fn validate_declaration(
         &mut self,
         declaration: &Declaration,
-        admit_nomos: bool,
     ) -> Result<(), BootstrapReadError> {
         match declaration {
             Declaration::Type(declaration) => self.validate_type_declaration(declaration, false),
-            Declaration::Nomos(NomosDeclaration::StreamInitiation(_)) => {
-                let _ = admit_nomos;
-                Err(BootstrapReadError::BundledStreamUnsupported)
-            }
         }
     }
 
@@ -1791,25 +1775,20 @@ impl OccurrencePlanner {
                 for entry in items {
                     match entry {
                         SyntaxNode::Atom { text, .. } => validate_textual_name(text)?,
-                        _ if is_nomos_declaration(entry) => {
-                            return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
-                        }
                         _ => self.discover_type(
                             entry,
                             DeclarationPurpose::Type,
-                            false,
                             environment,
                             catalog,
                         )?,
                     }
                 }
             }
-            SectionSchema::Declarations { admit_nomos } => {
+            SectionSchema::Declarations => {
                 for declaration in items {
                     self.discover_type(
                         declaration,
                         DeclarationPurpose::Type,
-                        admit_nomos,
                         environment,
                         catalog,
                     )?;
@@ -1820,7 +1799,6 @@ impl OccurrencePlanner {
                     self.discover_type(
                         declaration,
                         DeclarationPurpose::PersistentType,
-                        false,
                         environment,
                         catalog,
                     )?;
@@ -1844,9 +1822,8 @@ impl OccurrencePlanner {
         &mut self,
         node: &SyntaxNode,
         purpose: DeclarationPurpose,
-        admit_nomos: bool,
         environment: &ExistingVisibleEnvironment<'_>,
-        catalog: &BootstrapCatalog,
+        _catalog: &BootstrapCatalog,
     ) -> Result<(), BootstrapReadError> {
         let SyntaxNode::Application {
             head,
@@ -1857,22 +1834,24 @@ impl OccurrencePlanner {
         else {
             return Err(unexpected_node(node, "named declaration"));
         };
-        if is_nomos_projection(payload) {
-            if !admit_nomos {
-                return Err(if purpose == DeclarationPurpose::PersistentType {
-                    BootstrapReadError::NonPersistentDeclaration
-                } else {
-                    BootstrapReadError::StreamOutsideInterfaceTypes
-                });
-            }
-            self.validate_stream_projection(payload, environment, catalog)?;
-            self.add(
-                head.clone(),
-                *head_bound,
-                ScopeKey::Module,
-                DeclarationPurpose::StreamInitiation,
-            )?;
-            return Ok(());
+        // Detect and refuse the superseded dotted transformer form
+        // `Name.TransformerHead.(payload)` — a nested Application payload.
+        if matches!(payload.as_ref(), SyntaxNode::Application { .. }) {
+            return Err(BootstrapReadError::DottedTransformerFormSuperseded);
+        }
+        // Detect the colon-form transformer application
+        // `Name:TransformerHead.(payload)`. The colon is preserved in the
+        // head atom by the structural parser; split to validate both parts.
+        if let Some(colon_position) = head.find(':') {
+            let declared_name = &head[..colon_position];
+            let transformer_head = &head[colon_position + 1..];
+            validate_textual_name(declared_name)?;
+            validate_textual_name(transformer_head)?;
+            // No transformer heads are registered in the bootstrap catalog.
+            // psyche-grasp: slightly-reviewed (2026-08-07)
+            return Err(BootstrapReadError::TransformerHeadNotRegistered {
+                head: transformer_head.to_owned(),
+            });
         }
         let owner = self.add(head.clone(), *head_bound, ScopeKey::Module, purpose)?;
         match payload.as_ref() {
@@ -1898,48 +1877,6 @@ impl OccurrencePlanner {
                 }
             }
             expression => validate_type_expression_plan(expression, environment)?,
-        }
-        Ok(())
-    }
-
-    fn validate_stream_projection(
-        &self,
-        node: &SyntaxNode,
-        environment: &ExistingVisibleEnvironment<'_>,
-        catalog: &BootstrapCatalog,
-    ) -> Result<(), BootstrapReadError> {
-        let SyntaxNode::Application {
-            head: nomos,
-            payload,
-            ..
-        } = node
-        else {
-            return Err(unexpected_node(node, "audited Nomos application"));
-        };
-        let identity = environment.resolve_identity(nomos, ReferenceNamespace::Nomos)?;
-        let schema = environment.schema(&identity)?;
-        let Some(NomosSchema::StreamInitiation { arity }) = schema.nomos() else {
-            return Err(BootstrapReadError::WrongSchemaRole {
-                identity,
-                required: SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-            });
-        };
-        if identity != catalog.priors().identities().stream_nomos {
-            return Err(BootstrapReadError::WrongSchemaRole {
-                identity,
-                required: SchemaRole::Nomos(NomosSchema::StreamInitiation { arity: 2 }),
-            });
-        }
-        let arguments = expect_delimited(payload, Delimiter::Parenthesis, "Nomos arguments")?;
-        if arguments.len() != usize::from(arity) {
-            return Err(BootstrapReadError::NomosArity {
-                identity,
-                expected: arity,
-                found: arguments.len(),
-            });
-        }
-        for argument in arguments {
-            validate_type_expression_plan(argument, environment)?;
         }
         Ok(())
     }
@@ -2249,7 +2186,6 @@ enum ReferenceNamespace {
     Nominal,
     Trait,
     Shape,
-    Nomos,
 }
 
 fn seat_local_identity(
@@ -2343,9 +2279,6 @@ fn resolve_visible_identity(
             .into_iter()
             .cloned()
             .collect(),
-        ReferenceNamespace::Nomos => {
-            vec![authority.priors.identities().stream_nomos.clone()]
-        }
         ReferenceNamespace::Trait => Vec::new(),
     };
     candidates.extend(
@@ -2389,12 +2322,7 @@ fn resolve_visible_identity(
             identities: many.to_vec(),
         }),
     }?;
-    match namespace {
-        ReferenceNamespace::Nomos if identity != authority.priors.identities().stream_nomos => {
-            Err(BootstrapReadError::NonPriorNomosIdentity { identity })
-        }
-        _ => Ok(identity),
-    }
+    Ok(identity)
 }
 
 fn namespace_admits(schema: &IdentitySchema, namespace: ReferenceNamespace) -> bool {
@@ -2405,7 +2333,6 @@ fn namespace_admits(schema: &IdentitySchema, namespace: ReferenceNamespace) -> b
             .any(|role| matches!(role, SchemaRole::Nominal { .. })),
         ReferenceNamespace::Trait => schema.admits(SchemaRole::Trait),
         ReferenceNamespace::Shape => schema.shape_arity().is_some(),
-        ReferenceNamespace::Nomos => schema.nomos().is_some(),
     }
 }
 
@@ -2488,9 +2415,6 @@ fn reify_section(
                     SyntaxNode::Atom { text, .. } => {
                         RoleEntry::Reference(environment.require(text, ExpectedSchema::Nominal)?)
                     }
-                    _ if is_nomos_declaration(node) => {
-                        return Err(BootstrapReadError::StreamOutsideInterfaceTypes);
-                    }
                     _ => RoleEntry::Declaration(reify_type_declaration(
                         node,
                         environment,
@@ -2512,10 +2436,10 @@ fn reify_section(
                 memberships,
             })
         }
-        SectionSchema::Declarations { admit_nomos } => {
+        SectionSchema::Declarations => {
             let mut declarations = items
                 .iter()
-                .map(|node| reify_declaration(node, environment, cursor, admit_nomos))
+                .map(|node| reify_declaration(node, environment, cursor))
                 .collect::<Result<Vec<_>, _>>()?;
             sort_by_identity(
                 &mut declarations,
@@ -2602,7 +2526,7 @@ fn assemble_body(
                         }
                         memberships.append(&mut section_memberships);
                     }
-                    (SectionSchema::Declarations { .. }, ReifiedSection::Declarations(values)) => {
+                    (SectionSchema::Declarations, ReifiedSection::Declarations(values)) => {
                         if declarations.replace(values).is_some() {
                             return Err(BootstrapReadError::InvalidPreparedModel(
                                 "duplicate Interface declaration section in root registry",
@@ -2645,7 +2569,7 @@ fn assemble_body(
                             ));
                         }
                     }
-                    (SectionSchema::Declarations { .. }, ReifiedSection::Declarations(values)) => {
+                    (SectionSchema::Declarations, ReifiedSection::Declarations(values)) => {
                         if declarations.replace(values).is_some() {
                             return Err(BootstrapReadError::InvalidPreparedModel(
                                 "duplicate Nexus declaration section in root registry",
@@ -2713,27 +2637,9 @@ fn reify_declaration(
     node: &SyntaxNode,
     environment: &ResolutionEnvironment<'_>,
     cursor: &mut AssignmentCursor<'_>,
-    admit_nomos: bool,
 ) -> Result<Declaration, BootstrapReadError> {
-    if is_nomos_declaration(node) {
-        let _ = (environment, cursor, admit_nomos);
-        Err(BootstrapReadError::BundledStreamUnsupported)
-    } else {
-        reify_type_declaration(node, environment, cursor, DeclarationPurpose::Type)
-            .map(Declaration::Type)
-    }
-}
-
-fn is_nomos_declaration(node: &SyntaxNode) -> bool {
-    matches!(node, SyntaxNode::Application { payload, .. } if is_nomos_projection(payload))
-}
-
-fn is_nomos_projection(node: &SyntaxNode) -> bool {
-    matches!(
-        node,
-        SyntaxNode::Application { payload, .. }
-            if matches!(payload.as_ref(), SyntaxNode::Delimited { delimiter: Delimiter::Parenthesis, .. })
-    )
+    reify_type_declaration(node, environment, cursor, DeclarationPurpose::Type)
+        .map(Declaration::Type)
 }
 
 fn reify_type_declaration(
@@ -2745,11 +2651,15 @@ fn reify_type_declaration(
     let SyntaxNode::Application { head, payload, .. } = node else {
         return Err(unexpected_node(node, "named type declaration"));
     };
-    if is_nomos_projection(payload) {
-        return Err(if purpose == DeclarationPurpose::PersistentType {
-            BootstrapReadError::NonPersistentDeclaration
-        } else {
-            BootstrapReadError::StreamOutsideInterfaceTypes
+    // Refuse the superseded dotted transformer form at the reification boundary.
+    if matches!(payload.as_ref(), SyntaxNode::Application { .. }) {
+        return Err(BootstrapReadError::DottedTransformerFormSuperseded);
+    }
+    // Refuse the colon-form transformer application (no transformers registered).
+    if let Some(colon_position) = head.find(':') {
+        let transformer_head = &head[colon_position + 1..];
+        return Err(BootstrapReadError::TransformerHeadNotRegistered {
+            head: transformer_head.to_owned(),
         });
     }
     let (name, _) = cursor.take(head, purpose)?;
@@ -3073,9 +2983,7 @@ fn unexpected_node(node: &SyntaxNode, expected: &'static str) -> BootstrapReadEr
 
 fn schema_role_for_purpose(purpose: DeclarationPurpose) -> SchemaRole {
     match purpose {
-        DeclarationPurpose::Type | DeclarationPurpose::StreamInitiation => {
-            SchemaRole::Nominal { persistent: false }
-        }
+        DeclarationPurpose::Type => SchemaRole::Nominal { persistent: false },
         DeclarationPurpose::PersistentType => SchemaRole::Nominal { persistent: true },
         DeclarationPurpose::Variant => SchemaRole::Variant,
         DeclarationPurpose::Trait => SchemaRole::Trait,
@@ -3087,7 +2995,6 @@ fn schema_role_for_purpose(purpose: DeclarationPurpose) -> SchemaRole {
 fn declaration_identity(declaration: &Declaration) -> &EncodedName {
     match declaration {
         Declaration::Type(declaration) => &declaration.name,
-        Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => &declaration.name,
     }
 }
 
@@ -3108,12 +3015,8 @@ fn collect_strict_value_true_names(
                 }
             }
             for declaration in &body.types {
-                match declaration {
-                    Declaration::Type(declaration) => collect_type_true_names(declaration, names)?,
-                    // Bundled Stream is rejected before assignment inputs are
-                    // accepted, so it cannot occupy a living authority seat.
-                    Declaration::Nomos(_) => unreachable!("Stream is refused during planning"),
-                }
+                let Declaration::Type(declaration) = declaration;
+                collect_type_true_names(declaration, names)?;
             }
         }
         BootstrapBody::Nexus(body) => {
@@ -3124,10 +3027,8 @@ fn collect_strict_value_true_names(
                 }
             }
             for declaration in &body.types {
-                match declaration {
-                    Declaration::Type(declaration) => collect_type_true_names(declaration, names)?,
-                    Declaration::Nomos(_) => unreachable!("Stream is refused during planning"),
-                }
+                let Declaration::Type(declaration) = declaration;
+                collect_type_true_names(declaration, names)?;
             }
         }
         BootstrapBody::Sema(body) => {
@@ -3140,20 +3041,6 @@ fn collect_strict_value_true_names(
         }
     }
     Ok(())
-}
-
-fn contains_bundled_stream(body: &BootstrapBody) -> bool {
-    match body {
-        BootstrapBody::Interface(body) => body
-            .types
-            .iter()
-            .any(|declaration| matches!(declaration, Declaration::Nomos(_))),
-        BootstrapBody::Nexus(body) => body
-            .types
-            .iter()
-            .any(|declaration| matches!(declaration, Declaration::Nomos(_))),
-        BootstrapBody::Sema(_) => false,
-    }
 }
 
 fn collect_type_true_names(
@@ -3234,15 +3121,8 @@ fn collect_document_references(
                 }
             }
             for declaration in &body.types {
-                match declaration {
-                    Declaration::Type(declaration) => {
-                        collect_type_declaration_references(declaration, references)
-                    }
-                    Declaration::Nomos(NomosDeclaration::StreamInitiation(declaration)) => {
-                        collect_expression_references(&declaration.query, references);
-                        collect_expression_references(&declaration.event, references);
-                    }
-                }
+                let Declaration::Type(declaration) = declaration;
+                collect_type_declaration_references(declaration, references);
             }
             for membership in &body.memberships {
                 references.push((membership.target.clone(), ReferenceNamespace::Nominal));
@@ -3258,12 +3138,8 @@ fn collect_document_references(
                 }
             }
             for declaration in &body.types {
-                match declaration {
-                    Declaration::Type(declaration) => {
-                        collect_type_declaration_references(declaration, references)
-                    }
-                    Declaration::Nomos(NomosDeclaration::StreamInitiation(_)) => {}
-                }
+                let Declaration::Type(declaration) = declaration;
+                collect_type_declaration_references(declaration, references);
             }
         }
         BootstrapBody::Sema(body) => {
