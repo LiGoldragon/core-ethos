@@ -551,7 +551,7 @@ fn bootstrap_discovery() -> BlockTreeDiscoveryConfiguration {
 
 struct NoNames;
 
-impl EncodedNameResolver<BootstrapLanguage> for NoNames {
+impl EncodedNameResolver for NoNames {
     fn resolve(&self, _encoded_name: &EncodedName) -> Option<&TextualName> {
         None
     }
