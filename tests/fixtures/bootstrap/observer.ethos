@@ -1,0 +1,11 @@
+Interface.{1 0 0}
+[signal/domain.[ObserverFilter ObservationEvent]]
+{
+  [Tap.ObserverFilter
+   Untap.ObservationTapToken]
+  [ObservationTapped.ObservationTapToken
+   ObservationUntapped.ObservationTapToken]
+  [UnknownObservationTap.ObservationTapToken]
+  [Observation.ObservationEvent]
+  []
+}

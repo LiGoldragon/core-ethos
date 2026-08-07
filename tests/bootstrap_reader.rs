@@ -141,6 +141,7 @@ fn prior_identities() -> BootstrapPriorIdentities {
         input_role: id(4),
         output_role: id(5),
         refusal_role: id(6),
+        stream_role: id(15),
         string_type: id(7),
         integer_type: id(8),
         boolean_type: id(9),
@@ -198,6 +199,11 @@ fn make_fixture_with_authority(
             6,
             "Refusal",
             vec![SchemaRole::InterfaceRole(InterfaceRole::Refusal)],
+        ),
+        (
+            15,
+            "Stream",
+            vec![SchemaRole::InterfaceRole(InterfaceRole::Stream)],
         ),
         (7, "String", vec![SchemaRole::Nominal { persistent: true }]),
         (8, "Integer", vec![SchemaRole::Nominal { persistent: true }]),
@@ -452,7 +458,7 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
     );
     let plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[left.[Clash] right.[Clash]]\n{[Clash] [] [] []}")
+        .plan("Interface.{1 0 0}\n[left.[Clash] right.[Clash]]\n{[Clash] [] [] [] []}")
         .unwrap();
     let inputs = new_inputs(&plan, &fixture.snapshot);
     assert!(matches!(
@@ -481,7 +487,7 @@ fn import_ambiguity_comes_from_distinct_valid_paths_and_is_namespace_local() {
     );
     seal_new(
         &fixture,
-        "Interface.{1 0 0}\n[dep.[Interface]]\n{[Interface] [] [] []}",
+        "Interface.{1 0 0}\n[dep.[Interface]]\n{[Interface] [] [] [] []}",
     );
 }
 
@@ -527,7 +533,7 @@ fn shapes_follow_explicit_catalog_authority() {
     );
     let (_, _inputs, transaction) = seal_new(
         &fixture,
-        "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String>]}",
+        "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [] [Bad.ForeignShape<String>]}",
     );
     let BootstrapBody::Interface(body) = &transaction.decoded().document.body else {
         panic!("planned Interface changed kind")
@@ -545,7 +551,7 @@ fn shapes_follow_explicit_catalog_authority() {
 
     let (_, _, local_transaction) = seal_new(
         &fixture,
-        "Interface.{1 0 0}\n[]\n{[] [] [] [Local.LocalShape<String>]}",
+        "Interface.{1 0 0}\n[]\n{[] [] [] [] [Local.LocalShape<String>]}",
     );
     let BootstrapBody::Interface(local_body) = &local_transaction.decoded().document.body else {
         panic!("planned local-Shape Interface changed kind")
@@ -562,7 +568,7 @@ fn shapes_follow_explicit_catalog_authority() {
     ));
     assert_eq!(
         fixture.reader.write(&local_transaction).unwrap(),
-        "Interface.{1 0 0}\n[]\n{\n  []\n  []\n  []\n  [Local.LocalShape<String>]\n}\n"
+        "Interface.{1 0 0}\n[]\n{\n  []\n  []\n  []\n  []\n  [Local.LocalShape<String>]\n}\n"
     );
     let canonical = fixture.reader.write(&transaction).unwrap();
     let committed = restarted(&fixture, &transaction, &["app"]);
@@ -586,7 +592,7 @@ fn shapes_follow_explicit_catalog_authority() {
 
     assert!(matches!(
         fixture.reader.plan(
-            "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [Bad.ForeignShape<String Integer>]}"
+            "Interface.{1 0 0}\n[dep.[ForeignShape]]\n{[] [] [] [] [Bad.ForeignShape<String Integer>]}"
         ),
         Err(BootstrapReadError::ShapeArity {
             identity,
@@ -595,10 +601,10 @@ fn shapes_follow_explicit_catalog_authority() {
         }) if identity == imported_shape
     ));
     for source in [
-        "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.ForeignShape<String>]}",
-        "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Unknown<String>]}",
-        "Interface.{1 0 0}\n[dep.[ForeignNominal]]\n{[] [] [] [Bad.ForeignNominal<String>]}",
-        "Interface.{1 0 0}\n[dep.[ForeignTrait]]\n{[] [] [] [Bad.ForeignTrait<String>]}",
+        "Interface.{1 0 0}\n[]\n{[] [] [] [] [Bad.ForeignShape<String>]}",
+        "Interface.{1 0 0}\n[]\n{[] [] [] [] [Bad.Unknown<String>]}",
+        "Interface.{1 0 0}\n[dep.[ForeignNominal]]\n{[] [] [] [] [Bad.ForeignNominal<String>]}",
+        "Interface.{1 0 0}\n[dep.[ForeignTrait]]\n{[] [] [] [] [Bad.ForeignTrait<String>]}",
     ] {
         assert!(matches!(
             fixture.reader.plan(source),
@@ -767,7 +773,7 @@ fn exact_plan_errors_cover_method_shape_table_and_versions() {
     ));
     assert!(matches!(
         fixture.reader.plan(
-            "Interface.{1 0 0}\n[]\n{[] [] [] [Bad.Map<String>]}"
+            "Interface.{1 0 0}\n[]\n{[] [] [] [] [Bad.Map<String>]}"
         ),
         Err(BootstrapReadError::ShapeArity {
             identity,
@@ -783,7 +789,7 @@ fn exact_plan_errors_cover_method_shape_table_and_versions() {
         })
     ));
     assert!(matches!(
-        fixture.reader.plan("Interface.{2 0 0}\n[]\n{[] [] [] []}"),
+        fixture.reader.plan("Interface.{2 0 0}\n[]\n{[] [] [] [] []}"),
         Err(BootstrapReadError::UnsupportedVersion {
             found: EthosVersion {
                 major: 2,
@@ -796,11 +802,11 @@ fn exact_plan_errors_cover_method_shape_table_and_versions() {
     assert!(matches!(
         fixture
             .reader
-            .plan("Interface.{01 0 0}\n[]\n{[] [] [] []}"),
+            .plan("Interface.{01 0 0}\n[]\n{[] [] [] [] []}"),
         Err(BootstrapReadError::InvalidVersionComponent(component)) if component == "01"
     ));
     assert!(matches!(
-        fixture.reader.plan("Interface.{1 0}\n[]\n{[] [] [] []}"),
+        fixture.reader.plan("Interface.{1 0}\n[]\n{[] [] [] [] []}"),
         Err(BootstrapReadError::UnexpectedStructure {
             expected: "exactly three version components",
             ..
@@ -814,7 +820,7 @@ fn dotted_transformer_form_is_superseded() {
     assert!(matches!(
         fixture
             .reader
-            .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Flow.Stream.(String Integer)]}"),
+            .plan("Interface.{1 0 0}\n[]\n{[] [] [] [] [Flow.Stream.(String Integer)]}"),
         Err(BootstrapReadError::DottedTransformerFormSuperseded)
     ));
 }
@@ -851,7 +857,7 @@ fn authority_transition_is_external_and_writer_uses_the_exact_after_snapshot() {
     let fixture = make_fixture(&["app"], vec![]);
     let plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [Thing.String]}")
+        .plan("Interface.{1 0 0}\n[]\n{[] [] [] [] [Thing.String]}")
         .unwrap();
     let inputs = new_inputs(&plan, &fixture.snapshot);
     let foreign_before = TextualMetadataSnapshot::new(vec![]).unwrap();
@@ -905,7 +911,7 @@ fn authority_receipts_are_exact_configuration_brands_at_store_validation_and_wri
 
     let fixture = make_fixture(&["app"], vec![]);
     let (_, _, transaction) =
-        seal_new(&fixture, "Interface.{1 0 0}\n[]\n{[] [] [] [Thing.String]}");
+        seal_new(&fixture, "Interface.{1 0 0}\n[]\n{[] [] [] [] [Thing.String]}");
     let _: &FakeAuthorityReceipt = transaction.naming_authority_receipt();
     store_accepts(&fixture.authority, &transaction).unwrap();
     fixture.reader.validate_transaction(&transaction).unwrap();
@@ -948,7 +954,7 @@ fn seal_refuses_an_after_snapshot_that_makes_an_imported_reference_invisible() {
     );
     let plan = fixture
         .reader
-        .plan("Interface.{1 0 0}\n[dep.[External]]\n{[] [] [] [Thing.External]}")
+        .plan("Interface.{1 0 0}\n[dep.[External]]\n{[] [] [] [] [Thing.External]}")
         .unwrap();
     let mut inputs = new_inputs(&plan, &fixture.snapshot);
     let after = TextualMetadataSnapshot::new(
@@ -984,6 +990,7 @@ fn root_registry_is_the_observable_section_order() {
             BootstrapSectionSchema::Role(InterfaceRole::Input),
             BootstrapSectionSchema::Role(InterfaceRole::Output),
             BootstrapSectionSchema::Role(InterfaceRole::Refusal),
+            BootstrapSectionSchema::Role(InterfaceRole::Stream),
             BootstrapSectionSchema::Declarations,
         ]
     );
@@ -1008,7 +1015,7 @@ fn each_non_stream_authority_seat_has_its_own_direct_strict_value_true_name() {
     let fixture = make_fixture(&["app"], vec![]);
     let (_, _, transaction) = seal_new(
         &fixture,
-        "Interface.{1 0 0}\n[]\n{[First.String Second.Integer] [] [] []}",
+        "Interface.{1 0 0}\n[]\n{[First.String Second.Integer] [] [] [] []}",
     );
     let true_names = transaction.strict_value_true_names().unwrap();
     assert_eq!(

@@ -145,6 +145,7 @@ pub enum InterfaceRole {
     Input,
     Output,
     Refusal,
+    Stream,
 }
 
 /// A role position either declares a plain nominal type inline or references
@@ -177,8 +178,9 @@ pub struct InterfaceBody {
     pub inputs: Vec<RoleEntry>,
     pub outputs: Vec<RoleEntry>,
     pub refusals: Vec<RoleEntry>,
+    pub streams: Vec<RoleEntry>,
     pub types: Vec<Declaration>,
-    /// Relations produced only by the three authored role sections.
+    /// Relations produced only by the four authored role sections.
     pub memberships: Vec<InterfaceRoleMembership>,
 }
 

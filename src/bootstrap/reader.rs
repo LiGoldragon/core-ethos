@@ -837,6 +837,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                     .iter()
                     .chain(&body.outputs)
                     .chain(&body.refusals)
+                    .chain(&body.streams)
                 {
                     if let RoleEntry::Declaration(declaration) = entry {
                         seat_local_identity(
@@ -1450,16 +1451,12 @@ impl PreparedModelValidator<'_> {
         memberships: &mut [InterfaceRoleMembership],
     ) -> Result<(), BootstrapReadError> {
         memberships.sort_by(|left, right| {
-            let left_role = self.canonical_order.bytes(match left.role {
-                InterfaceRole::Input => self.priors.role_identity(InterfaceRole::Input),
-                InterfaceRole::Output => self.priors.role_identity(InterfaceRole::Output),
-                InterfaceRole::Refusal => self.priors.role_identity(InterfaceRole::Refusal),
-            });
-            let right_role = self.canonical_order.bytes(match right.role {
-                InterfaceRole::Input => self.priors.role_identity(InterfaceRole::Input),
-                InterfaceRole::Output => self.priors.role_identity(InterfaceRole::Output),
-                InterfaceRole::Refusal => self.priors.role_identity(InterfaceRole::Refusal),
-            });
+            let left_role = self
+                .canonical_order
+                .bytes(self.priors.role_identity(left.role));
+            let right_role = self
+                .canonical_order
+                .bytes(self.priors.role_identity(right.role));
             left_role.cmp(&right_role).then_with(|| {
                 self.canonical_order
                     .bytes(&left.target)
@@ -1605,7 +1602,7 @@ fn parse_imports(
             let SyntaxNode::Application { head, payload, .. } = entry else {
                 return Err(unexpected_node(entry, "module:path.[Imported Names]"));
             };
-            let module_path = head.split(':').map(str::to_owned).collect::<Vec<_>>();
+            let module_path = head.split('/').map(str::to_owned).collect::<Vec<_>>();
             validate_module_path(&module_path)?;
             let imported =
                 expect_delimited(payload, Delimiter::Square, "nonempty import selectors")?;
@@ -2515,6 +2512,7 @@ fn assemble_body(
             let mut inputs = None;
             let mut outputs = None;
             let mut refusals = None;
+            let mut streams = None;
             let mut declarations = None;
             let mut memberships = Vec::new();
             for (schema, section) in root.sections.iter().zip(sections) {
@@ -2531,6 +2529,7 @@ fn assemble_body(
                             InterfaceRole::Input => &mut inputs,
                             InterfaceRole::Output => &mut outputs,
                             InterfaceRole::Refusal => &mut refusals,
+                            InterfaceRole::Stream => &mut streams,
                         };
                         if slot.replace(entries).is_some() {
                             return Err(BootstrapReadError::InvalidPreparedModel(
@@ -2563,6 +2562,9 @@ fn assemble_body(
                 ))?,
                 refusals: refusals.ok_or(BootstrapReadError::InvalidPreparedModel(
                     "root registry omits Interface Refusal",
+                ))?,
+                streams: streams.ok_or(BootstrapReadError::InvalidPreparedModel(
+                    "root registry omits Interface Stream",
                 ))?,
                 types: declarations.ok_or(BootstrapReadError::InvalidPreparedModel(
                     "root registry omits Interface Types",
@@ -3022,6 +3024,7 @@ fn collect_strict_value_true_names(
                 .iter()
                 .chain(&body.outputs)
                 .chain(&body.refusals)
+                .chain(&body.streams)
             {
                 if let RoleEntry::Declaration(declaration) = entry {
                     collect_type_true_names(declaration, names)?;
@@ -3123,6 +3126,7 @@ fn collect_document_references(
                 .iter()
                 .chain(&body.outputs)
                 .chain(&body.refusals)
+                .chain(&body.streams)
             {
                 match entry {
                     RoleEntry::Declaration(declaration) => {

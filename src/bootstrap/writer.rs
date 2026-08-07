@@ -31,7 +31,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
             if index > 0 {
                 output.push(' ');
             }
-            output.push_str(&import.module_path.join(":"));
+            output.push_str(&import.module_path.join("/"));
             output.push_str(".[");
             output.push_str(&import.imported_names.join(" "));
             output.push(']');

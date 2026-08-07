@@ -59,6 +59,10 @@ impl RootSchema {
                     BootstrapSectionSchema::Role(InterfaceRole::Refusal),
                     BootstrapBody::Interface(body),
                 ) => Ok(RootSemanticSectionRef::Role(&body.refusals)),
+                (
+                    BootstrapSectionSchema::Role(InterfaceRole::Stream),
+                    BootstrapBody::Interface(body),
+                ) => Ok(RootSemanticSectionRef::Role(&body.streams)),
                 (BootstrapSectionSchema::Declarations { .. }, BootstrapBody::Interface(body)) => {
                     Ok(RootSemanticSectionRef::Declarations(&body.types))
                 }
@@ -99,6 +103,7 @@ impl RootSchemaRegistry {
                         BootstrapSectionSchema::Role(InterfaceRole::Input),
                         BootstrapSectionSchema::Role(InterfaceRole::Output),
                         BootstrapSectionSchema::Role(InterfaceRole::Refusal),
+                        BootstrapSectionSchema::Role(InterfaceRole::Stream),
                         BootstrapSectionSchema::Declarations,
                     ],
                 },

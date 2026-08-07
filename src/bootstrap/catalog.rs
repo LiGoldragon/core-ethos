@@ -21,6 +21,7 @@ pub enum BootstrapPriorSlot {
     InputRole,
     OutputRole,
     RefusalRole,
+    StreamRole,
     StringType,
     IntegerType,
     BooleanType,
@@ -70,6 +71,8 @@ const OUTPUT_ROLE_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Output)];
 const REFUSAL_ROLE_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Refusal)];
+const STREAM_ROLES: &[BootstrapPriorRole] =
+    &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Stream)];
 const PERSISTENT_NOMINAL_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::Nominal { persistent: true }];
 const UNARY_SHAPE_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::Shape { arity: 1 }];
@@ -105,6 +108,11 @@ const BOOTSTRAP_PRIOR_DEFINITIONS: &[BootstrapPriorDefinition] = &[
         slot: BootstrapPriorSlot::RefusalRole,
         textual_name: "Refusal",
         roles: REFUSAL_ROLE_ROLES,
+    },
+    BootstrapPriorDefinition {
+        slot: BootstrapPriorSlot::StreamRole,
+        textual_name: "Stream",
+        roles: STREAM_ROLES,
     },
     BootstrapPriorDefinition {
         slot: BootstrapPriorSlot::StringType,
@@ -465,6 +473,7 @@ pub struct BootstrapPriorIdentities {
     pub input_role: EncodedName,
     pub output_role: EncodedName,
     pub refusal_role: EncodedName,
+    pub stream_role: EncodedName,
     pub string_type: EncodedName,
     pub integer_type: EncodedName,
     pub boolean_type: EncodedName,
@@ -517,6 +526,11 @@ impl BootstrapPriorVocabulary {
                 "refusal_role",
                 &identities.refusal_role,
                 SchemaRole::InterfaceRole(InterfaceRole::Refusal),
+            ),
+            (
+                "stream_role",
+                &identities.stream_role,
+                SchemaRole::InterfaceRole(InterfaceRole::Stream),
             ),
             (
                 "string_type",
@@ -588,6 +602,7 @@ impl BootstrapPriorVocabulary {
             ("input_role", &identities.input_role),
             ("output_role", &identities.output_role),
             ("refusal_role", &identities.refusal_role),
+            ("stream_role", &identities.stream_role),
             ("string_type", &identities.string_type),
             ("integer_type", &identities.integer_type),
             ("boolean_type", &identities.boolean_type),
@@ -650,6 +665,7 @@ impl BootstrapPriorVocabulary {
             InterfaceRole::Input => &self.identities.input_role,
             InterfaceRole::Output => &self.identities.output_role,
             InterfaceRole::Refusal => &self.identities.refusal_role,
+            InterfaceRole::Stream => &self.identities.stream_role,
         }
     }
 
@@ -657,7 +673,7 @@ impl BootstrapPriorVocabulary {
         self.fixed_identities().contains(&identity)
     }
 
-    pub(crate) fn fixed_identities(&self) -> [&EncodedName; 14] {
+    pub(crate) fn fixed_identities(&self) -> [&EncodedName; 15] {
         let ids = &self.identities;
         [
             &ids.interface_kind,
@@ -666,6 +682,7 @@ impl BootstrapPriorVocabulary {
             &ids.input_role,
             &ids.output_role,
             &ids.refusal_role,
+            &ids.stream_role,
             &ids.string_type,
             &ids.integer_type,
             &ids.boolean_type,
