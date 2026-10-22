@@ -268,11 +268,11 @@ pub trait AdmittedToCoreEthosRawConstruction: raw_construction_seal::Sealed {
     ) -> Result<BootstrapReader<Authority>, BootstrapBuildError>;
 }
 
-/// The sole Core-provided admission capability for Sema's transaction
+/// The sole Core-provided admission capability for Memory's transaction
 /// assembler. Its field is private; callers may use its authority-shaped
 /// operations but cannot form raw Core construction values directly.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SemaTransactionAssembler {
+pub struct MemoryTransactionAssembler {
     _private: (),
 }
 
@@ -290,16 +290,16 @@ impl BootstrapCatalogMetadata {
     }
 }
 
-impl SemaTransactionAssembler {
-    /// Obtain the one Core admission used by Sema's transaction assembler.
+impl MemoryTransactionAssembler {
+    /// Obtain the one Core admission used by Memory's transaction assembler.
     pub const fn new() -> Self {
         Self { _private: () }
     }
 }
 
-impl raw_construction_seal::Sealed for SemaTransactionAssembler {}
+impl raw_construction_seal::Sealed for MemoryTransactionAssembler {}
 
-impl AdmittedToCoreEthosRawConstruction for SemaTransactionAssembler {
+impl AdmittedToCoreEthosRawConstruction for MemoryTransactionAssembler {
     fn bootstrap_grammar(
         &self,
         document: EncodedName,
@@ -875,7 +875,7 @@ impl<Authority: BootstrapNamingAuthority> BootstrapReader<Authority> {
                     )?;
                 }
             }
-            BootstrapBody::Sema(body) => {
+            BootstrapBody::Memory(body) => {
                 for declaration in &body.record_types {
                     seat_local_identity(
                         &mut authored_local,
@@ -2607,7 +2607,7 @@ fn assemble_body(
                 ))?,
             }))
         }
-        EthosKind::Sema => {
+        EthosKind::Memory => {
             let mut records = None;
             let mut tables = None;
             for (schema, section) in root.sections.iter().zip(sections) {
@@ -2618,30 +2618,30 @@ fn assemble_body(
                     ) => {
                         if records.replace(values).is_some() {
                             return Err(BootstrapReadError::InvalidPreparedModel(
-                                "duplicate Sema declaration section in root registry",
+                                "duplicate Memory declaration section in root registry",
                             ));
                         }
                     }
                     (SectionSchema::Tables, ReifiedSection::Tables(values)) => {
                         if tables.replace(values).is_some() {
                             return Err(BootstrapReadError::InvalidPreparedModel(
-                                "duplicate Sema table section in root registry",
+                                "duplicate Memory table section in root registry",
                             ));
                         }
                     }
                     _ => {
                         return Err(BootstrapReadError::InvalidPreparedModel(
-                            "Sema root registry section kind",
+                            "Memory root registry section kind",
                         ));
                     }
                 }
             }
-            Ok(BootstrapBody::Sema(SemaBody {
+            Ok(BootstrapBody::Memory(MemoryBody {
                 record_types: records.ok_or(BootstrapReadError::InvalidPreparedModel(
-                    "root registry omits Sema declarations",
+                    "root registry omits Memory declarations",
                 ))?,
                 tables: tables.ok_or(BootstrapReadError::InvalidPreparedModel(
-                    "root registry omits Sema tables",
+                    "root registry omits Memory tables",
                 ))?,
             }))
         }
@@ -3047,7 +3047,7 @@ fn collect_strict_value_true_names(
                 collect_type_true_names(declaration, names)?;
             }
         }
-        BootstrapBody::Sema(body) => {
+        BootstrapBody::Memory(body) => {
             for declaration in &body.record_types {
                 collect_type_true_names(declaration, names)?;
             }
@@ -3159,7 +3159,7 @@ fn collect_document_references(
                 collect_type_declaration_references(declaration, references);
             }
         }
-        BootstrapBody::Sema(body) => {
+        BootstrapBody::Memory(body) => {
             for declaration in &body.record_types {
                 collect_type_declaration_references(declaration, references);
             }

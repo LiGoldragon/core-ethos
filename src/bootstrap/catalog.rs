@@ -17,7 +17,7 @@ use super::model::{EthosKind, EthosVersion, InterfaceRole};
 pub enum BootstrapPriorSlot {
     InterfaceKind,
     NexusKind,
-    SemaKind,
+    MemoryKind,
     InputRole,
     OutputRole,
     RefusalRole,
@@ -64,7 +64,7 @@ pub struct BootstrapPriorDefinition {
 const INTERFACE_KIND_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::FileKind(EthosKind::Interface)];
 const NEXUS_KIND_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::FileKind(EthosKind::Nexus)];
-const SEMA_KIND_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::FileKind(EthosKind::Sema)];
+const MEMORY_KIND_ROLES: &[BootstrapPriorRole] = &[BootstrapPriorRole::FileKind(EthosKind::Memory)];
 const INPUT_ROLE_ROLES: &[BootstrapPriorRole] =
     &[BootstrapPriorRole::InterfaceRole(InterfaceRole::Input)];
 const OUTPUT_ROLE_ROLES: &[BootstrapPriorRole] =
@@ -90,9 +90,9 @@ const BOOTSTRAP_PRIOR_DEFINITIONS: &[BootstrapPriorDefinition] = &[
         roles: NEXUS_KIND_ROLES,
     },
     BootstrapPriorDefinition {
-        slot: BootstrapPriorSlot::SemaKind,
-        textual_name: "Sema",
-        roles: SEMA_KIND_ROLES,
+        slot: BootstrapPriorSlot::MemoryKind,
+        textual_name: "Memory",
+        roles: MEMORY_KIND_ROLES,
     },
     BootstrapPriorDefinition {
         slot: BootstrapPriorSlot::InputRole,
@@ -469,7 +469,7 @@ impl IdentitySchemaCatalog {
 pub struct BootstrapPriorIdentities {
     pub interface_kind: EncodedName,
     pub nexus_kind: EncodedName,
-    pub sema_kind: EncodedName,
+    pub memory_kind: EncodedName,
     pub input_role: EncodedName,
     pub output_role: EncodedName,
     pub refusal_role: EncodedName,
@@ -508,9 +508,9 @@ impl BootstrapPriorVocabulary {
                 SchemaRole::FileKind(EthosKind::Nexus),
             ),
             (
-                "sema_kind",
-                &identities.sema_kind,
-                SchemaRole::FileKind(EthosKind::Sema),
+                "memory_kind",
+                &identities.memory_kind,
+                SchemaRole::FileKind(EthosKind::Memory),
             ),
             (
                 "input_role",
@@ -598,7 +598,7 @@ impl BootstrapPriorVocabulary {
         let positions = [
             ("interface_kind", &identities.interface_kind),
             ("nexus_kind", &identities.nexus_kind),
-            ("sema_kind", &identities.sema_kind),
+            ("memory_kind", &identities.memory_kind),
             ("input_role", &identities.input_role),
             ("output_role", &identities.output_role),
             ("refusal_role", &identities.refusal_role),
@@ -625,7 +625,7 @@ impl BootstrapPriorVocabulary {
         let kind_names = [
             metadata.spelling(&identities.interface_kind),
             metadata.spelling(&identities.nexus_kind),
-            metadata.spelling(&identities.sema_kind),
+            metadata.spelling(&identities.memory_kind),
         ];
         if kind_names[0] == kind_names[1]
             || kind_names[0] == kind_names[2]
@@ -678,7 +678,7 @@ impl BootstrapPriorVocabulary {
         [
             &ids.interface_kind,
             &ids.nexus_kind,
-            &ids.sema_kind,
+            &ids.memory_kind,
             &ids.input_role,
             &ids.output_role,
             &ids.refusal_role,

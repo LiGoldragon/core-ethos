@@ -1,7 +1,7 @@
 # core-ethos
 
 `core-ethos` owns the strict bootstrap Ethos reader and its purpose-built
-Interface, Nexus, and Sema semantic forms.
+Interface, Nexus, and Memory semantic forms.
 
 ## Canonical bootstrap surface
 
@@ -50,7 +50,7 @@ The active file laws remain:
 - Interface `{Inputs Outputs Refusals Types}`;
 - Nexus `{Traits Types}` with explicit marker Trait products and one mandatory
   final method return;
-- Sema `{RecordTypes Tables}` with persistent nominal record/key leaves;
+- Memory `{RecordTypes Tables}` with persistent nominal record/key leaves;
 - recursive type expressions consisting only of a nominal reference, an
   exact-arity Shape application, or a nonempty guillemet Trait requirement.
 

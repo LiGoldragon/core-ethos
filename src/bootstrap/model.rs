@@ -50,7 +50,7 @@ impl EthosVersion {
 pub enum EthosKind {
     Interface,
     Nexus,
-    Sema,
+    Memory,
 }
 
 /// Compile-time marker for the bootstrap grammar's structural vocabulary.
@@ -114,7 +114,7 @@ pub struct BootstrapDocument {
 pub enum BootstrapBody {
     Interface(InterfaceBody),
     Nexus(NexusBody),
-    Sema(SemaBody),
+    Memory(MemoryBody),
 }
 
 impl BootstrapBody {
@@ -122,7 +122,7 @@ impl BootstrapBody {
         match self {
             Self::Interface(_) => EthosKind::Interface,
             Self::Nexus(_) => EthosKind::Nexus,
-            Self::Sema(_) => EthosKind::Sema,
+            Self::Memory(_) => EthosKind::Memory,
         }
     }
 }
@@ -193,7 +193,7 @@ pub struct NexusBody {
 
 /// Persistent nominal declarations followed by their keyed tables.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct SemaBody {
+pub struct MemoryBody {
     pub record_types: Vec<TypeDeclaration>,
     pub tables: Vec<TableDeclaration>,
 }

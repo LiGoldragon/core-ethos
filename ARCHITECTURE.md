@@ -86,7 +86,7 @@ never appears in encoded meaning.
 
 - Interface: Role(Input), Role(Output), Role(Refusal), Declarations(Nomos admitted)
 - Nexus: Traits, Declarations(Nomos refused)
-- Sema: PersistentDeclarations, Tables
+- Memory: PersistentDeclarations, Tables
 
 Planning, assembly, semantic projection, and writing iterate those descriptors.
 There is no second per-kind section-order table.
@@ -100,7 +100,7 @@ Planning validates before requesting identities:
 - method mandatory return and table two-leaf anatomy;
 - exact catalog-defined Shape arity at every recursive occurrence;
 - exact audited Nomos schema and arity;
-- Interface/Nexus/Sema admission boundaries;
+- Interface/Nexus/Memory admission boundaries;
 - module, enum-variant, and Trait-method duplicate scopes;
 - safe declaration, import, local-binder, and reference projections;
 - nonempty Trait requirements and duplicate visible Trait occurrences.

@@ -1,4 +1,4 @@
-//! Strict shared bootstrap reader for Interface, Nexus, and Sema Ethos files.
+//! Strict shared bootstrap reader for Interface, Nexus, and Memory Ethos files.
 //!
 //! The boundary is deliberately two-phase: [`BootstrapReader::plan`] discovers
 //! every declaration occurrence without identity authority, then
@@ -28,6 +28,6 @@ pub use reader::{
     BootstrapNamingAuthorityRequest, BootstrapReadPlan, BootstrapReader, DeclarationOccurrence,
     DeclarationPurpose, IdentityDisposition, NamingAssignment, NamingAssignments,
     PlannedDeclaration, PlannedScope, PreparedBootstrapDraft, PreparedBootstrapTransaction,
-    SemaTransactionAssembler,
+    MemoryTransactionAssembler,
 };
 pub use root::BootstrapSectionSchema;

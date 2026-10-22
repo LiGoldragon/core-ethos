@@ -167,7 +167,7 @@ pub enum BootstrapReadError {
     DottedTransformerFormSuperseded,
     #[error("no transformer is registered for head {head:?} in the bootstrap catalog")]
     TransformerHeadNotRegistered { head: String },
-    #[error("Sema persistent declarations admit only plain nominal types")]
+    #[error("Memory persistent declarations admit only plain nominal types")]
     NonPersistentDeclaration,
     #[error("prepared transaction model is invalid: {0}")]
     InvalidPreparedModel(&'static str),

@@ -1,4 +1,4 @@
-Sema.{1 0 0}
+Memory.{1 0 0}
 [dependency:domain.[External]]
 {
   [Identifier.Integer Stored.{Identifier External}]

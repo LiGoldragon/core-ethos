@@ -137,7 +137,7 @@ fn prior_identities() -> BootstrapPriorIdentities {
     BootstrapPriorIdentities {
         interface_kind: id(1),
         nexus_kind: id(2),
-        sema_kind: id(3),
+        memory_kind: id(3),
         input_role: id(4),
         output_role: id(5),
         refusal_role: id(6),
@@ -184,7 +184,7 @@ fn make_fixture_with_authority(
             vec![SchemaRole::FileKind(EthosKind::Interface)],
         ),
         (2, "Nexus", vec![SchemaRole::FileKind(EthosKind::Nexus)]),
-        (3, "Sema", vec![SchemaRole::FileKind(EthosKind::Sema)]),
+        (3, "Memory", vec![SchemaRole::FileKind(EthosKind::Memory)]),
         (
             4,
             "Input",
@@ -241,7 +241,7 @@ fn fixture_from_parts(
     order: CanonicalIdentityOrder,
     authority: FakeAuthority,
 ) -> Fixture {
-    let assembler = SemaTransactionAssembler::new();
+    let assembler = MemoryTransactionAssembler::new();
     let priors = BootstrapPriorVocabulary::new(prior_identities(), &schemas, &snapshot).unwrap();
     let catalog = assembler
         .bootstrap_catalog(
@@ -300,7 +300,7 @@ struct SealInputs {
 }
 
 fn new_inputs(plan: &BootstrapReadPlan, before: &TextualMetadataSnapshot) -> SealInputs {
-    let assembler = SemaTransactionAssembler::new();
+    let assembler = MemoryTransactionAssembler::new();
     let mut records = before.records().to_vec();
     let mut identity_by_occurrence = BTreeMap::new();
     let mut raw_assignments = Vec::new();
@@ -342,7 +342,7 @@ fn existing_inputs(
     after: TextualMetadataSnapshot,
     module: &[&str],
 ) -> SealInputs {
-    let assembler = SemaTransactionAssembler::new();
+    let assembler = MemoryTransactionAssembler::new();
     let module = module
         .iter()
         .map(|part| (*part).to_owned())
@@ -679,7 +679,7 @@ fn authority_bytes_canonicalize_every_unordered_named_collection() {
         ("X", id(105), vec![0x75]),
         ("First", id(106), vec![0x71]),
     ];
-    let assembler = SemaTransactionAssembler::new();
+    let assembler = MemoryTransactionAssembler::new();
     let make = |plan: &BootstrapReadPlan| {
         let mut owner_by_occurrence = BTreeMap::new();
         let mut assignments = Vec::new();
@@ -782,7 +782,7 @@ fn exact_plan_errors_cover_method_shape_table_and_versions() {
         }) if identity == id(13)
     ));
     assert!(matches!(
-        fixture.reader.plan("Sema.{1 0 0}\n[]\n{[] [bad.{String}]}"),
+        fixture.reader.plan("Memory.{1 0 0}\n[]\n{[] [bad.{String}]}"),
         Err(BootstrapReadError::UnexpectedStructure {
             expected: "exactly RecordType then KeyType",
             ..
@@ -838,7 +838,7 @@ fn table_leaves_are_exactly_persistent_nominals() {
     );
     let plan = fixture
         .reader
-        .plan("Sema.{1 0 0}\n[dep.[ShapeOnly]]\n{[Record.String] [bad.{Record ShapeOnly}]}")
+        .plan("Memory.{1 0 0}\n[dep.[ShapeOnly]]\n{[Record.String] [bad.{Record ShapeOnly}]}")
         .unwrap();
     let inputs = new_inputs(&plan, &fixture.snapshot);
     assert!(matches!(
@@ -1002,7 +1002,7 @@ fn root_registry_is_the_observable_section_order() {
         ]
     );
     assert_eq!(
-        fixture.reader.section_order(EthosKind::Sema),
+        fixture.reader.section_order(EthosKind::Memory),
         [
             BootstrapSectionSchema::PersistentDeclarations,
             BootstrapSectionSchema::Tables,

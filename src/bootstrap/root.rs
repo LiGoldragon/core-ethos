@@ -72,10 +72,10 @@ impl RootSchema {
                 (BootstrapSectionSchema::Declarations { .. }, BootstrapBody::Nexus(body)) => {
                     Ok(RootSemanticSectionRef::Declarations(&body.types))
                 }
-                (BootstrapSectionSchema::PersistentDeclarations, BootstrapBody::Sema(body)) => Ok(
+                (BootstrapSectionSchema::PersistentDeclarations, BootstrapBody::Memory(body)) => Ok(
                     RootSemanticSectionRef::PersistentDeclarations(&body.record_types),
                 ),
-                (BootstrapSectionSchema::Tables, BootstrapBody::Sema(body)) => {
+                (BootstrapSectionSchema::Tables, BootstrapBody::Memory(body)) => {
                     Ok(RootSemanticSectionRef::Tables(&body.tables))
                 }
                 _ => Err(BootstrapReadError::InvalidPreparedModel(
@@ -116,8 +116,8 @@ impl RootSchemaRegistry {
                     ],
                 },
                 RootSchema {
-                    kind: EthosKind::Sema,
-                    kind_identity: ids.sema_kind.clone(),
+                    kind: EthosKind::Memory,
+                    kind_identity: ids.memory_kind.clone(),
                     sections: vec![
                         BootstrapSectionSchema::PersistentDeclarations,
                         BootstrapSectionSchema::Tables,
